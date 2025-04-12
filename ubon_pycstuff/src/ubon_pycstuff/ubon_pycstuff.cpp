@@ -9,6 +9,9 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "infer.h"
 #include "cuda_stuff.h"
 #include "detections.h"
+#include "simple_decoder.h"
+
+// to build: python setup.py build_ext --inplace
 
 class c_image {
     public:
@@ -107,49 +110,92 @@ static py::capsule py_image_scale(py::capsule handle, int width, int height) {
 }*/
 
 
-static py::capsule py_infer_create(const std::string& py_str) 
-{
-    infer_t *inf=infer_create(py_str.c_str());
-    return py::capsule(inf, "infer_t", [](PyObject* capsule) {
-        auto ptr = reinterpret_cast<image_t*>(PyCapsule_GetPointer(capsule, "infer_t"));
-        delete ptr;
-    });
-}
+class c_infer {
+    public:
+        infer_t* inf;
+    
+        c_infer(const std::string& trt_file) {
+            inf = infer_create(trt_file.c_str());
+            if (!inf) {
+                throw std::runtime_error("Failed to create infer_t");
+            }
+        }
+    
+        ~c_infer() {
+            if (inf) infer_destroy(inf);
+        }
+    
+        py::list run(std::shared_ptr<c_image> image_obj) {
+            image_t* img = image_obj->raw();
+            detections_t* dets = infer(inf, img);
+    
+            py::list results;
+            for (int i = 0; i < dets->num_detections; ++i) {
+                detection_t* det = &dets->det[i];
+    
+                py::dict item;
+                item["cls"] = det->cl;
+                item["conf"] = det->conf;
+                py::list box;
+                box.append(det->x0);
+                box.append(det->y0);
+                box.append(det->x1);
+                box.append(det->y1);
+                item["box"] = box;
+                results.append(item);
+            }
+    
+            destroy_detections(dets);
+            return results;
+        }
+    
+        infer_t* raw() { return inf; }
+    };
 
-static void py_infer_destroy(py::capsule handle) {
-    if (std::string(handle.name()) != "infer_t")
-        throw std::runtime_error("Invalid capsule type expected infer_t ");
-    infer_t *inf= reinterpret_cast<infer_t*>(handle.get_pointer());
-    infer_destroy(inf);
-}
-
-static py::list py_infer(py::capsule inf_handle, std::shared_ptr<c_image> image_obj) {
-    if (std::string(inf_handle.name()) != "infer_t")
-        throw std::runtime_error("Invalid capsule type expected infer_t");
-
-    infer_t* inf = reinterpret_cast<infer_t*>(inf_handle.get_pointer());
-    image_t* img = image_obj->raw();
-    detections_t* dets = infer(inf, img);
-
-    py::list results;
-    for (int i = 0; i < dets->num_detections; ++i) {
-        detection_t* det = &dets->det[i];
-
-        py::dict item;
-        item["cls"] = det->cl;
-        item["conf"] = det->conf;
-        py::list box;
-        box.append(det->x0);
-        box.append(det->y0);
-        box.append(det->x1);
-        box.append(det->y1);
-        item["box"] = box;
-        results.append(item);
-    }
-
-    destroy_detections(dets);
-    return results;
-}
+    class c_decoder {
+        public:
+            simple_decoder_t* dec;
+            std::vector<std::shared_ptr<c_image>> current_output;
+        
+            c_decoder() {
+                // Create the decoder, register our static callback, pass `this` as context
+                dec = simple_decoder_create(this, &c_decoder::on_frame_static);
+                if (!dec) {
+                    throw std::runtime_error("Failed to create decoder");
+                }
+            }
+        
+            ~c_decoder() {
+                if (dec) simple_decoder_destroy(dec);
+            }
+        
+            py::list decode(py::bytes bitstream) {
+                current_output.clear();
+        
+                char* buffer;
+                ssize_t length;
+                PyBytes_AsStringAndSize(bitstream.ptr(), &buffer, &length);
+        
+                simple_decoder_decode(dec, reinterpret_cast<uint8_t*>(buffer), static_cast<int>(length));
+        
+                py::list result;
+                for (const auto& img : current_output) {
+                    result.append(img);
+                }
+                return result;
+            }
+        
+        private:
+            static void on_frame_static(void* context, image_t* decoded_frame) {
+                auto* self = static_cast<c_decoder*>(context);
+                self->on_frame(decoded_frame);
+            }
+        
+            void on_frame(image_t* img) {
+                // Reference the frame so we manage its lifetime cleanly
+                current_output.emplace_back(std::make_shared<c_image>(image_reference(img)));
+            }
+        };
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
     py::enum_<image_format>(m, "ImageFormat")
@@ -171,17 +217,13 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("convert", &c_image::convert, "Convert format")
         .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image");
 
-    m.def("create_image", &py_create_image, "Create image", py::arg("width"), py::arg("height"), py::arg("fmt"));
-    m.def("destroy_image", &py_destroy_image, "Destroy image", py::arg("handle"));
-    m.def("image_reference", &py_image_reference, "image reference", py::arg("handle"));
-    m.def("image_scale", &py_image_scale, "scale image", py::arg("handle"), py::arg("width"), py::arg("height"));
-    m.def("image_convert", &py_image_convert, "image_convert", py::arg("handle"), py::arg("fmt"));
-    m.def("create_image_from_np", &py_create_image_from_np, "Create image from NumPy RGB array");
-    m.def("get_np_image", &py_get_np_image, "Extract NumPy RGB array from image");
-    
-    m.def("infer_create", &py_infer_create, "Create tensorRT inference object", py::arg("trt_file"));
-    m.def("infer_destroy", &py_infer_destroy, "Destroy tensorRT inference object", py::arg("handle"));
-    m.def("infer", &py_infer, "Run inference", py::arg("inf_handle"), py::arg("surf_handle"));
+    py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
+        .def(py::init<const std::string&>(), py::arg("trt_file"))
+        .def("run", &c_infer::run, "Run inference on a c_image");
+
+    py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
+        .def(py::init<>())
+        .def("decode", &c_decoder::decode, py::arg("bitstream"));
 
     init_cuda_stuff();
 }
