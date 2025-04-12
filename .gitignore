@@ -1,0 +1,6 @@
+Makefile
+/build
+ubon_pycstuff/src/ubon_pycstuff/__pycache__/
+ubon_pycstuff/build/
+trt_timing_cache.dat
+ubon_pycstuff/src/ubon_pycstuff/*.so
