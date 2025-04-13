@@ -70,6 +70,28 @@ From the root of the repo (`ubon_cstuff/`):
 
 ---
 
+## Other stuff
+
+### Supported image conversions
+
+🧭 Supported image conversions (✔️=direct, 🟧 =2-step)
+
+```
+| From \ To     | YUV420_DEV  | YUV420_HOST  | RGB24_DEV  | RGB24_HOST  | FP16_DEV  | FP16_HOST  | FP32_DEV | FP32_HOST |
+|---------------|-------------|--------------|------------|-------------|-----------|------------|----------|-----------|
+| NV12_DEV      | ✔️          |              |            |             |           |            |          |           |
+| YUV420_DEV    |             | ✔️           |            | 🟧          | ✔️        |            | ✔️       |           |
+| YUV420_HOST   | ✔️          |              |            | ✔️          |           |            |          |           |
+| RGB24_DEV     |             |              |            | ✔️          |           |            |          |           |
+| RGB24_HOST    | 🟧          | 🟧           | ✔️         |             |           |            |          |           |
+| RGB_FP16_DEV  |             |              | ✔️         | 🟧          |           |            |          |           |
+| RGB_FP16_HOST |             |              |            |             | ✔️        |            |          |           |
+| RGB_FP32_DEV  |             |              |            |             |           |            |          | ✔️        |
+| RGB_FP32_HOST |             |              |            |             |           |            | ✔️       |           |
+```
+
+
+
 ## 📜 License
 
 This project is licensed under the  
