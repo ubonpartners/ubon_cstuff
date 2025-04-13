@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.10)
 project(uboncstuff LANGUAGES C CXX CUDA)
 
+# Ensure Python3 is found first so Python3_EXECUTABLE is available
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# Automatically detect pybind11 installed via pip or conda
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
+    OUTPUT_VARIABLE PYBIND11_CMAKE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+list(APPEND CMAKE_PREFIX_PATH "${PYBIND11_CMAKE_DIR}")
+message(STATUS "PYBIND11_CMAKE_DIR: ${PYBIND11_CMAKE_DIR}")
+
 cmake_policy(SET CMP0104 NEW)
 set(CMAKE_CUDA_ARCHITECTURES 60 70 86 89)
 
@@ -24,16 +36,16 @@ include_directories(
 
 # Gather sources
 file(GLOB SRC_FILES
-    ${CMAKE_SOURCE_DIR}/cuda/*.c
-    ${CMAKE_SOURCE_DIR}/decode/*.c
-    ${CMAKE_SOURCE_DIR}/image/*.c
-    ${CMAKE_SOURCE_DIR}/infer/*.c
-    ${CMAKE_SOURCE_DIR}/nvof/*.c
-    ${CMAKE_SOURCE_DIR}/vpi/*.c
+    ${CMAKE_SOURCE_DIR}/src/cuda/*.c
+    ${CMAKE_SOURCE_DIR}/src/decode/*.c
+    ${CMAKE_SOURCE_DIR}/src/image/*.c
+    ${CMAKE_SOURCE_DIR}/src/infer/*.c
+    ${CMAKE_SOURCE_DIR}/src/nvof/*.c
+    ${CMAKE_SOURCE_DIR}/src/vpi/*.c
 )
 
 file(GLOB CUDA_FILES
-    ${CMAKE_SOURCE_DIR}/cuda/*.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/*.cu
 )
 
 # Force -fPIC on all source files explicitly
@@ -45,7 +57,7 @@ foreach(source_file ${CUDA_FILES})
     set_source_files_properties(${source_file} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
 
-set(MAIN_FILE ${CMAKE_SOURCE_DIR}/main.c)
+set(MAIN_FILE ${CMAKE_SOURCE_DIR}/src/main.c)
 
 add_library(uboncstufflib STATIC ${SRC_FILES} ${CUDA_FILES})
 set_target_properties(uboncstufflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -62,6 +74,14 @@ target_link_libraries(uboncstuff
     -lnvvpi
     -lnvidia-opticalflow
 )
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 REQUIRED)
+
+add_subdirectory(src/bindings)
+
+install(TARGETS ubon_pycstuff
+        LIBRARY DESTINATION ubon_pycstuff)  # install into package folder
 
 # Clean target
 set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES "${CMAKE_BINARY_DIR}/uboncstuff")
