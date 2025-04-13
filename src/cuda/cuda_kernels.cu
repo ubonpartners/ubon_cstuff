@@ -149,4 +149,47 @@ void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, i
     fp16_planar_to_RGB24_kernel<<<grid, block, 0, stream>>>((const __half*)src, (unsigned char *)dest, dest_stride, width, height);
 }
 
+static __global__ void downsample_2x2_kernel(const uint8_t* src, int src_stride,
+    uint8_t* dst, int dst_stride,
+    int width, int height)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x; // column in dst
+    int y = blockIdx.y * blockDim.y + threadIdx.y; // row in dst
+
+    if (x < width / 2 && y < height / 2) {
+    // Source top-left of the 2x2 block
+    int src_x = x * 2;
+    int src_y = y * 2;
+
+    int idx0 = src_y * src_stride + src_x;
+    int idx1 = idx0 + 1;
+    int idx2 = idx0 + src_stride;
+    int idx3 = idx2 + 1;
+
+    // Average the 2x2 block and store to destination
+    uint8_t a = src[idx0];
+    uint8_t b = src[idx1];
+    uint8_t c = src[idx2];
+    uint8_t d = src[idx3];
+
+    dst[y * dst_stride + x] = (a + b + c + d + 2) / 4; // +2 for rounding
+    }
 }
+
+void cuda_downsample_2x2(const uint8_t* d_src, int src_stride,
+    uint8_t* d_dst, int dst_stride,
+    int width, int height,
+    CUstream stream)
+{
+    dim3 block(16, 16);
+    dim3 grid((width / 2 + block.x - 1) / block.x,(height / 2 + block.y - 1) / block.y);
+
+    downsample_2x2_kernel<<<grid, block, 0, stream>>>(
+        d_src, src_stride,
+        d_dst, dst_stride,
+        width, height
+    );
+}
+
+}
+

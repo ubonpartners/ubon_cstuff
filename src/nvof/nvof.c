@@ -125,7 +125,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
 
     executeInParams.inputFrame=v->inputFrame;
     executeInParams.referenceFrame=v->referenceFrame;
-    executeInParams.disableTemporalHints=NV_OF_TRUE;
+    executeInParams.disableTemporalHints=NV_OF_FALSE;
     executeOutParams.outputBuffer = v->flowBuf;
     executeOutParams.outputCostBuffer = v->costBuf;
 

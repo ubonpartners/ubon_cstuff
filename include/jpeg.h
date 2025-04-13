@@ -5,5 +5,6 @@
 
 image_t *decode_jpeg(uint8_t *buffer, size_t size);
 image_t *load_jpeg(const char *file);
+void save_jpeg(const char *filename, image_t *img);
 
 #endif

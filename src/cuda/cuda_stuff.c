@@ -62,7 +62,6 @@ static void do_cuda_init()
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);
     
-
     memset(&nppStreamCtx, 0, sizeof(nppStreamCtx));
     nppStreamCtx.nCudaDeviceId = device;
     nppStreamCtx.nMultiProcessorCount = prop.multiProcessorCount;

@@ -66,8 +66,17 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     result = nppiResize_8u_C1R_Ctx(src->v, src->stride_uv, srcSizeUV, srcROIUV,
                                dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
                                interpolationMode, nppStreamCtx);
-    assert(result== NPP_SUCCESS);
+    assert(result== NPP_SUCCESS); 
     return dst;
+}
+
+static image_t *image_scale_by_intermediate(image_t *img, int width, int height, image_format_t inter)
+{
+    assert(img->format!=inter);
+    image_t *image_tmp=image_convert(img, inter);
+    image_t *scaled=image_scale(image_tmp, width, height);
+    destroy_image(image_tmp);
+    return scaled;
 }
 
 image_t *image_scale(image_t *img, int width, int height)
@@ -78,13 +87,10 @@ image_t *image_scale(image_t *img, int width, int height)
             return image_scale_yuv420_host(img,width,height);
         case IMAGE_FORMAT_YUV420_DEVICE:
             return image_scale_yuv420_device(img,width,height);
+        case IMAGE_FORMAT_NV12_DEVICE:
+            return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
         case IMAGE_FORMAT_RGB24_HOST:
-        {
-            image_t *image_tmp=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
-            image_t *scaled=image_scale(image_tmp, width, height);
-            destroy_image(image_tmp);
-            return scaled;
-        }
+            return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
         default:
         ;
     }
@@ -102,6 +108,32 @@ static image_t *image_convert_nv12_to_yuv420_npp(image_t *src)
     NppStreamContext nppStreamCtx=get_nppStreamCtx();
     nppStreamCtx.hStream=dst->stream;
     NppStatus result=nppiNV12ToYUV420_8u_P2P3R_Ctx(pSrc, src->stride_y, pDst, aDstStep, roi, nppStreamCtx);
+    return dst;
+}
+
+static image_t *image_convert_yuv420_to_nv12_npp(image_t *src)
+{
+    image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_NV12_DEVICE);
+    image_add_dependency(dst, src);
+
+    NppiSize roi = { src->width, src->height };
+    NppStreamContext nppStreamCtx = get_nppStreamCtx();
+    nppStreamCtx.hStream = dst->stream;
+
+    const Npp8u *pSrc[3] = { src->y, src->u, src->v }; // assuming src->u = Cr, src->v = Cb
+    int aSrcStep[3] = { src->stride_y, src->stride_uv, src->stride_uv };
+
+    Npp8u *pDstY = dst->y;
+    Npp8u *pDstCbCr = dst->u; // interleaved CbCr buffer for NV12
+    int dstStepY = dst->stride_y;
+    int dstStepCbCr = dst->stride_uv;
+
+    NppStatus result = nppiYCrCb420ToYCbCr420_8u_P3P2R_Ctx(
+        pSrc, aSrcStep,
+        pDstY, dstStepY,
+        pDstCbCr, dstStepCbCr,
+        roi, nppStreamCtx);
+
     return dst;
 }
 
@@ -288,6 +320,9 @@ image_t *image_convert(image_t *img, image_format_t format)
     if (format==img->format) return image_reference(img);
 
     if ((format==IMAGE_FORMAT_YUV420_DEVICE)&&(img->format==IMAGE_FORMAT_NV12_DEVICE))
+        return image_convert_nv12_to_yuv420_npp(img);
+
+    if ((format==IMAGE_FORMAT_NV12_DEVICE)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
         return image_convert_nv12_to_yuv420_npp(img);
 
     if ((format==IMAGE_FORMAT_YUV420_HOST)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
