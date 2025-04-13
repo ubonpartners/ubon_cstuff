@@ -1,32 +1,85 @@
 # 🛠️ Ubon_cstuff
 
-**Useful C code**
-- Surface wrapper abstraction supporting
-  - host and GPU surfaces with various colour formata
-  - Surface scaling (currently using NPP, libyuv) 
-  - Format/colourspace converstion
-- Video decoder supporting
-  - OpenH264
-  - NVDDEC
-- Optical flow supporting
-  - NVOF
-  - VPI (WIP...)
-- TensorRT inference
+**High-performance C modules with simple Python bindings**
 
-**Python bindings**
-- All of above functionality exposed very simply
-- Can see how to use it [here](https://github.com/ubonpartners/ubon_cstuff/blob/main/ubon_pycstuff/test.py)
+This repo provides a set of modular, GPU-aware C components for image and video processing — with seamless Python integration via `pybind11`.
 
-**How to build**
+---
 
-- C part is built with cmake; usual mkdir build; cd build; cmake ..; make
-- Needs various things libyuv, openh264, SDL, cuda,....
-- to build python bindings: cd ubon_pycstuff; python setup.py build_ext --inplace
-- add ubon_cstuff/ubon_pycstuff/src to your PYTHONPATH
-  
+## 🔧 Features
+
+### Surface Abstraction
+- Unified wrapper for working with host and GPU image buffers
+- Supports multiple color formats (RGB, YUV, planar, packed, etc.)
+- GPU and CPU scaling using:
+  - NVIDIA NPP
+  - libyuv
+- Color format & colorspace conversion
+
+### Video Decoding
+- Hardware and software decoder support:
+  - OpenH264 (software)
+  - NVDEC (NVIDIA GPU-accelerated decode)
+
+### Optical Flow
+- Support for:
+  - NVIDIA Optical Flow SDK (NVOF)
+  - VPI (in progress…)
+
+### Inference
+- TensorRT accelerated inference with support for batched processing and flexible surface input
+
+---
+
+## 🐍 Python Bindings
+
+All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
+
+See the usage example here:  
+👉 [test.py](https://github.com/ubonpartners/ubon_cstuff/blob/main/ubon_pycstuff/test.py)
+
+---
+
+## 🔨 Build Instructions
+
+### 🧱 C++ Core
+
+```
+mkdir build
+cd build
+cmake ..
+make
+```
+
+> 🔧 You’ll need development versions of:  
+> `libyuv`, `openh264`, `SDL2`, `CUDA`, `TensorRT`, etc.
+
+### 🐍 Python Bindings
+
+From the root of the repo (`ubon_cstuff/`):
+
+- To install in editable dev mode:
+  ```
+  pip install -e .
+  ```
+
+- To build a Python wheel:
+  ```
+  python -m build
+  ```
+
+---
+
 ## 📜 License
 
-This project is licensed under the **[Ubon Cooperative License](https://github.com/ubonpartners/license/blob/main/LICENSE)**
+This project is licensed under the  
+**[Ubon Cooperative License](https://github.com/ubonpartners/license/blob/main/LICENSE)**
 
-Please reach out with questions:  
-📬 [bernandocribbenza@gmail.com](mailto:bernandocribbenza@gmail.com?subject=yolo-dpa%20question&body=Your-code-is-rubbish!)
+---
+
+## 💬 Questions?
+
+Feel free to reach out:
+
+📬 [bernandocribbenza@gmail.com](mailto:bernandocribbenza@gmail.com?subject=ubon_cstuff%20question&body=Your-code-is-rubbish!)
+
