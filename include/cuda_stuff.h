@@ -19,5 +19,6 @@ void check_cuda_inited();
 void init_cuda_stuff();
 NppStreamContext get_nppStreamCtx();
 void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on);
+CUcontext get_CUcontext();
 
 #endif

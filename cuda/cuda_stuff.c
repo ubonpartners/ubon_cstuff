@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <iostream>
+#include <mutex>
 #include <cuda.h>
 #include <cassert>
 #include "cuda_stuff.h"
@@ -25,6 +27,8 @@ typedef struct cuda_stuff_context
 } cuda_stuff_context_t;
 
 static cuda_stuff_context_t cs;
+static std::once_flag initFlag;
+static CUcontext cuContext;
 
 static void cuda_event_init()
 {
@@ -44,9 +48,8 @@ void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on)
     pthread_mutex_unlock(&cs.lock);
 }
 
-void init_cuda_stuff()
+static void do_cuda_init()
 {
-    CUcontext cuContext;
     CHECK_CUDA_CALL(cuInit(0));
     CHECK_CUDA_CALL(cuCtxCreate(&cuContext, 0, 0));
     
@@ -73,7 +76,18 @@ void init_cuda_stuff()
     cuda_inited=true;
 }
 
+void init_cuda_stuff()
+{
+    std::call_once(initFlag, do_cuda_init);
+}
+
 void check_cuda_inited()
 {
     assert(cuda_inited);
+}
+
+CUcontext get_CUcontext()
+{
+    assert(cuda_inited);
+    return cuContext;
 }

@@ -10,6 +10,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "cuda_stuff.h"
 #include "detections.h"
 #include "simple_decoder.h"
+#include "nvof.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -197,6 +198,53 @@ class c_infer {
             }
         };
 
+        class c_nvof {
+            public:
+                nvof_t* of;
+            
+                c_nvof(int width, int height) {
+                    of = nvof_create(this, width, height);
+                    if (!of) {
+                        throw std::runtime_error("Failed to create nvof_t");
+                    }
+                }
+            
+                ~c_nvof() {
+                    if (of) {
+                        nvof_destroy(of);
+                    }
+                }
+            
+                std::tuple<py::array_t<uint8_t>, py::array_t<float>> run(std::shared_ptr<c_image> img) {
+                    image_t* raw = img->raw();
+                    nvof_results_t* result = nvof_execute(of, raw);
+            
+                    if (!result || !result->costs || !result->flow) {
+                        throw std::runtime_error("nvof_execute failed or returned null results");
+                    }
+            
+                    int h = result->grid_h;
+                    int w = result->grid_w;
+            
+                    // Wrap costs as uint8 NumPy array 
+                    auto costs = py::array_t<uint8_t>({h, w}, result->costs);
+            
+                    // Wrap flow as (h, w, 2) float NumPy array
+                    auto flow = py::array_t<float, py::array::c_style>({h, w, 2});
+
+                    auto flow_buf = flow.mutable_unchecked<3>();
+                    for (int y = 0; y < h; ++y) {
+                        for (int x = 0; x < w; ++x) {
+                            int idx = y * w + x;
+                            flow_buf(y, x, 0) = result->flow[idx].flowx/(4*32.0*w);
+                            flow_buf(y, x, 1) = result->flow[idx].flowy/(4*32.0*h);
+                        }
+                    }
+            
+                    return std::make_tuple(costs, flow);
+                }
+            };
+
 PYBIND11_MODULE(ubon_pycstuff, m) {
     py::enum_<image_format>(m, "ImageFormat")
         .value("UNKNOWN", IMAGE_FORMAT_YUV420_HOST)
@@ -224,6 +272,10 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())
         .def("decode", &c_decoder::decode, py::arg("bitstream"));
+
+    py::class_<c_nvof, std::shared_ptr<c_nvof>>(m, "c_nvof")
+        .def(py::init<int, int>(), py::arg("width"), py::arg("height"))
+        .def("run", &c_nvof::run, "Run NVIDIA Optical Flow on a c_image");
 
     init_cuda_stuff();
 }

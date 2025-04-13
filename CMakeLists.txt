@@ -28,6 +28,8 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/decode/*.c
     ${CMAKE_SOURCE_DIR}/image/*.c
     ${CMAKE_SOURCE_DIR}/infer/*.c
+    ${CMAKE_SOURCE_DIR}/nvof/*.c
+    ${CMAKE_SOURCE_DIR}/vpi/*.c
 )
 
 file(GLOB CUDA_FILES
@@ -57,6 +59,8 @@ target_link_libraries(uboncstuff
     -lnvinfer -lcudart -lcublas -lpthread -lnvonnxparser
     -lopenh264 -lcuda -lnvcuvid -lyuv
     -lnppc -lnppisu -lnppig -lnppicc -lSDL2 -ljpeg
+    -lnvvpi
+    -lnvidia-opticalflow
 )
 
 # Clean target

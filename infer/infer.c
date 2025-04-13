@@ -199,6 +199,10 @@ infer_t *infer_create(const char *model)
 void infer_destroy(infer_t *inf)
 {
     if (!inf) return;
+    if (inf->output_mem) cuMemFree(inf->output_mem);
+    inf->output_mem=0;
+    if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
+    inf->output_mem_host=0;
     free(inf);
 }
 

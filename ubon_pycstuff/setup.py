@@ -30,7 +30,8 @@ ext_modules = [
             "nppicc",
             "jpeg",
             "SDL2",
-            "yuv" 
+            "yuv",
+            "nvidia-opticalflow"
         ],
         library_dirs=[
             "/usr/local/lib",       # common location for libyuv

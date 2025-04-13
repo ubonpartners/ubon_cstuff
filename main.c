@@ -9,14 +9,19 @@
 #include "infer.h"
 #include "jpeg.h"
 #include "dataset.h"
+#include "nvof.h"
 
 static infer_t *inf=0;
+static nvof_t *v=0;
 
 static void frame_callback(void *context, image_t *img)
 {
     display_t *d=(display_t *)context;
     detections_t *dets=infer(inf, img);
     image_t *out_frame_rgb=draw_detections(dets, img);
+
+    nvof_execute(v, img);
+
     display_image("video", out_frame_rgb);
     destroy_image(out_frame_rgb);
     destroy_detections(dets);
@@ -41,7 +46,8 @@ int main(int argc, char *argv[])
     }*/
 
     inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224.trt");
-    
+    v=nvof_create(0,320,320);
+
     if (argc>1)
     {
         FILE *input = fopen(argv[1], "rb");
