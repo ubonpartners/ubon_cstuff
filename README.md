@@ -36,7 +36,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
 
 See the usage example here:  
-👉 [test.py](https://github.com/ubonpartners/ubon_cstuff/blob/main/ubon_pycstuff/test.py)
+👉 [test.py](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
 
 ---
 
