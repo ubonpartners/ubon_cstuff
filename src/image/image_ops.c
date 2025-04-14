@@ -29,6 +29,20 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
+    if (0)//src->width>=2*width && src->height>=2*height)
+    {
+        if (((src->width&3)==0) && ((src->height&3)==0))
+        {
+            image_t *dst=create_image(width/2, height/2, IMAGE_FORMAT_YUV420_DEVICE);
+            if (dst==0) return 0;
+            image_add_dependency(dst, src); 
+            cuda_downsample_2x2(src->y, src->stride_y, dst->y, dst->stride_y, src->width, src->height, dst->stream);
+            cuda_downsample_2x2(src->u, src->stride_uv, dst->u, dst->stride_uv, src->width/2, src->height/2, dst->stream);
+            cuda_downsample_2x2(src->v, src->stride_uv, dst->v, dst->stride_uv, src->width/2, src->height/2, dst->stream);
+            return dst;
+        }
+    }
+
     image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dst) return 0;
 
@@ -74,7 +88,9 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
 {
     assert(img->format!=inter);
     image_t *image_tmp=image_convert(img, inter);
+    assert(image_tmp!=0);
     image_t *scaled=image_scale(image_tmp, width, height);
+    assert(scaled!=0);
     destroy_image(image_tmp);
     return scaled;
 }
@@ -323,7 +339,7 @@ image_t *image_convert(image_t *img, image_format_t format)
         return image_convert_nv12_to_yuv420_npp(img);
 
     if ((format==IMAGE_FORMAT_NV12_DEVICE)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
-        return image_convert_nv12_to_yuv420_npp(img);
+        return image_convert_yuv420_to_nv12_npp(img);
 
     if ((format==IMAGE_FORMAT_YUV420_HOST)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
         return image_convert_yuv420_device_host(img, true, false);

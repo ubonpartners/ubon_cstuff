@@ -1,3 +1,6 @@
+#include <pthread.h>
+#include <string.h>
+#include <stdlib.h>
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include "display.h"
@@ -28,13 +31,45 @@ void display_destroy(display_t *d)
     free(d);
 }
 
+typedef struct {
+    char *name;
+    display_t *display;
+} display_entry_t;
+
+#define MAX_DISPLAYS 32
 
 void display_image(const char *txt, image_t *img)
 {
-    static display_t *hack_display=0;
-    if (hack_display==0) hack_display=display_create(txt);
-    display_image(hack_display, img);
+    static display_entry_t display_table[MAX_DISPLAYS];
+    static int display_count = 0;
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+    pthread_mutex_lock(&lock);
+
+    // Look for an existing display with matching name
+    for (int i = 0; i < display_count; ++i) {
+        if (strcmp(display_table[i].name, txt) == 0) {
+            display_image(display_table[i].display, img);
+            pthread_mutex_unlock(&lock);
+            return;
+        }
+    }
+
+    // Not found, create a new one if there's space
+    if (display_count < MAX_DISPLAYS) {
+        display_t *new_display = display_create(txt);
+        display_table[display_count].name = strdup(txt);
+        display_table[display_count].display = new_display;
+        ++display_count;
+        display_image(new_display, img);
+    } else {
+        // Handle error (e.g. too many displays)
+        fprintf(stderr, "Too many displays created.\n");
+    }
+
+    pthread_mutex_unlock(&lock);
 }
+
 
 void display_image(display_t *d, image_t *img)
 {

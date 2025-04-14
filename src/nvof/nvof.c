@@ -1,3 +1,4 @@
+#include "log.h"
 #include "cuda_stuff.h"
 #include "nvof.h"
 #include <stdio.h>
@@ -7,16 +8,11 @@
 #include <iostream>
 #include <mutex>
 
-#define CHECK_CUDA(call) \
-    if ((call) != CUDA_SUCCESS) { \
-        fprintf(stderr, "CUDA Error at %s:%d %s\n", __FILE__, __LINE__); exit(1); \
-    }
-
 #define CHECK_OF(call) \
     do { \
         NV_OF_STATUS _status = (call); \
         if (_status != NV_OF_SUCCESS) { \
-            fprintf(stderr, "Optical Flow error at %s:%d - code %d (bad ptr is %d)\n", __FILE__, __LINE__, _status,NV_OF_ERR_INVALID_PTR); \
+            log_fatal("Optical Flow error code %d", _status); \
             exit(1); \
         } \
     } while (0)
@@ -36,6 +32,7 @@ struct nvof
     int outW;
     int outH;
     uint32_t count=0;
+    bool use_nv12;
 
     NvOFHandle hOf;
     NvOFGPUBufferHandle inputFrame, referenceFrame, flowBuf, costBuf;
@@ -70,6 +67,8 @@ static void nvof_set_size(nvof_t *v, int width, int height)
 {
     if (v->width==width && v->height==height) return;
 
+    log_trace("NVOF resize to %dx%d nv12:%d",width,height,v->use_nv12);
+
     destroy_nvof_buffer(v, &v->inputFrame);
     destroy_nvof_buffer(v, &v->referenceFrame);
     destroy_nvof_buffer(v, &v->flowBuf);
@@ -79,8 +78,8 @@ static void nvof_set_size(nvof_t *v, int width, int height)
     v->width=width;
     v->height=height;
     v->gridsize=4;
-    v->outW=width/v->gridsize;
-    v->outH=height/v->gridsize;
+    v->outW=(width+v->gridsize-1)/v->gridsize;
+    v->outH=(height+v->gridsize-1)/v->gridsize;
 
     NV_OF_INIT_PARAMS initParams;
     memset(&initParams, 0, sizeof(initParams));
@@ -89,17 +88,20 @@ static void nvof_set_size(nvof_t *v, int width, int height)
     initParams.perfLevel=NV_OF_PERF_LEVEL_MEDIUM;
     initParams.outGridSize=NV_OF_OUTPUT_VECTOR_GRID_SIZE_4;
     initParams.mode=NV_OF_MODE_OPTICALFLOW;
-    initParams.inputBufferFormat=NV_OF_BUFFER_FORMAT_GRAYSCALE8;
+    initParams.inputBufferFormat=(v->use_nv12) ?  NV_OF_BUFFER_FORMAT_NV12 : NV_OF_BUFFER_FORMAT_GRAYSCALE8;
     initParams.predDirection = NV_OF_PRED_DIRECTION_FORWARD;
     initParams.enableOutputCost = NV_OF_TRUE;
     CHECK_OF(nvOFAPI.nvOFInit(v->hOf, &initParams));
 
-    create_nvof_buffer(v, width, height, NV_OF_BUFFER_USAGE_INPUT, NV_OF_BUFFER_FORMAT_GRAYSCALE8, &v->inputFrame);
-    create_nvof_buffer(v, width, height, NV_OF_BUFFER_USAGE_INPUT, NV_OF_BUFFER_FORMAT_GRAYSCALE8, &v->referenceFrame);
+    create_nvof_buffer(v, width, height, NV_OF_BUFFER_USAGE_INPUT, initParams.inputBufferFormat, &v->inputFrame);
+    create_nvof_buffer(v, width, height, NV_OF_BUFFER_USAGE_INPUT, initParams.inputBufferFormat, &v->referenceFrame);
     create_nvof_buffer(v, v->outW, v->outH, NV_OF_BUFFER_USAGE_OUTPUT, NV_OF_BUFFER_FORMAT_SHORT2, &v->flowBuf);
     create_nvof_buffer(v, v->outW, v->outH, NV_OF_BUFFER_USAGE_OUTPUT, NV_OF_BUFFER_FORMAT_UINT8, &v->costBuf);
     cuMemAllocHost((void**)&v->flowBufHost, 4*v->outW*v->outH);
     cuMemAllocHost((void**)&v->costBufHost, 1*v->outW*v->outH);
+
+    memset(v->flowBufHost, 0, 4*v->outW*v->outH);
+    memset(v->costBufHost, 0, 1*v->outW*v->outH);
     v->count=0;
 }
 
@@ -112,11 +114,31 @@ static int get_buf_stride(NvOFGPUBufferHandle buf)
 
 nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
 {
-    image_t *converted=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
-    assert(converted!=0);
-    image_t *converted_scaled=image_scale(converted, v->width, v->height);
-    assert(converted_scaled!=0);
-    destroy_image(converted);
+    assert(img!=0);
+    //printf("%dx%d %s\n",img->width,img->height,image_format_name(img->format));
+    if (img->width!=v->width || img->height!=v->height)
+    {
+        image_t *scaled=image_scale(img, v->width, v->height);
+        nvof_results_t *r=nvof_execute(v, scaled);
+        destroy_image(scaled);
+        return r;
+    }
+
+    image_format_t target_format=(v->use_nv12) ? IMAGE_FORMAT_NV12_DEVICE : IMAGE_FORMAT_YUV420_DEVICE;
+
+    if (img->format!=target_format)
+    {
+        image_t *converted=image_convert(img, target_format);
+        assert(converted->format==target_format);
+        nvof_results_t *r=nvof_execute(v, converted);
+        destroy_image(converted);
+        return r;
+    }
+
+    if (v->use_nv12)
+    {
+        assert(img->stride_y==img->stride_uv);
+    }
 
     nvof_set_size(v, v->width, v->height);
 
@@ -132,17 +154,18 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
     CUDA_MEMCPY2D copyP;
     memset(&copyP, 0, sizeof(copyP));
     copyP.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    copyP.srcDevice = (CUdeviceptr)converted_scaled->device_mem;
+    copyP.srcDevice = (CUdeviceptr)img->device_mem;
     copyP.dstMemoryType = CU_MEMORYTYPE_DEVICE;
     copyP.dstDevice = nvOFAPI.nvOFGPUBufferGetCUdeviceptr(v->inputFrame);
-    copyP.srcPitch = converted_scaled->stride_y;
+    copyP.srcPitch = img->stride_y;
     copyP.dstPitch = get_buf_stride(v->inputFrame);
-    copyP.WidthInBytes = converted_scaled->width;
-    copyP.Height = converted_scaled->height;
-    assert(CUDA_SUCCESS==cuMemcpy2DAsync(&copyP, converted_scaled->stream));
+    copyP.WidthInBytes = img->width;
+    copyP.Height = (img->height*(v->use_nv12 ? 3 : 2))/2;
+
+    CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP, img->stream));
     if (v->count>0)
     {
-        CHECK_OF(nvOFAPI.nvOFSetIOCudaStreams(v->hOf, converted_scaled->stream, converted_scaled->stream));
+        CHECK_OF(nvOFAPI.nvOFSetIOCudaStreams(v->hOf, img->stream, img->stream));
         CHECK_OF(nvOFAPI.nvOFExecute(v->hOf, &executeInParams, &executeOutParams));
         
         CUDA_MEMCPY2D copyP1;
@@ -155,7 +178,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
         copyP1.dstPitch = 4*v->outW;
         copyP1.WidthInBytes = 4*v->outW;
         copyP1.Height = v->outH;
-        assert(CUDA_SUCCESS==cuMemcpy2DAsync(&copyP1, converted_scaled->stream));
+        CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP1, img->stream));
 
         CUDA_MEMCPY2D copyP2;
         memset(&copyP2, 0, sizeof(copyP2));
@@ -167,21 +190,19 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
         copyP2.dstPitch = v->outW;
         copyP2.WidthInBytes = v->outW;
         copyP2.Height = v->outH;
-        assert(CUDA_SUCCESS==cuMemcpy2DAsync(&copyP2, converted_scaled->stream));
+        CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP2, img->stream));
         
-        cuStreamSynchronize(converted_scaled->stream);
+        cuStreamSynchronize(img->stream);
     }
     else
     {
-        cuStreamSynchronize(converted_scaled->stream);
+        cuStreamSynchronize(img->stream);
     }
     
     v->count++;
     NvOFGPUBufferHandle temp=v->inputFrame;
     v->inputFrame=v->referenceFrame;
     v->referenceFrame=temp;
-
-    destroy_image(converted_scaled);
 
     v->results.grid_w=v->outW;
     v->results.grid_h=v->outH;
@@ -198,6 +219,8 @@ nvof_t *nvof_create(void *context, int width, int height)
     nvof_t *n = (nvof_t *)malloc(sizeof(nvof_t));
     if (n==0) return 0;
     memset(n, 0, sizeof(nvof_t));
+
+    n->use_nv12=true;
 
     CHECK_OF(nvOFAPI.nvCreateOpticalFlowCuda(get_CUcontext(), &n->hOf));
 

@@ -3,17 +3,19 @@
 
 #include <npp.h>
 #include <cuda.h>
+#include "log.h"
 
-// Error checking macro
-#define CHECK_CUDA_CALL(call) do {      \
-    CUresult err = call;                \
-    if (err != CUDA_SUCCESS) {          \
-        const char *errStr;             \
-        cuGetErrorName(err, &errStr);   \
-        fprintf(stderr, "CUDA Error: %s at line %d\n", errStr, __LINE__); \
-        exit(EXIT_FAILURE);             \
-        }                               \
-} while (0)
+#define CHECK_CUDA_CALL(call) \
+    do { \
+        CUresult _status = (call); \
+        if (_status != CUDA_SUCCESS) { \
+            const char *namestr,*errstr; \
+            cuGetErrorName(_status, &namestr); \
+            cuGetErrorString(_status, &errstr); \
+            log_fatal("Cuda error code %d %s:%s",_status,namestr,errstr); \
+            exit(1); \
+        }  \
+    } while(0)
 
 void check_cuda_inited();
 void init_cuda_stuff();
