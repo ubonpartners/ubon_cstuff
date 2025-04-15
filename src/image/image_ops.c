@@ -8,6 +8,15 @@
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 
+#define CHECK_NPPcall(call) \
+    do { \
+        NppStatus _status = (call); \
+        if (_status != NPP_SUCCESS) { \
+            log_fatal("NPP error code %d", _status); \
+            exit(1); \
+        } \
+    } while (0)
+
 static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 {
     image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_HOST);
@@ -29,28 +38,41 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    if (0)//src->width>=2*width && src->height>=2*height)
+    if (src->width>2*width && src->height>2*height)
     {
-        if (((src->width&3)==0) && ((src->height&3)==0))
+        if ((src->format==IMAGE_FORMAT_YUV420_DEVICE) && ((src->width&3)==0) && ((src->height&3)==0))
         {
-            image_t *dst=create_image(width/2, height/2, IMAGE_FORMAT_YUV420_DEVICE);
-            if (dst==0) return 0;
-            image_add_dependency(dst, src); 
-            cuda_downsample_2x2(src->y, src->stride_y, dst->y, dst->stride_y, src->width, src->height, dst->stream);
-            cuda_downsample_2x2(src->u, src->stride_uv, dst->u, dst->stride_uv, src->width/2, src->height/2, dst->stream);
-            cuda_downsample_2x2(src->v, src->stride_uv, dst->v, dst->stride_uv, src->width/2, src->height/2, dst->stream);
-            return dst;
+            int inter_w=src->width>>1;
+            int inter_h=src->height>>1;
+            image_t *inter=0;
+            if (0)
+            {
+                inter=image_scale_yuv420_device(src, inter_w, inter_h);
+            }
+            else
+            {
+                inter=create_image(inter_w, inter_h, IMAGE_FORMAT_YUV420_DEVICE);
+                if (!inter) return 0;
+                image_add_dependency(inter, src); // don't run this until 'src' is ready
+                cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
+                cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+                cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+            }
+            image_t *ret=image_scale_yuv420_device(inter, width, height);
+            
+            destroy_image(inter);
+            return ret;
         }
     }
 
     image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dst) return 0;
+    image_add_dependency(dst, src); // don't run this until 'src' is ready
 
     NppiSize srcSize = {src->width, src->height};
     NppiRect srcROI = {0, 0, src->width, src->height};
     NppiRect dstROI = {0, 0, dst->width, dst->height};
 
-    image_add_dependency(dst, src); // don't run this until 'src' is ready
     NppStreamContext nppStreamCtx=get_nppStreamCtx();
     nppStreamCtx.hStream=dst->stream;
 
@@ -59,10 +81,9 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     NppiSize dstSize = {dst->width, dst->height};
 
     // Y plane scaling
-    NppStatus result = nppiResize_8u_C1R_Ctx(src->y, src->stride_y, srcSize, srcROI,
+    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->y, src->stride_y, srcSize, srcROI,
                                          dst->y, dst->stride_y, dstSize, dstROI,
-                                         interpolationMode, nppStreamCtx);
-    assert(result== NPP_SUCCESS);
+                                         interpolationMode, nppStreamCtx));
 
     // Scale U and V planes (quarter resolution of Y in YUV420)
     NppiSize srcSizeUV = {src->width / 2, src->height / 2};
@@ -71,16 +92,14 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     NppiRect dstROIUV = {0, 0, dst->width / 2, dst->height / 2};
 
     // U plane scaling
-    result = nppiResize_8u_C1R_Ctx(src->u, src->stride_uv, srcSizeUV, srcROIUV,
+    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->u, src->stride_uv, srcSizeUV, srcROIUV,
                                dst->u, dst->stride_uv, dstSizeUV, dstROIUV,
-                               interpolationMode, nppStreamCtx);
-    assert(result== NPP_SUCCESS);
+                               interpolationMode, nppStreamCtx));
 
     // V plane scaling
-    result = nppiResize_8u_C1R_Ctx(src->v, src->stride_uv, srcSizeUV, srcROIUV,
+    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->v, src->stride_uv, srcSizeUV, srcROIUV,
                                dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
-                               interpolationMode, nppStreamCtx);
-    assert(result== NPP_SUCCESS); 
+                               interpolationMode, nppStreamCtx));
     return dst;
 }
 
@@ -123,32 +142,39 @@ static image_t *image_convert_nv12_to_yuv420_npp(image_t *src)
     image_add_dependency(dst, src); // don't run this until 'src' is ready
     NppStreamContext nppStreamCtx=get_nppStreamCtx();
     nppStreamCtx.hStream=dst->stream;
-    NppStatus result=nppiNV12ToYUV420_8u_P2P3R_Ctx(pSrc, src->stride_y, pDst, aDstStep, roi, nppStreamCtx);
+    CHECK_NPPcall(nppiNV12ToYUV420_8u_P2P3R_Ctx(pSrc, src->stride_y, pDst, aDstStep, roi, nppStreamCtx));
     return dst;
 }
 
-static image_t *image_convert_yuv420_to_nv12_npp(image_t *src)
+static image_t *image_convert_yuv420_to_nv12_device(image_t *src)
 {
     image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_NV12_DEVICE);
     image_add_dependency(dst, src);
 
-    NppiSize roi = { src->width, src->height };
-    NppStreamContext nppStreamCtx = get_nppStreamCtx();
-    nppStreamCtx.hStream = dst->stream;
+    int width = src->width;
+    int height = src->height;
+    int uv_width = width / 2;
+    int uv_height = height / 2;
 
-    const Npp8u *pSrc[3] = { src->y, src->u, src->v }; // assuming src->u = Cr, src->v = Cb
-    int aSrcStep[3] = { src->stride_y, src->stride_uv, src->stride_uv };
+    // Copy Y-plane
+    cudaMemcpy2DAsync(
+        dst->y, dst->stride_y,
+        src->y, src->stride_y,
+        width, height,
+        cudaMemcpyDeviceToDevice,
+        dst->stream
+    );
 
-    Npp8u *pDstY = dst->y;
-    Npp8u *pDstCbCr = dst->u; // interleaved CbCr buffer for NV12
-    int dstStepY = dst->stride_y;
-    int dstStepCbCr = dst->stride_uv;
-
-    NppStatus result = nppiYCrCb420ToYCbCr420_8u_P3P2R_Ctx(
-        pSrc, aSrcStep,
-        pDstY, dstStepY,
-        pDstCbCr, dstStepCbCr,
-        roi, nppStreamCtx);
+    // Interleave U (Cb) and V (Cr) into NV12 format
+    cuda_interleave_uv(
+        src->u, src->v,                      // u = Cb, v = Cr
+        src->stride_uv,
+        dst->u,                              // NV12 interleaved CbCr output
+        dst->stride_uv,
+        uv_width,
+        uv_height,
+        dst->stream
+    );
 
     return dst;
 }
@@ -209,7 +235,7 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src)
     image_add_dependency(dest, src); // don't run this until 'src' is ready
     NppStreamContext nppStreamCtx=get_nppStreamCtx();
     nppStreamCtx.hStream=dest->stream;
-    nppiRGBToYUV420_8u_C3P3R_Ctx(src->rgb, src->stride_rgb, pDst, aDstStep, oSizeROI, nppStreamCtx);
+    CHECK_NPPcall(nppiRGBToYUV420_8u_C3P3R_Ctx(src->rgb, src->stride_rgb, pDst, aDstStep, oSizeROI, nppStreamCtx));
     return dest;
 }
 
@@ -331,7 +357,7 @@ static image_t *image_convert_via_intermediate(image_t *img, image_format_t inte
 
 image_t *image_convert(image_t *img, image_format_t format)
 {
-    //printf("convert %s->%s\n",image_format_name(img->format),image_format_name(format));
+    //log_debug("convert %s->%s",image_format_name(img->format),image_format_name(format));
 
     if (format==img->format) return image_reference(img);
 
@@ -339,7 +365,10 @@ image_t *image_convert(image_t *img, image_format_t format)
         return image_convert_nv12_to_yuv420_npp(img);
 
     if ((format==IMAGE_FORMAT_NV12_DEVICE)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
-        return image_convert_yuv420_to_nv12_npp(img);
+        return image_convert_yuv420_to_nv12_device(img);
+    
+    if ((format==IMAGE_FORMAT_RGB24_HOST)&&(img->format==IMAGE_FORMAT_NV12_DEVICE))
+        return image_convert_via_intermediate(img, IMAGE_FORMAT_YUV420_DEVICE, format);
 
     if ((format==IMAGE_FORMAT_YUV420_HOST)&&(img->format==IMAGE_FORMAT_YUV420_DEVICE))
         return image_convert_yuv420_device_host(img, true, false);

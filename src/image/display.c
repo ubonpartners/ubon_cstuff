@@ -4,6 +4,7 @@
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include "display.h"
+#include "log.h"
 
 struct display
 {
@@ -57,6 +58,7 @@ void display_image(const char *txt, image_t *img)
 
     // Not found, create a new one if there's space
     if (display_count < MAX_DISPLAYS) {
+        log_debug("Create new debug display %s",txt);
         display_t *new_display = display_create(txt);
         display_table[display_count].name = strdup(txt);
         display_table[display_count].display = new_display;
@@ -64,7 +66,7 @@ void display_image(const char *txt, image_t *img)
         display_image(new_display, img);
     } else {
         // Handle error (e.g. too many displays)
-        fprintf(stderr, "Too many displays created.\n");
+        log_error("Too many displays created");
     }
 
     pthread_mutex_unlock(&lock);
@@ -80,6 +82,7 @@ void display_image(display_t *d, image_t *img)
         destroy_image(tmp);
         return;
     }
+    //log_debug("display %p:%dx%d",d,img->width,img->height);
     int s=2;
     if (d->window!=0)
     {

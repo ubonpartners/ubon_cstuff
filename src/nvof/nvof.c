@@ -1,6 +1,7 @@
 #include "log.h"
 #include "cuda_stuff.h"
 #include "nvof.h"
+#include "display.h"
 #include <stdio.h>
 #include <string.h>
 #include <cassert>
@@ -139,6 +140,9 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img)
     {
         assert(img->stride_y==img->stride_uv);
     }
+    assert(img->width==v->width && img->height==v->height);
+    //log_debug("nvof size %dx%d img %dx%d",v->width,v->height,img->width,img->height);
+    //display_image("nvof",img);
 
     nvof_set_size(v, v->width, v->height);
 

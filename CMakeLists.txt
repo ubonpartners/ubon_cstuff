@@ -4,6 +4,7 @@ project(uboncstuff LANGUAGES C CXX CUDA)
 # Ensure Python3 is found first so Python3_EXECUTABLE is available
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+
 # Automatically detect pybind11 installed via pip or conda
 execute_process(
     COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
@@ -22,6 +23,8 @@ set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 
 set(CMAKE_CXX_FLAGS "-O2 -g")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -x c++")  # treat .c files as C++
+
+find_package(yaml-cpp REQUIRED)
 
 # CUDA setup
 enable_language(CUDA)
@@ -68,6 +71,7 @@ add_executable(uboncstuff ${MAIN_FILE})
 
 target_link_libraries(uboncstuff
     uboncstufflib
+    yaml-cpp
     -L/usr/local/cuda/lib64
     -lnvinfer -lcudart -lcublas -lpthread -lnvonnxparser
     -lopenh264 -lcuda -lnvcuvid -lyuv

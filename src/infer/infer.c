@@ -14,6 +14,7 @@
 #include "display.h"
 #include "detections.h"
 #include "cuda_stuff.h"
+#include "log.h"
 
 using namespace nvinfer1;
 using namespace nvonnxparser;
@@ -39,7 +40,9 @@ public:
     void log(Severity severity, const char* msg) noexcept
     {
         if ((severity == Severity::kERROR) || (severity == Severity::kINTERNAL_ERROR))
-            printf("[TRT] %s\n",msg);
+            log_error("[TRT] %s\n",msg);
+        if (severity == Severity::kWARNING)
+            log_warn("[TRT] %s\n",msg);
     }
 } trt_Logger;
 
@@ -84,7 +87,7 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     // Set the timing cache in the builder config
     config->setTimingCache(*timingCache, false);
 
-    auto parsed = parser->parseFromFile(onnx_filename, 10);
+    auto parsed = parser->parseFromFile(onnx_filename, static_cast<int>(nvinfer1::ILogger::Severity::kWARNING));
     assert(parsed!=0);
 
     for (int i = 0; i < network->getNbInputs(); ++i) 
@@ -95,16 +98,16 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
         Dims inputDims = inputTensor->getDimensions();
         for (int j = 0; j < inputDims.nbDims; ++j) 
         {
-            printf("Input (%s) %d : %d\n",inputTensor->getName(), i, (int)inputDims.d[j]);
+            log_debug("Input (%s) %d : %d\n",inputTensor->getName(), i, (int)inputDims.d[j]);
         }
     }
 
     IOptimizationProfile* profile = builder->createOptimizationProfile();
 
     ITensor* inputTensor = network->getInput(0);
-    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kMIN, Dims{4, {1, 3, 64, 64}});
-    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kOPT, Dims{4, {1, 3, 640, 352}});
-    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kMAX, Dims{4, {16, 3, 640, 640}});
+    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kMIN, Dims4{1, 3, 64, 64});
+    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kOPT, Dims4{1, 3, 640, 352});
+    profile->setDimensions(inputTensor->getName(), OptProfileSelector::kMAX, Dims4{16, 3, 640, 640});
     config->addOptimizationProfile(profile);
 
     auto out=builder->buildSerializedNetwork(*network, *config);
@@ -143,7 +146,7 @@ infer_t *infer_create(const char *model)
 
     cudaStreamCreate(&inf->stream);
 
-    printf("Infer create\n");
+    log_debug("Infer create");
 
     //infer_build("/mldata/weights/onnx/yolo11l-dpa-131224.onnx", "/mldata/weights/trt/yolo11l-dpa-131224.trt");
 
@@ -190,7 +193,7 @@ infer_t *infer_create(const char *model)
             inf->output_tensor_name=name;
             Dims outputDims=inf->engine->getTensorShape(inf->output_tensor_name);
             inf->detection_attribute_size=(int)outputDims.d[1];
-            printf("outputDims %dx%dx%d\n", (int)outputDims.d[0], (int)outputDims.d[1], (int)outputDims.d[2]);
+            log_debug("outputDims %dx%dx%d\n", (int)outputDims.d[0], (int)outputDims.d[1], (int)outputDims.d[2]);
         }
     }
     return inf;
@@ -199,6 +202,10 @@ infer_t *infer_create(const char *model)
 void infer_destroy(infer_t *inf)
 {
     if (!inf) return;
+    cudaStreamDestroy(inf->stream);
+    if (inf->ec) delete inf->ec;
+    if (inf->engine) delete inf->engine;
+    if (inf->runtime) delete inf->runtime;
     if (inf->output_mem) cuMemFree(inf->output_mem);
     inf->output_mem=0;
     if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
@@ -222,7 +229,7 @@ detections_t *infer(infer_t *inf, image_t *img)
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        printf("Reallocate output memory [%d bytes]\n",max_output_size);
+        log_debug("Reallocate output memory [%d bytes]\n",max_output_size);
         if (inf->output_mem) cuMemFree(inf->output_mem);
         if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
         cuMemAlloc(&inf->output_mem, max_output_size);

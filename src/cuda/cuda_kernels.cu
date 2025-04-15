@@ -151,45 +151,95 @@ void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, i
 
 static __global__ void downsample_2x2_kernel(const uint8_t* src, int src_stride,
     uint8_t* dst, int dst_stride,
-    int width, int height)
+    int dst_width, int dst_height)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x; // column in dst
-    int y = blockIdx.y * blockDim.y + threadIdx.y; // row in dst
+    int dst_x = blockIdx.x * blockDim.x + threadIdx.x; // column in dst
+    int dst_y = blockIdx.y * blockDim.y + threadIdx.y; // row in dst
 
-    if (x < width / 2 && y < height / 2) {
-    // Source top-left of the 2x2 block
-    int src_x = x * 2;
-    int src_y = y * 2;
+    if (dst_x < dst_width && dst_y < dst_height ) {
+        // Source top-left of the 2x2 block
+        int src_x = dst_x * 2;
+        int src_y = dst_y * 2;
 
-    int idx0 = src_y * src_stride + src_x;
-    int idx1 = idx0 + 1;
-    int idx2 = idx0 + src_stride;
-    int idx3 = idx2 + 1;
+        int idx0 = src_y * src_stride + src_x;
+        int idx1 = idx0 + 1;
+        int idx2 = idx0 + src_stride;
+        int idx3 = idx2 + 1;
 
-    // Average the 2x2 block and store to destination
-    uint8_t a = src[idx0];
-    uint8_t b = src[idx1];
-    uint8_t c = src[idx2];
-    uint8_t d = src[idx3];
+        // Average the 2x2 block and store to destination
+        uint8_t a = src[idx0];
+        uint8_t b = src[idx1];
+        uint8_t c = src[idx2];
+        uint8_t d = src[idx3];
 
-    dst[y * dst_stride + x] = (a + b + c + d + 2) / 4; // +2 for rounding
+        dst[dst_y * dst_stride + dst_x] = (a + b + c + d + 2) / 4; // +2 for rounding
     }
 }
 
 void cuda_downsample_2x2(const uint8_t* d_src, int src_stride,
     uint8_t* d_dst, int dst_stride,
-    int width, int height,
+    int dst_width, int dst_height,
     CUstream stream)
 {
     dim3 block(16, 16);
-    dim3 grid((width / 2 + block.x - 1) / block.x,(height / 2 + block.y - 1) / block.y);
+    dim3 grid((dst_width + block.x - 1) / block.x, (dst_height + block.y - 1) / block.y);
 
     downsample_2x2_kernel<<<grid, block, 0, stream>>>(
         d_src, src_stride,
         d_dst, dst_stride,
-        width, height
+        dst_width, dst_height
     );
 }
 
+static __global__ void interleave_uv_kernel(
+    const uint8_t* __restrict__ u,
+    const uint8_t* __restrict__ v,
+    int src_stride_uv,
+    uint8_t* __restrict__ dst,
+    int dest_stride_uv,
+    int width,
+    int height)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;  // pixel index in row
+    int y = blockIdx.y * blockDim.y + threadIdx.y;  // row index
+
+    if (x < width && y < height) {
+        const uint8_t u_val = u[y * src_stride_uv + x];
+        const uint8_t v_val = v[y * src_stride_uv + x];
+
+        int dst_idx = y * dest_stride_uv + 2 * x;
+        dst[dst_idx]     = u_val;
+        dst[dst_idx + 1] = v_val;
+    }
 }
+
+void cuda_interleave_uv(
+    const uint8_t* d_u, const uint8_t* d_v,
+    int src_stride_uv,
+    uint8_t* d_dst,
+    int dest_stride_uv,
+    int width,
+    int height,
+    CUstream stream)
+{
+    dim3 block(32, 8);
+    dim3 grid((width + block.x - 1) / block.x,
+              (height + block.y - 1) / block.y);
+
+    interleave_uv_kernel<<<grid, block, 0, stream>>>(
+        d_u, d_v,
+        src_stride_uv,
+        d_dst,
+        dest_stride_uv,
+        width,
+        height
+    );
+}
+
+
+
+
+}
+
+
 
