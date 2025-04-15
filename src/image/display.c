@@ -59,7 +59,9 @@ void display_image(const char *txt, image_t *img)
     // Not found, create a new one if there's space
     if (display_count < MAX_DISPLAYS) {
         log_debug("Create new debug display %s",txt);
-        display_t *new_display = display_create(txt);
+        char temp[100];
+        snprintf(temp, 99, "%s : %dx%d : %s",txt,img->width,img->height, image_format_name(img->format));
+        display_t *new_display = display_create(temp);
         display_table[display_count].name = strdup(txt);
         display_table[display_count].display = new_display;
         ++display_count;

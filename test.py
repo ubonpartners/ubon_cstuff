@@ -9,14 +9,20 @@ bgr_img = cv2.imread("/mldata/image/arrest.jpg")
 rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
 
 img = upyc.c_image.from_numpy(rgb_img)
-img_scaled = img.scale(1024, 768)
+#img.display("newly created")
+img_scaled = img.scale(1280, 720)
+#img_scaled.display("scaled")
+#img_converted = img.convert(upyc.YUV420_DEVICE)
+#img_converted.display("converted")
+#img_converted2 = img_converted.convert(upyc.NV12_DEVICE)
+#img_converted2.display("converted2")
 
 # Convert back to BGR for OpenCV display
 round_trip_bgr = cv2.cvtColor(img_scaled.to_numpy(), cv2.COLOR_RGB2BGR)
 
 # Display the image
 cv2.imshow("Round-trip image", round_trip_bgr)
-cv2.waitKey(0)
+cv2.waitKey(5000)
 cv2.destroyAllWindows()
 
 # run tensortRT inference
@@ -26,7 +32,7 @@ print(dets)
 
 # create a NVDEC video decoder
 decoder = upyc.c_decoder()
-with open("/mldata/video/mall_escalators.264", "rb") as f:
+with open("/mldata/video/MOT20-01.264", "rb") as f:
     bitstream = f.read()
 
 # decode some video
@@ -38,6 +44,9 @@ flow_engine = upyc.c_nvof(320, 320)
 d=stuff.Display(1280,720)
 
 for i, frame in enumerate(frames):
+    if i%10!=0:
+        continue
+    print(f"frame {i}")
     arr = frame.to_numpy()
     dets=inf.run(frame)
     #print(dets)
@@ -58,5 +67,5 @@ for i, frame in enumerate(frames):
             stop=[start[0]+flow[y][x][0], start[1]+flow[y][x][1]]
             if abs(dx)>0.001 or abs(dy)>0.001:
                 d.draw_line(start, stop, clr=(255,255,255,255))
-    d.show(arr)
+    d.show(arr, is_rgb=True)
     d.get_events(30)

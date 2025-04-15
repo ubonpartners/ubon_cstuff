@@ -132,3 +132,17 @@ CUcontext get_CUcontext()
     assert(cuda_inited);
     return cuContext;
 }
+
+CUstream create_custream()
+{
+    CUstream ret=0;
+    return ret; // TODO: Fixme; streams break NVOF
+    CHECK_CUDA_CALL(cuStreamCreate(&ret, CU_STREAM_DEFAULT));
+    return ret;
+}
+
+void destroy_custream(CUstream stream)
+{
+    if (stream==0) return;
+    CHECK_CUDA_CALL(cuStreamDestroy(stream));
+}

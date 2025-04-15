@@ -99,7 +99,7 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
     img->height=height;
     img->format=fmt;
     img->reference_count=1;
-    img->stream=0;
+    img->stream=create_custream();
     return img;
 }
 
@@ -124,6 +124,7 @@ void destroy_image(image_t *img)
     if (reference_count>1) return;
 
     cuStreamSynchronize(img->stream);
+    destroy_custream(img->stream);
 
     switch(img->format)
     {

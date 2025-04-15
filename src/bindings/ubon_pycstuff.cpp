@@ -10,6 +10,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "cuda_stuff.h"
 #include "detections.h"
 #include "simple_decoder.h"
+#include "display.h"
 #include "nvof.h"
 
 // to build: python setup.py build_ext --inplace
@@ -53,6 +54,10 @@ class c_image {
         std::shared_ptr<c_image> convert(image_format_t fmt) {
             image_t* converted = image_convert(img, fmt);
             return std::make_shared<c_image>(converted);
+        }
+
+        void display(const char *name) {
+            display_image(name, img);
         }
     
         py::array_t<uint8_t> to_numpy() {
@@ -247,15 +252,15 @@ class c_infer {
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
     py::enum_<image_format>(m, "ImageFormat")
-        .value("UNKNOWN", IMAGE_FORMAT_YUV420_HOST)
-        .value("YUV420_HOST", IMAGE_FORMAT_YUV420_DEVICE)
+        .value("YUV420_DEVICE", IMAGE_FORMAT_YUV420_DEVICE)
+        .value("YUV420_HOST", IMAGE_FORMAT_YUV420_HOST)
         .value("NV12_DEVICE", IMAGE_FORMAT_NV12_DEVICE)
         .value("RGB24_HOST", IMAGE_FORMAT_RGB24_HOST)
         .value("RGB24_DEVICE", IMAGE_FORMAT_RGB24_DEVICE)
         .value("RGB_PLANAR_FP16_DEVICE", IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
         .value("RGB_PLANAR_FP16_HOST", IMAGE_FORMAT_RGB_PLANAR_FP16_HOST)
-        .value("RGB_PLANAR_FP32_HOST", IMAGE_FORMAT_RGB_PLANAR_FP32_HOST)
         .value("RGB_PLANAR_FP32_DEVICE", IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)
+        .value("RGB_PLANAR_FP32_HOST", IMAGE_FORMAT_RGB_PLANAR_FP32_HOST)
         .export_values();
 
     py::class_<c_image, std::shared_ptr<c_image>>(m, "c_image")
@@ -263,7 +268,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def_static("from_numpy", &c_image::from_numpy, "Create from NumPy RGB array")
         .def("scale", &c_image::scale, "Scale image")
         .def("convert", &c_image::convert, "Convert format")
-        .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image");
+        .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image")
+        .def("display", &c_image::display, "Show image in a debug display");
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&>(), py::arg("trt_file"))

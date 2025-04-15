@@ -22,5 +22,7 @@ void init_cuda_stuff();
 NppStreamContext get_nppStreamCtx();
 void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on);
 CUcontext get_CUcontext();
+CUstream create_custream();
+void destroy_custream(CUstream s);
 
 #endif
