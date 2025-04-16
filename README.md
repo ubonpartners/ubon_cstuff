@@ -31,6 +31,15 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 
 ---
 
+## Prerequisities
+
+- TensorRT installed (libnvinfer10, via apt)
+- sudo apt install libyuv-dev
+- sudo apt install libsdl2-dev
+- sudo apt install libyaml-cpp-dev
+- 
+---
+
 ## 🐍 Python Bindings
 
 All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
