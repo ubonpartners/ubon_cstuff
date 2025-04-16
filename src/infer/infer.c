@@ -4,6 +4,7 @@
 #include <cassert>
 #include <memory>
 #include <filesystem>
+#include <iostream>
 #include <fstream>
 #include <cuda_runtime_api.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@
 #include "detections.h"
 #include "cuda_stuff.h"
 #include "log.h"
+#include <yaml-cpp/yaml.h>
 
 using namespace nvinfer1;
 using namespace nvonnxparser;
@@ -139,7 +141,7 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     }
 }
 
-infer_t *infer_create(const char *model)
+infer_t *infer_create(const char *model, const char *yaml_config)
 {
     infer_t *inf=(infer_t *)malloc(sizeof(infer_t));
     memset(inf, 0, sizeof(infer_t));
@@ -147,6 +149,19 @@ infer_t *infer_create(const char *model)
     cudaStreamCreate(&inf->stream);
 
     log_debug("Infer create");
+
+    /*YAML::Node config = YAML::LoadFile(yaml_config);
+    // Access 'kpt_shape'
+    std::vector<int> kpt_shape = config["dataset"]["kpt_shape"].as<std::vector<int>>();
+    std::cout << "kpt_shape: ";
+    for (int v : kpt_shape) std::cout << v << " ";
+    std::cout << "\n";
+
+    // Access 'names'
+    std::vector<std::string> names = config["dataset"]["names"].as<std::vector<std::string>>();
+    std::cout << "names: ";
+    for (const auto& name : names) std::cout << name << " ";
+    std::cout << "\n";*/
 
     //infer_build("/mldata/weights/onnx/yolo11l-dpa-131224.onnx", "/mldata/weights/trt/yolo11l-dpa-131224.trt");
 

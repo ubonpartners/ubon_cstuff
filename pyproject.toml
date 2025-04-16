@@ -1,3 +1,16 @@
 [build-system]
-requires = ["scikit-build", "setuptools", "wheel", "cmake", "ninja", "pybind11", "numpy"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core[pyproject]", "setuptools", "wheel", "cmake", "ninja", "pybind11", "numpy"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ubon_pycstuff"
+version = "0.1.1"
+description = "Python bindings for ubon C/C++/CUDA code using pybind11"
+authors = [{ name = "Mark Blake" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = ["Programming Language :: Python :: 3"]
+
+[tool.scikit-build]
+wheel.install-dir = "ubon_pycstuff"

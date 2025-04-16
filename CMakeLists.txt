@@ -86,7 +86,7 @@ find_package(pybind11 REQUIRED)
 add_subdirectory(src/bindings)
 
 install(TARGETS ubon_pycstuff
-        LIBRARY DESTINATION ubon_pycstuff)  # install into package folder
+        LIBRARY DESTINATION python/ubon_pycstuff)  # install into package folder
 
 # Clean target
 set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES "${CMAKE_BINARY_DIR}/uboncstuff")

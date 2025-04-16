@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
+#include <iostream>
 
 namespace py = pybind11;
 using namespace pybind11::literals;  // <-- this line enables "_a" syntax
@@ -120,8 +121,8 @@ class c_infer {
     public:
         infer_t* inf;
     
-        c_infer(const std::string& trt_file) {
-            inf = infer_create(trt_file.c_str());
+        c_infer(const std::string& trt_file, const std::string& yaml_file) {
+            inf = infer_create(trt_file.c_str(), yaml_file.c_str());
             if (!inf) {
                 throw std::runtime_error("Failed to create infer_t");
             }
@@ -251,6 +252,7 @@ class c_infer {
             };
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
+    std::cout << "ubon_pycstuff bindings loaded" << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
         .value("YUV420_DEVICE", IMAGE_FORMAT_YUV420_DEVICE)
         .value("YUV420_HOST", IMAGE_FORMAT_YUV420_HOST)
@@ -272,7 +274,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("display", &c_image::display, "Show image in a debug display");
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
-        .def(py::init<const std::string&>(), py::arg("trt_file"))
+        .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
         .def("run", &c_infer::run, "Run inference on a c_image");
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
