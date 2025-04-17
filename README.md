@@ -15,6 +15,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
   - NVIDIA NPP
   - libyuv
 - Color format & colorspace conversion
+- Fully asynchronous use of cuda with automatic chaining and synchronization
 
 ### Video Decoding
 - Hardware and software decoder support:
@@ -45,16 +46,14 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
 
 See the usage example here:  
-👉 [test.py](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
+👉 [The examples](https://github.com/ubonpartners/ubon_cstuff/blob/main/examples.py)
+👉 [The tests](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
 
 ## Prebuilt python wheel
 
 [Download here (note might be out of date)](https://drive.google.com/file/d/1VTfBOdzqFs8tkpScRHW-Df6PeWfW0r5U/view?usp=sharing)
 
-After installing you should be able to run
-
-- [The examples](https://github.com/ubonpartners/ubon_cstuff/blob/main/examples.py)
-- [The tests](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
+After installing you should be able to run the examples/tests above
 
 ---
 
