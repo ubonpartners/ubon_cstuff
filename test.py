@@ -32,7 +32,7 @@ def test_reproducibility(numpy_img):
 
     for run in range(10):
         hashes=[]
-        for i in range(20):
+        for i in range(50):
             test=img
             if run==0:
                 test=test.convert(upyc.YUV420_DEVICE)
@@ -59,7 +59,7 @@ def test_reproducibility(numpy_img):
         test_assert(all(x == hashes[0] for x in hashes), f"reproducibility run {run} hashes equal")
 
 def random_test():
-    upyc.cuda_set_sync_mode(True, True)
+    upyc.cuda_set_sync_mode(False, False)
     #img.display("newly created")
     img_scaled = img.scale(1280, 720)
     #img_scaled.display("scaled")
@@ -80,7 +80,7 @@ def random_test():
     cv2.destroyAllWindows()
 
     # run tensortRT inference
-    inf = upyc.c_infer("/mldata/weights/trt/yolo11l-dpa-131224.trt")
+    inf = upyc.c_infer("/mldata/weights/trt/yolo11l-dpa-131224.trt", "")
     dets=inf.run(img_scaled)
     print(dets)
 
@@ -123,6 +123,7 @@ def random_test():
                     d.draw_line(start, stop, clr=(255,255,255,255))
         d.show(arr, is_rgb=True)
         d.get_events(30)
+
 # Load JPEG image using OpenCV
 bgr_img = cv2.imread("/mldata/image/arrest.jpg")
 rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
@@ -131,5 +132,5 @@ img = upyc.c_image.from_numpy(rgb_img)
 
 test_hash(rgb_img)
 test_reproducibility(rgb_img)
-
+random_test()
 

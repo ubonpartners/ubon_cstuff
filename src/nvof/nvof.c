@@ -235,7 +235,7 @@ nvof_t *nvof_create(void *context, int max_width, int max_height)
     n->use_nv12=true;
     n->max_width=max_width;
     n->max_height=max_height;
-    n->nvof_stream=create_custream();
+    n->nvof_stream=0;//create_custream();
     CHECK_OF(nvOFAPI.nvCreateOpticalFlowCuda(get_CUcontext(), &n->hOf));
 
     return n;
