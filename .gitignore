@@ -1,10 +1,9 @@
 Makefile
 /build
-ubon_pycstuff/src/ubon_pycstuff/__pycache__/
 ubon_pycstuff/build/
 trt_timing_cache.dat
 ubon_pycstuff/*.so
 _skbuild/
 dist/
 ubon_pycstuff.egg-info/
-
+ubon_pycstuff/__pycache__/
