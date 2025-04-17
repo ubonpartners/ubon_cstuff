@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <algorithm>
 #include <cassert>
 #include <memory>
 #include <filesystem>
@@ -29,8 +30,15 @@ struct infer
     CUdeviceptr output_mem;
     cudaStream_t stream;
     void *output_mem_host;
+    int max_batch;
+    int min_w, min_h;
+    int max_w, max_h;
     int output_size;
     int fn;
+    float nms_thr;
+    float det_thr;
+    int num_classes;
+    int max_detections;
     int detection_attribute_size;
     const char *input_tensor_name;
     const char *output_tensor_name;
@@ -146,6 +154,11 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     infer_t *inf=(infer_t *)malloc(sizeof(infer_t));
     memset(inf, 0, sizeof(infer_t));
 
+    inf->nms_thr=0.45;
+    inf->det_thr=0.5;
+    inf->num_classes=5;
+    inf->max_detections=200;
+
     cudaStreamCreate(&inf->stream);
 
     log_debug("Infer create");
@@ -188,6 +201,9 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     assert(inf->ec!=0);
     //inf->ec->setOptimizationProfileAsync(0, 0);
 
+    int num_optimization_profiles=inf->engine->getNbOptimizationProfiles();
+    assert(num_optimization_profiles==1);
+
     int num_bindings=inf->engine->getNbIOTensors();
     int num_input=0;
     int num_output=0;
@@ -200,6 +216,18 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             assert(num_input==0);
             num_input++;
             inf->input_tensor_name=name;
+
+            Dims dims_max=inf->engine->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX);
+            Dims dims_min=inf->engine->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMIN);
+            assert(dims_max.nbDims==4);
+            assert(dims_min.nbDims==4);
+            assert(dims_min.d[0]==1); // min batch should be 1!
+            inf->max_batch=dims_max.d[0];
+            inf->max_h=dims_max.d[2];
+            inf->max_w=dims_max.d[3];
+            inf->min_h=dims_min.d[2];
+            inf->min_w=dims_min.d[3];
+            log_debug("TRT model [%dx%d]->[%dx%d]; max batch %d",inf->min_w,inf->min_h,inf->max_w,inf->max_h,inf->max_batch);
         }
         else
         {
@@ -228,10 +256,33 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
+
 detections_t *infer(infer_t *inf, image_t *img)
 {
     image_t *img_device=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
-    image_t *image_scaled=image_scale(img_device, 640, 384);
+
+    // determine a vaguely sensible size for inference
+
+    int scale_w=0;
+    int scale_h=0;
+    if (img->width>=inf->max_w)
+    {
+        scale_w=inf->max_w;
+        scale_h=((scale_w*img->height)/img->width);
+    }
+    if (scale_h>inf->max_h)
+    {
+        scale_h=inf->max_h;
+        scale_w=((scale_h*img->width)/img->height);
+    }
+    scale_w=std::min(inf->max_w, (scale_w+16)&(~31));
+    scale_h=std::min(inf->max_h, (scale_h+16)&(~31));
+    if (scale_w<inf->min_w) scale_w=inf->min_w;
+    if (scale_h<inf->min_h) scale_h=inf->min_h;
+
+    //log_debug(" %dx%d inference at %dx%d",img->width,img->height,scale_w,scale_h);
+
+    image_t *image_scaled=image_scale(img_device, scale_w, scale_h);
     assert(image_scaled!=0);
 
     image_t *image_input=image_convert(image_scaled, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
@@ -265,12 +316,12 @@ detections_t *infer(infer_t *inf, image_t *img)
     cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
     cuStreamSynchronize(inf->stream);
 
-    detections_t *dets=create_detections(300);
+    detections_t *dets=create_detections(inf->max_detections);
 
     float *p=(float *)inf->output_mem_host;
     float probsum=0;
     
-    int num_classes=5;
+    int num_classes=inf->num_classes;
     for(int i=0;i<rows;i++)
     {
         float max_prob=0;
@@ -285,7 +336,7 @@ detections_t *infer(infer_t *inf, image_t *img)
             }
         } 
         probsum+=max_prob; 
-        if (max_prob>0.4)
+        if (max_prob>inf->det_thr)
         {
             detection_t *det=detection_add_end(dets);
             if (det)
@@ -306,7 +357,7 @@ detections_t *infer(infer_t *inf, image_t *img)
         } 
     }
 
-    detections_nms_inplace(dets, 0.5);
+    detections_nms_inplace(dets, inf->nms_thr);
     //show_detections(dets);
 
     for(int i=0;i<dets->num_detections;i++)

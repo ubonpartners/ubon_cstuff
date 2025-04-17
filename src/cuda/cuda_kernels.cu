@@ -236,8 +236,65 @@ void cuda_interleave_uv(
     );
 }
 
+static __global__ void fnv1a_chunk_hash_kernel(
+    const uint8_t* data,
+    size_t size,
+    size_t chunk_size,
+    uint32_t* partial_hashes
+) {
+    size_t block_id = blockIdx.x;
+    size_t offset = block_id * chunk_size;
 
+    if (offset >= size)
+        return;
 
+    size_t end = min(offset + chunk_size, size);
+    uint32_t hash = 2166136261u;
+
+    // Let one thread do the hash (or loop over threads if needed)
+    if (threadIdx.x == 0) {
+        int num=(end-offset)/4;
+        uint32_t *p=(uint32_t *)(data+offset);
+        for (int i=0;i<num;i++)
+        {
+            hash ^= p[i];
+            hash *= 16777619u;
+        }
+        partial_hashes[block_id] = hash;
+    }
+}
+
+uint32_t hash_gpu(void* d_data, int size_bytes, CUstream stream)
+{
+    size_t chunk_size=4096;
+    size_t num_chunks = (size_bytes + chunk_size - 1) / chunk_size;
+
+    uint32_t* d_partials;
+    uint32_t h_partials[num_chunks];
+
+    cudaMallocAsync(&d_partials, num_chunks * sizeof(uint32_t), stream);
+
+    fnv1a_chunk_hash_kernel<<<num_chunks, 1, 0, stream>>>(
+        static_cast<const uint8_t*>(d_data),
+        size_bytes,
+        chunk_size,
+        d_partials
+    );
+
+    cudaMemcpyAsync(h_partials, d_partials, num_chunks * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+    cudaFreeAsync(d_partials, stream);
+
+    // Combine partial hashes on host
+    uint32_t final_hash = 2166136261u;
+    for (int i=0;i<num_chunks;i++) 
+    {
+        final_hash ^= h_partials[i];
+        final_hash *= 16777619u;
+    }
+    
+    return final_hash;
+}
 
 }
 

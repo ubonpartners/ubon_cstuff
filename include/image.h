@@ -22,7 +22,6 @@ struct image
     int width;
     int height;
     image_format_t format;
-    void *host_mem;
     uint8_t *y;
     uint8_t *u;
     uint8_t *v;
@@ -31,6 +30,9 @@ struct image
     int stride_y, stride_uv, stride_rgb;
     CUstream stream; // any outstanding work on this surface will put a depency on this stream
     CUdeviceptr device_mem;
+    void *host_mem;
+    int device_mem_size;
+    int host_mem_size;
 };
 
 const char *image_format_name(image_format_t format);
@@ -43,7 +45,9 @@ void image_sync(image_t *img); // wait for all outstanding ops on img
 
 void image_add_dependency(image_t *img, image_t *depends_on);
 
+void clear_image(image_t *img);
 image_t *image_scale(image_t *img, int width, int height);
 image_t *image_convert(image_t *img, image_format_t format);
+uint32_t image_hash(image_t *img);
 
 #endif

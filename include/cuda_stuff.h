@@ -24,5 +24,6 @@ void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on);
 CUcontext get_CUcontext();
 CUstream create_custream();
 void destroy_custream(CUstream s);
+void cuda_set_sync_mode(bool force_sync, bool force_default_stream);
 
 #endif

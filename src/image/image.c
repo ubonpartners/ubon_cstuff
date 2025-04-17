@@ -6,6 +6,19 @@
 #include <cuda.h>
 #include <assert.h>
 
+
+static void allocate_image_device_mem(image_t *img, int size)
+{
+    img->device_mem_size=size;
+    CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, size));
+}
+
+static void allocate_image_host_mem(image_t *img, int size)
+{
+    img->host_mem_size=size;
+    CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, size));
+}
+
 static void allocate_image_surfaces(image_t *img)
 {
     if (!img) return;
@@ -14,7 +27,7 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_YUV420_HOST:
         {
             int round=(img->width+31)&(~31);
-            CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, round*img->height*3/2));
+            allocate_image_host_mem(img, round*img->height*3/2);
             img->y=(uint8_t *)img->host_mem;
             img->u=img->y+img->width*img->height;
             img->v=img->u+((img->width*img->height)>>2);
@@ -25,7 +38,7 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_RGB24_HOST:
         {
             int round=(img->width+31)&(~31);
-            CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, round*img->height*3));
+            allocate_image_host_mem(img, round*img->height*3);
             img->rgb=(uint8_t *)img->host_mem;
             img->stride_rgb=img->width*3;
             break;
@@ -33,7 +46,7 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_RGB24_DEVICE:
         {
             int round=(img->width+31)&(~31);
-            CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, round*img->height*3));
+            allocate_image_device_mem(img, round*img->height*3);
             img->rgb=(uint8_t *)img->device_mem;
             img->stride_rgb=img->width*3;
             break;
@@ -41,7 +54,7 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_YUV420_DEVICE:
         {
             int round=(img->width+31)&(~31);
-            CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, round*img->height*3/2));
+            allocate_image_device_mem(img, round*img->height*3/2);
             img->y=(uint8_t *)img->device_mem;
             img->u=img->y+(round*img->height);
             img->v=img->u+((round*img->height)>>2);
@@ -52,35 +65,35 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_NV12_DEVICE:
         {
             int round=(img->width+31)&(~31);
-            CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, round*img->height*3/2));
-            img->y=(uint8_t *)img->device_mem;
-            img->u=img->y+(round*img->height);
-            img->v=img->u+1;
+            allocate_image_device_mem(img, round*img->height*3/2);
             img->stride_y=round;
             img->stride_uv=round;
+            img->y=(uint8_t *)img->device_mem;
+            img->u=img->y+(img->stride_y*img->height);
+            img->v=img->u+1;
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE:
         {
-            CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, img->width*img->height*3*2));
+            allocate_image_device_mem(img, img->width*img->height*3*2);
             img->rgb=(uint8_t *)img->device_mem;
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE:
         {
-            CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, img->width*img->height*3*4));
+            allocate_image_device_mem(img, img->width*img->height*3*4);
             img->rgb=(uint8_t *)img->device_mem;
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST:
         {
-            CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, img->width*img->height*3*2));
+            allocate_image_host_mem(img, img->width*img->height*3*2);
             img->rgb=(uint8_t *)img->host_mem;
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP32_HOST:
         {
-            CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, img->width*img->height*3*4));
+            allocate_image_host_mem(img, img->width*img->height*3*4);
             img->rgb=(uint8_t *)img->host_mem;
             break;
         }
@@ -181,3 +194,4 @@ const char *image_format_name(image_format_t format)
     }
     return "unknown";
 }
+

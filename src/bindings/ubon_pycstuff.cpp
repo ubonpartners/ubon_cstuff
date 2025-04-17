@@ -60,11 +60,17 @@ class c_image {
         void display(const char *name) {
             display_image(name, img);
         }
+
+        uint32_t hash() {
+            return image_hash(img);
+        }
     
         py::array_t<uint8_t> to_numpy() {
             image_t* tmp = (img->format == IMAGE_FORMAT_RGB24_HOST)
                 ? image_reference(img)
                 : image_convert(img, IMAGE_FORMAT_RGB24_HOST);
+
+            image_sync(tmp);
     
             auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
             auto buf = result.mutable_unchecked<3>();
@@ -271,7 +277,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("scale", &c_image::scale, "Scale image")
         .def("convert", &c_image::convert, "Convert format")
         .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image")
-        .def("display", &c_image::display, "Show image in a debug display");
+        .def("display", &c_image::display, "Show image in a debug display")
+        .def("hash", &c_image::hash, "Return hash of imge data");
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
@@ -285,5 +292,14 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def(py::init<int, int>(), py::arg("width"), py::arg("height"))
         .def("run", &c_nvof::run, "Run NVIDIA Optical Flow on a c_image");
 
+
+    m.def("cuda_set_sync_mode", &cuda_set_sync_mode,
+            py::arg("force_sync"),
+            py::arg("force_default_stream"),
+            "Sets CUDA synchronization mode. "
+            "`force_sync`: forces synchronization after operations. "
+            "`force_default_stream`: restricts to the default stream.");
+
+            
     init_cuda_stuff();
 }

@@ -23,10 +23,13 @@ NppStreamContext get_nppStreamCtx()
 
 // Structure to hold context for CUDA stream dependency management.
 typedef struct cuda_stuff_context {
+    bool force_default_stream;
+    bool force_sync;
     pthread_mutex_t lock;       // Mutex to protect concurrent access.
     uint32_t event_ct;          // Event counter for circular buffer indexing.
     CUevent events[NUM_EVENTS]; // Pre-created CUDA events.
 } cuda_stuff_context_t;
+
 static cuda_stuff_context_t cs;
 static std::once_flag initFlag;
 static CUcontext cuContext;
@@ -122,6 +125,14 @@ void init_cuda_stuff()
     std::call_once(initFlag, do_cuda_init);
 }
 
+void cuda_set_sync_mode(bool force_sync, bool force_default_stream)
+{
+    init_cuda_stuff();
+    cs.force_sync=force_sync;
+    cs.force_default_stream=force_default_stream;
+    log_debug("cuda_set_sync_mode force_sync:%d force_default_stream:%d", cs.force_sync, cs.force_default_stream);
+}
+
 void check_cuda_inited()
 {
     assert(cuda_inited);
@@ -136,7 +147,8 @@ CUcontext get_CUcontext()
 CUstream create_custream()
 {
     CUstream ret=0;
-    return ret; // TODO: Fixme; streams break NVOF
+    if (cs.force_sync) cudaDeviceSynchronize();
+    if (cs.force_default_stream) return ret;
     CHECK_CUDA_CALL(cuStreamCreate(&ret, CU_STREAM_DEFAULT));
     return ret;
 }

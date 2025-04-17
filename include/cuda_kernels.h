@@ -23,6 +23,6 @@ int src_stride_uv,
     int width,
     int height,
     CUstream stream);
+uint32_t hash_gpu(void* d_data, int size_bytes, CUstream stream);
 }
-
 #endif

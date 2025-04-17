@@ -7,6 +7,7 @@
 #include "libyuv.h"
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
+#include "misc.h"
 
 #define CHECK_NPPcall(call) \
     do { \
@@ -17,11 +18,22 @@
         } \
     } while (0)
 
+void clear_image(image_t *img)
+{
+    if (!img) return;
+    if (img->device_mem_size>0) cudaMemsetAsync((void*)img->device_mem, 0, img->device_mem_size, img->stream);
+    if (img->host_mem_size>0)
+    {
+        image_sync(img);
+        memset(img->host_mem, 0, img->host_mem_size);
+    }
+}
+
 static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 {
     image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_HOST);
     if (!dst) return 0;
-
+    image_add_dependency(dst, src); 
     I420Scale(
             src->y, src->stride_y,
             src->u, src->stride_uv,
@@ -77,7 +89,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     nppStreamCtx.hStream=dst->stream;
 
     // Create scaling context for Y plane
-    NppiInterpolationMode interpolationMode = NPPI_INTER_LANCZOS;
+    NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;
     NppiSize dstSize = {dst->width, dst->height};
 
     // Y plane scaling
@@ -219,7 +231,6 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src)
 {
     image_t *dest=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dest) return 0;
-    image_add_dependency(dest, src);
     Npp8u *pDst[3];
     
     NppiSize oSizeROI = {src->width, src->height};
@@ -276,9 +287,9 @@ static image_t *image_convert_yuv420_device_host(image_t *img, bool src_device, 
     image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_YUV420_DEVICE : IMAGE_FORMAT_YUV420_HOST);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    copyasync2d(img->y,img->stride_y,src_device,ret->y,ret->stride_y,dest_device,img->width,img->height,img->stream);
-    copyasync2d(img->u,img->stride_uv,src_device,ret->u,ret->stride_uv,dest_device,img->width/2,img->height/2,img->stream);
-    copyasync2d(img->v,img->stride_uv,src_device,ret->v,ret->stride_uv,dest_device,img->width/2,img->height/2,img->stream);
+    copyasync2d(img->y,img->stride_y,src_device,ret->y,ret->stride_y,dest_device,img->width,img->height,ret->stream);
+    copyasync2d(img->u,img->stride_uv,src_device,ret->u,ret->stride_uv,dest_device,img->width/2,img->height/2,ret->stream);
+    copyasync2d(img->v,img->stride_uv,src_device,ret->v,ret->stride_uv,dest_device,img->width/2,img->height/2,ret->stream);
     return ret;
 }
 
@@ -293,7 +304,7 @@ static image_t *image_convert_rgb_planar_fp_device_host(image_t *img, bool src_d
     }
     else if ((!dest_device) && (src_device))
     {
-        cuMemcpyDtoHAsync((void*)ret->rgb, (CUdeviceptr)img->rgb, img->width*img->height*bpf*3, img->stream); 
+        cuMemcpyDtoHAsync((void*)ret->rgb, (CUdeviceptr)img->rgb, img->width*img->height*bpf*3, ret->stream); 
     }
     return ret;
 }
@@ -303,7 +314,7 @@ static image_t *image_convert_rgb24_device_host(image_t *img, bool src_device, b
     image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB24_DEVICE : IMAGE_FORMAT_RGB24_HOST);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    copyasync2d(img->rgb,img->stride_rgb,src_device,ret->rgb,ret->stride_rgb,dest_device,img->width*3,img->height,img->stream);
+    copyasync2d(img->rgb,img->stride_rgb,src_device,ret->rgb,ret->stride_rgb,dest_device,img->width*3,img->height,ret->stream);
     if (dest_device==false)
     {
         for(int i=0;i<100;i++) ret->rgb[3*i+i*ret->stride_rgb]=0xd0;
@@ -316,7 +327,7 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp16(image_t *img)
     image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, img->stream);
+    cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, ret->stream);
     return ret;
 }
 
@@ -325,7 +336,7 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp32(image_t *img)
     image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, img->stream);
+    cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, ret->stream);
     return ret;
 }
 
@@ -343,7 +354,7 @@ static image_t *image_convert_planar_fp16_rgb24_device(image_t *img)
     image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_convert_fp16_planar_to_RGB24(img->rgb, ret->rgb, ret->stride_rgb, img->width, img->height, img->stream);
+    cuda_convert_fp16_planar_to_RGB24(img->rgb, ret->rgb, ret->stride_rgb, img->width, img->height, ret->stream);
     return ret;
 }
 
@@ -423,4 +434,13 @@ image_t *image_convert(image_t *img, image_format_t format)
 
     printf("Cannot convert %s->%s\n",image_format_name(img->format),image_format_name(format));
     return 0; // unsupported conversion
+}
+
+uint32_t image_hash(image_t *img)
+{
+    if (img==0) return 0;
+    if (img->host_mem!=0)
+        return hash_host(img->host_mem, img->host_mem_size);
+    else 
+        return hash_gpu((void*)img->device_mem, img->device_mem_size, img->stream);
 }
