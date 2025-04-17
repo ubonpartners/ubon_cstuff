@@ -6,17 +6,48 @@
 #include <cuda.h>
 #include <assert.h>
 
+static bool async_cuda_mem=true;
 
 static void allocate_image_device_mem(image_t *img, int size)
 {
     img->device_mem_size=size;
-    CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, size));
+    if (async_cuda_mem)
+    {
+        CHECK_CUDART_CALL(cudaMallocAsync((void**)&img->device_mem, (size_t)size, img->stream));
+    }
+    else
+    {
+        CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, size));
+    }
 }
 
 static void allocate_image_host_mem(image_t *img, int size)
 {
     img->host_mem_size=size;
     CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, size));
+}
+
+static void free_image_mem(image_t *img)
+{
+    if (img->host_mem)
+    {
+        cuStreamSynchronize(img->stream);
+        cuMemFreeHost(img->host_mem);
+    }
+    if (img->device_mem)
+    {
+        if (async_cuda_mem)
+        {
+            cudaFreeAsync((void*)img->device_mem, img->stream);
+        }
+        else
+        {
+            cuStreamSynchronize(img->stream);
+            cuMemFree(img->device_mem);
+        }
+    }
+    img->host_mem=0;
+    img->device_mem=0;
 }
 
 static void allocate_image_surfaces(image_t *img)
@@ -136,33 +167,8 @@ void destroy_image(image_t *img)
     int reference_count=__sync_fetch_and_add(&img->reference_count, -1);
     if (reference_count>1) return;
 
-    cuStreamSynchronize(img->stream);
+    free_image_mem(img);
     destroy_custream(img->stream);
-
-    switch(img->format)
-    {
-        case IMAGE_FORMAT_YUV420_HOST:
-        case IMAGE_FORMAT_RGB24_HOST:
-        case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST:
-        case IMAGE_FORMAT_RGB_PLANAR_FP32_HOST:
-        {
-            if (img->host_mem) cuMemFreeHost(img->host_mem);
-            img->host_mem=0;
-            break;
-        }
-        case IMAGE_FORMAT_YUV420_DEVICE:
-        case IMAGE_FORMAT_NV12_DEVICE:
-        case IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE:
-        case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE:
-        case IMAGE_FORMAT_RGB24_DEVICE:
-        {
-            if (img->device_mem) cuMemFree(img->device_mem);
-            img->device_mem=0;
-            break;
-        }
-        default:
-            assert(0);
-    }
     free(img);
 }
 

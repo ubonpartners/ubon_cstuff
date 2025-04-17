@@ -17,6 +17,15 @@
         }  \
     } while(0)
 
+#define CHECK_CUDART_CALL(call) \
+    do { \
+        cudaError_t _status = (call); \
+        if (_status != cudaSuccess) { \
+            log_fatal("Cuda error code %d %s",_status,cudaGetErrorString(_status)); \
+            exit(1); \
+        }  \
+    } while(0)
+
 void check_cuda_inited();
 void init_cuda_stuff();
 NppStreamContext get_nppStreamCtx();
