@@ -37,7 +37,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - sudo apt install libyuv-dev
 - sudo apt install libsdl2-dev
 - sudo apt install libyaml-cpp-dev
-- 
+
 ---
 
 ## 🐍 Python Bindings
@@ -46,6 +46,15 @@ All of the above functionality is exposed via simple, direct Python bindings usi
 
 See the usage example here:  
 👉 [test.py](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
+
+## Prebuilt python wheel
+
+[Download here (note might be out of date)](https://drive.google.com/file/d/1VTfBOdzqFs8tkpScRHW-Df6PeWfW0r5U/view?usp=sharing)
+
+After installing you should be able to run
+
+- [The examples](https://github.com/ubonpartners/ubon_cstuff/blob/main/examples.py)
+- [The tests](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
 
 ---
 
