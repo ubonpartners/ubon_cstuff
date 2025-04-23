@@ -94,22 +94,25 @@ From the root of the repo (`ubon_cstuff/`):
 
 ## Other stuff
 
-### Supported image conversions
+### Supported image formats
 
-🧭 Supported image conversions (✔️=direct, 🟧 =2-step)
+🧭 Supported image formats
+- Direct conversion with optimized kernel or NPP is supported for many cases
+- Almost all cases at least work
+- Some format conversions can be done with out any real work through reference counting and pointer tricks (e.g. YUV->MONO)
 
 ```
-| From \ To     |NV12_DEV|YUV420_DEV|YUV420_HOST|RGB24_DEV|RGB24_HOST|FP16_DEV|FP16_HOST|FP32_DEV|FP32_HOST|
-|---------------|--------|----------|-----------|---------|----------|--------|---------|--------|---------|
-| NV12_DEV      |   ✔️   |  ✔️      |           |         |          |        |         |        |         |
-| YUV420_DEV    |   ✔️   |  ✔️      |  ✔️       |         |  🟧      |  ✔️    |         |  ✔️    |         |
-| YUV420_HOST   |        |  ✔️      |  ✔️       |         |  ✔️      |        |         |        |         |
-| RGB24_DEV     |        |          |           |  ✔️     |  ✔️      |        |         |        |         |
-| RGB24_HOST    |        |  🟧      |  ✔️       |  ✔️     |  ✔️      |        |         |        |         |
-| RGB_FP16_DEV  |        |  ✔️      |           |  ✔️     |  🟧      |  ✔️    |         |        |         |
-| RGB_FP16_HOST |        |          |           |         |          |  ✔️    |  ✔️     |        |         |
-| RGB_FP32_DEV  |        |  ✔️      |           |         |          |        |         |  ✔️    |  ✔️     |
-| RGB_FP32_HOST |        |          |           |         |          |        |         |  ✔️    |  ✔️     |
+IMAGE_FORMAT_YUV420_HOST
+IMAGE_FORMAT_YUV420_DEVICE
+IMAGE_FORMAT_NV12_DEVICE
+IMAGE_FORMAT_RGB24_HOST
+IMAGE_FORMAT_RGB24_DEVICE
+IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE
+IMAGE_FORMAT_RGB_PLANAR_FP16_HOST
+IMAGE_FORMAT_RGB_PLANAR_FP32_HOST
+IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE
+IMAGE_FORMAT_MONO_HOST
+IMAGE_FORMAT_MONO_DEVICE
 ```
 
 
