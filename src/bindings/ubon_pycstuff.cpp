@@ -64,11 +64,20 @@ class c_image {
         uint32_t hash() {
             return image_hash(img);
         }
+
+        std::shared_ptr<c_image> blur() {
+            image_t* blurred = image_blur(img);
+            return std::make_shared<c_image>(blurred);
+        }
+
+        std::shared_ptr<c_image> mad_4x4(std::shared_ptr<c_image> other) {
+            image_t* img_other = other->raw();
+            image_t* mad_img=image_mad_4x4(img, img_other); 
+            return std::make_shared<c_image>(mad_img);
+        }
     
         py::array_t<uint8_t> to_numpy() {
-            image_t* tmp = (img->format == IMAGE_FORMAT_RGB24_HOST)
-                ? image_reference(img)
-                : image_convert(img, IMAGE_FORMAT_RGB24_HOST);
+            image_t* tmp = image_convert(img, IMAGE_FORMAT_RGB24_HOST);
 
             image_sync(tmp);
     
@@ -86,42 +95,6 @@ class c_image {
     
         image_t* raw() { return img; }
     };
-
-/*static py::capsule py_create_image(int width, int height, image_format_t fmt) 
-{
-    image_t *img=create_image(width, height, fmt);
-    return py::capsule(img, "image_t", [](PyObject* capsule) {
-        auto ptr = reinterpret_cast<image_t*>(PyCapsule_GetPointer(capsule, "image_t"));
-        delete ptr;
-    });
-}
-
-static void py_destroy_image(py::capsule handle) {
-    if (std::string(handle.name()) != "image_t")
-        throw std::runtime_error("Invalid capsule type expected img_t ");
-    image_t* img = reinterpret_cast<image_t*>(handle.get_pointer());
-    destroy_image(img);
-}
-
-static void py_image_reference(py::capsule handle) {
-    if (std::string(handle.name()) != "image_t")
-        throw std::runtime_error("Invalid capsule type expected img_t");
-    image_t* img = reinterpret_cast<image_t*>(handle.get_pointer());
-    image_reference(img);
-}
-
-static py::capsule py_image_scale(py::capsule handle, int width, int height) {
-    if (std::string(handle.name()) != "image_t")
-        throw std::runtime_error("Invalid capsule type expected img_t");
-    image_t* img = reinterpret_cast<image_t*>(handle.get_pointer());
-    image_t* scaled = image_scale(img, width, height);
-    printf("scaled=%p\n",scaled);
-    return py::capsule(scaled, "image_t", [](PyObject* capsule) {
-        auto ptr = reinterpret_cast<image_t*>(PyCapsule_GetPointer(capsule, "image_t"));
-        delete ptr;
-    });
-}*/
-
 
 class c_infer {
     public:
@@ -260,6 +233,7 @@ class c_infer {
 PYBIND11_MODULE(ubon_pycstuff, m) {
     std::cout << "ubon_pycstuff bindings loaded" << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
+        .value("NONE", IMAGE_FORMAT_NONE)
         .value("YUV420_DEVICE", IMAGE_FORMAT_YUV420_DEVICE)
         .value("YUV420_HOST", IMAGE_FORMAT_YUV420_HOST)
         .value("NV12_DEVICE", IMAGE_FORMAT_NV12_DEVICE)
@@ -269,6 +243,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .value("RGB_PLANAR_FP16_HOST", IMAGE_FORMAT_RGB_PLANAR_FP16_HOST)
         .value("RGB_PLANAR_FP32_DEVICE", IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)
         .value("RGB_PLANAR_FP32_HOST", IMAGE_FORMAT_RGB_PLANAR_FP32_HOST)
+        .value("MONO_HOST", IMAGE_FORMAT_MONO_HOST)
+        .value("MONO_DEVICE", IMAGE_FORMAT_MONO_DEVICE)
         .export_values();
 
     py::class_<c_image, std::shared_ptr<c_image>>(m, "c_image")
@@ -278,7 +254,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("convert", &c_image::convert, "Convert format")
         .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image")
         .def("display", &c_image::display, "Show image in a debug display")
-        .def("hash", &c_image::hash, "Return hash of imge data");
+        .def("hash", &c_image::hash, "Return hash of imge data")
+        .def("blur", &c_image::blur, "Return gaussian blur of image")
+        .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images");
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
@@ -302,4 +280,5 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
 
             
     init_cuda_stuff();
+    image_init();
 }

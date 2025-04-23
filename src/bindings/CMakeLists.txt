@@ -4,7 +4,7 @@ target_link_libraries(ubon_pycstuff PRIVATE
     uboncstufflib  # your static lib
     pybind11::module
     Python3::Python
-    pthread cuda cudart cublas nvinfer nvonnxparser openh264 nvcuvid nppc nppisu nppig nppicc jpeg SDL2 yuv nvidia-opticalflow yaml-cpp # etc
+    pthread cuda cudart cublas nvinfer nvonnxparser openh264 nvcuvid nppc nppisu nppig nppicc nppif jpeg SDL2 yuv nvidia-opticalflow yaml-cpp # etc
 )
 
 # Determine if we're doing a normal local build or a wheel build

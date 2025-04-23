@@ -76,7 +76,7 @@ target_link_libraries(uboncstuff
     -L/usr/local/cuda/lib64
     -lnvinfer -lcudart -lcublas -lpthread -lnvonnxparser
     -lopenh264 -lcuda -lnvcuvid -lyuv
-    -lnppc -lnppisu -lnppig -lnppicc -lSDL2 -ljpeg
+    -lnppc -lnppisu -lnppig -lnppicc -lnppif -lSDL2 -ljpeg
     -lnvvpi
     -lnvidia-opticalflow
 )

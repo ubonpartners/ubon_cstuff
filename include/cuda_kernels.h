@@ -24,5 +24,7 @@ int src_stride_uv,
     int height,
     CUstream stream);
 uint32_t hash_gpu(void* d_data, int size_bytes, CUstream stream);
+void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b, 
+    uint8_t *out, int stride_out, int width, int height, CUstream stream);
 }
 #endif

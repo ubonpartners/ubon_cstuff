@@ -201,6 +201,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     }
     else
     {
+        memset(v->costBufHost, 255, v->outW*v->outH); // optical flow not run, set costs to max
         cuStreamSynchronize(v->nvof_stream);
     }
     

@@ -4,6 +4,7 @@
 typedef struct image image_t;
 
 typedef enum image_format {
+  IMAGE_FORMAT_NONE=0,
   IMAGE_FORMAT_YUV420_HOST,
   IMAGE_FORMAT_YUV420_DEVICE,
   IMAGE_FORMAT_NV12_DEVICE,
@@ -13,7 +14,26 @@ typedef enum image_format {
   IMAGE_FORMAT_RGB_PLANAR_FP16_HOST,
   IMAGE_FORMAT_RGB_PLANAR_FP32_HOST,
   IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE,
+  IMAGE_FORMAT_MONO_HOST,
+  IMAGE_FORMAT_MONO_DEVICE,
 } image_format_t;
+
+#define NUM_IMAGE_FORMATS 12
+
+static bool image_format_is_device(image_format_t format)
+{
+  return   (format==IMAGE_FORMAT_YUV420_DEVICE)
+         ||(format==IMAGE_FORMAT_NV12_DEVICE)
+         ||(format==IMAGE_FORMAT_RGB24_DEVICE)
+         ||(format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
+         ||(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)
+         ||(format==IMAGE_FORMAT_MONO_DEVICE);
+}
+
+static bool image_format_is_host(image_format_t format)
+{
+  return ~image_format_is_device(format);
+}
 
 #include <cuda.h>
 
@@ -33,8 +53,10 @@ struct image
     void *host_mem;
     int device_mem_size;
     int host_mem_size;
+    image_t *referenced_surface;
 };
 
+void image_init(); // call before using any image functions
 const char *image_format_name(image_format_t format);
 
 image_t *create_image(int width, int height, image_format_t fmt);
@@ -49,5 +71,7 @@ void clear_image(image_t *img);
 image_t *image_scale(image_t *img, int width, int height);
 image_t *image_convert(image_t *img, image_format_t format);
 uint32_t image_hash(image_t *img);
+image_t *image_blur(image_t *img);
+image_t *image_mad_4x4(image_t *a, image_t *b);
 
 #endif

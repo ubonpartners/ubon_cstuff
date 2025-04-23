@@ -5,8 +5,11 @@
 #include "cuda_stuff.h"
 #include <cuda.h>
 #include <assert.h>
+#include <mutex>
 
 static bool async_cuda_mem=true;
+static std::once_flag initFlag;
+static bool image_inited=false;
 
 static void allocate_image_device_mem(image_t *img, int size)
 {
@@ -128,6 +131,22 @@ static void allocate_image_surfaces(image_t *img)
             img->rgb=(uint8_t *)img->host_mem;
             break;
         }
+        case IMAGE_FORMAT_MONO_DEVICE:
+        {
+            int round=(img->width+31)&(~31);
+            allocate_image_device_mem(img, round*img->height);
+            img->y=(uint8_t *)img->device_mem;
+            img->stride_y=round;
+            break;
+        }
+        case IMAGE_FORMAT_MONO_HOST:
+        {
+            int round=(img->width+31)&(~31);
+            allocate_image_host_mem(img, round*img->height);
+            img->y=(uint8_t *)img->host_mem;
+            img->stride_y=round;
+            break;
+        }
         default:
             assert(0);
             break;
@@ -149,6 +168,7 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
 
 image_t *create_image(int width, int height, image_format_t fmt)
 {
+    assert(image_inited);
     image_t *ret=create_image_no_surface_memory(width, height, fmt);
     allocate_image_surfaces(ret);
     return ret;
@@ -166,20 +186,24 @@ void destroy_image(image_t *img)
     if (!img) return;
     int reference_count=__sync_fetch_and_add(&img->reference_count, -1);
     if (reference_count>1) return;
-
+    image_t *referenced_surface=img->referenced_surface;
     free_image_mem(img);
     destroy_custream(img->stream);
     free(img);
+    if (referenced_surface) destroy_image(referenced_surface);
 }
 
 void image_sync(image_t *img)
 {
     if (!img) return;
+    //log_debug("synchronize %dx%d %s",img->width,img->height,image_format_name(img->format));
     cuStreamSynchronize(img->stream);
 }
 
 void image_add_dependency(image_t *img, image_t *depends_on)
 {
+    assert(img->reference_count>0);
+    assert(depends_on->reference_count>0);
     cuda_stream_add_dependency(img->stream, depends_on->stream);
 }
 
@@ -196,8 +220,21 @@ const char *image_format_name(image_format_t format)
         case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST: return "fp16 host";
         case IMAGE_FORMAT_RGB_PLANAR_FP32_HOST: return "fp32 host";
         case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE: return "fp32 device";
+        case IMAGE_FORMAT_MONO_HOST: return "mono host";
+        case IMAGE_FORMAT_MONO_DEVICE: return "mono device";
         default: break;
     }
     return "unknown";
 }
 
+extern void image_conversion_init();
+static void do_image_init()
+{
+    image_conversion_init();
+    image_inited=true;
+}
+
+void image_init()
+{
+    std::call_once(initFlag, do_image_init);
+}

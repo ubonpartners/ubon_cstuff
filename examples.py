@@ -3,7 +3,6 @@ import ubon_pycstuff.ubon_pycstuff as upyc
 import cv2
 import stuff
 
-
 def basic_test(jpeg_file):
     bgr_img = cv2.imread("/mldata/image/arrest.jpg")
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
@@ -78,8 +77,36 @@ def test_nvof(h264_file):
         d.show(arr, is_rgb=True)
         d.get_events(30)
 
+def test_motiondet(h264_file):
+    # create a NVDEC video decoder
+    # blur the frames and take frame differences
+    # display the differences
+
+    decoder = upyc.c_decoder()
+    with open(h264_file, "rb") as f:
+        bitstream = f.read()
+
+    # decode some video
+    frames = decoder.decode(bitstream) 
+
+    d=stuff.Display(1280,720)
+    last=None
+    for i, frame in enumerate(frames):
+        if i%5!=0:
+            continue
+        blurred=frame.blur()
+        if last is not None:
+            mad=blurred.mad_4x4(last)
+        print(f"frame {i}")
+        if last is not None:
+            arr = mad.to_numpy()
+            d.show(arr, is_rgb=True)
+            d.get_events(30)
+        last=blurred
+
 basic_test("/mldata/image/arrest.jpg")
 test_inference("/mldata/image/arrest.jpg")
 test_nvof("/mldata/video/MOT20-01.264")
+test_motiondet("/mldata/tracking/cevo_april25/video/generated_h264/INof_LD_Out_Light_FFcam_002.h264")
 
 

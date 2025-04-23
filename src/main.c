@@ -18,7 +18,9 @@ static void frame_callback(void *context, image_t *img)
 {
     display_t *d=(display_t *)context;
     detections_t *dets=infer(inf, img);
-    image_t *out_frame_rgb=draw_detections(dets, img);
+    image_t *blurred=image_blur(img);
+    image_t *out_frame_rgb=draw_detections(dets, blurred);
+    destroy_image(blurred);
 
     nvof_execute(v, img);
 
@@ -30,6 +32,7 @@ static void frame_callback(void *context, image_t *img)
 int main(int argc, char *argv[]) 
 {
     init_cuda_stuff();
+    image_init();
 
     /*dataset_t *ds=dataset_create("/mldata/coco-face/val/images");
     int num=dataset_get_num(ds);
