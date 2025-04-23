@@ -120,3 +120,123 @@ image_t *image_mad_4x4(image_t *a, image_t *b)
 
     return out;
 }
+
+image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy) 
+{
+    if (!src) return 0;
+    if (!src2) return image_reference(src);
+
+    if ((src->format != IMAGE_FORMAT_YUV420_DEVICE && src->format != IMAGE_FORMAT_MONO_DEVICE)) 
+    {
+        image_t *inter=image_convert(src, IMAGE_FORMAT_YUV420_DEVICE);
+        image_t *ret=image_blend(inter, src2, sx, sy, w, h, dx, dy);
+        destroy_image(inter);
+        return ret;
+    }
+
+    if (src2->format!=src->format)
+    {
+        image_t *inter=image_convert(src2, src->format);
+        image_t *ret=image_blend(src, inter, sx, sy, w, h, dx, dy);
+        destroy_image(inter);
+        return ret;
+    }
+
+    // check bounds
+    w=std::max(0, std::min(std::min(w, src2->width-sx), src->width-dx));
+    h=std::max(0, std::min(std::min(h, src2->height-sy), src->height-dy));
+    if (w==0 || h==0) return image_reference(src);
+    
+
+    // Create a copy of src to modify and return
+    image_t *out = create_image(src->width, src->height, src->format);
+    image_add_dependency(out, src);
+    image_add_dependency(out, src2);
+
+    cudaStream_t stream = out->stream;
+
+    // Copy full Y plane from src into out
+    cudaMemcpy2DAsync(out->y, out->stride_y,
+                      src->y, src->stride_y,
+                      src->width, src->height,
+                      cudaMemcpyDeviceToDevice,
+                      stream);
+
+    // Copy selected region from src2 Y plane
+    for (int row = 0; row < h; row++) {
+        cudaMemcpyAsync(
+            out->y + (dy + row) * out->stride_y + dx,
+            src2->y + (sy + row) * src2->stride_y + sx,
+            w,
+            cudaMemcpyDeviceToDevice,
+            stream);
+    }
+
+    if (src->format == IMAGE_FORMAT_YUV420_DEVICE) {
+        int uv_w = w / 2;
+        int uv_h = h / 2;
+        int sx_uv = sx / 2, sy_uv = sy / 2;
+        int dx_uv = dx / 2, dy_uv = dy / 2;
+
+        // Copy full U and V planes from src into out
+        cudaMemcpy2DAsync(out->u, out->stride_uv, src->u, src->stride_uv,
+                          src->width / 2, src->height / 2,
+                          cudaMemcpyDeviceToDevice, stream);
+
+        cudaMemcpy2DAsync(out->v, out->stride_uv, src->v, src->stride_uv,
+                          src->width / 2, src->height / 2,
+                          cudaMemcpyDeviceToDevice, stream);
+
+        // Copy U and V blocks
+        for (int row = 0; row < uv_h; row++) {
+            cudaMemcpyAsync(
+                out->u + (dy_uv + row) * out->stride_uv + dx_uv,
+                src2->u + (sy_uv + row) * src2->stride_uv + sx_uv,
+                uv_w,
+                cudaMemcpyDeviceToDevice,
+                stream);
+
+            cudaMemcpyAsync(
+                out->v + (dy_uv + row) * out->stride_uv + dx_uv,
+                src2->v + (sy_uv + row) * src2->stride_uv + sx_uv,
+                uv_w,
+                cudaMemcpyDeviceToDevice,
+                stream);
+        }
+    }
+
+    return out;
+}
+
+image_t *image_crop(image_t *img, int x, int y, int w, int h)
+{
+    if (!img) return 0;
+    if ((img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE)) 
+    {
+        image_t *inter=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
+        image_t *ret=image_crop(inter, x, y, w, h);
+        destroy_image(inter);
+        return ret;
+    }
+
+    w=std::max(0, std::min(w, img->width-x));
+    h=std::max(0, std::min(h, img->height-y));
+
+    if (w==0 || h==0) return 0;
+
+    // what we do here is not actually any work - we just create a new shell surface 
+    // that points to the Y data of the original surface, and hold on to a reference
+    // for that surface.
+    image_t *cropped=create_image_no_surface_memory(w, h, img->format);
+    cropped->referenced_surface=image_reference(img);
+    cropped->y=img->y+x+y*img->stride_y;
+    cropped->stride_y=img->stride_y;
+    if (cropped->format==IMAGE_FORMAT_YUV420_DEVICE)
+    {
+        cropped->stride_uv=img->stride_uv;
+        cropped->u=img->u+(x>>1)+(y>>1)*cropped->stride_uv;
+        cropped->v=img->u+(x>>1)+(y>>1)*cropped->stride_uv;
+    }
+    image_add_dependency(cropped, img);
+    return cropped;
+}

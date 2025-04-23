@@ -250,7 +250,7 @@ static image_t *image_convert_yuv420_mono(image_t *img, image_format_t format)
     mono->y=img->y;
     mono->stride_y=img->stride_y;
     image_add_dependency(mono, img);
-    return 0;
+    return mono;
 }
 
 static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format) 

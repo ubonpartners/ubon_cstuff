@@ -5,5 +5,6 @@ trt_timing_cache.dat
 ubon_pycstuff/*.so
 _skbuild/
 dist/
+__pycache__/
 ubon_pycstuff.egg-info/
 ubon_pycstuff/__pycache__/

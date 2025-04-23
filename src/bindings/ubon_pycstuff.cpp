@@ -75,22 +75,51 @@ class c_image {
             image_t* mad_img=image_mad_4x4(img, img_other); 
             return std::make_shared<c_image>(mad_img);
         }
-    
-        py::array_t<uint8_t> to_numpy() {
-            image_t* tmp = image_convert(img, IMAGE_FORMAT_RGB24_HOST);
+   
+        std::shared_ptr<c_image> crop(int x, int y, int w, int h) {
+            image_t* cropped = image_crop(img, x, y, w, h);
+            return std::make_shared<c_image>(cropped);
+        }
 
-            image_sync(tmp);
-    
-            auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
-            auto buf = result.mutable_unchecked<3>();
-    
-            for (int y = 0; y < tmp->height; ++y)
-                for (int x = 0; x < tmp->width; ++x)
-                    for (int c = 0; c < 3; ++c)
-                        buf(y, x, c) = tmp->rgb[3 * x + c + tmp->stride_rgb * y];
-    
-            destroy_image(tmp);
-            return result;
+        std::shared_ptr<c_image> blend(std::shared_ptr<c_image> other,
+                                       int sx, int sy, int w, int h,
+                                       int dx, int dy) {
+            image_t* img_other = other->raw();
+            image_t* blended=image_blend(img, img_other, sx, sy, w, h, dx, dy);
+            return std::make_shared<c_image>(blended);
+        }
+
+        py::array_t<uint8_t> to_numpy() {
+            if ((img->format==IMAGE_FORMAT_MONO_DEVICE)
+               ||(img->format==IMAGE_FORMAT_MONO_HOST))
+            {
+                image_t* tmp = image_convert(img, IMAGE_FORMAT_MONO_HOST);
+                image_sync(tmp);
+                auto result = py::array_t<uint8_t>({tmp->height, tmp->width});
+                auto buf = result.mutable_unchecked<2>();
+        
+                for (int y = 0; y < tmp->height; ++y)
+                    for (int x = 0; x < tmp->width; ++x)
+                        buf(y, x) = tmp->y[x + tmp->stride_y * y];
+        
+                destroy_image(tmp);
+                return result;    
+            }
+            else
+            {
+                image_t* tmp = image_convert(img, IMAGE_FORMAT_RGB24_HOST);
+                image_sync(tmp);
+                auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
+                auto buf = result.mutable_unchecked<3>();
+        
+                for (int y = 0; y < tmp->height; ++y)
+                    for (int x = 0; x < tmp->width; ++x)
+                        for (int c = 0; c < 3; ++c)
+                            buf(y, x, c) = tmp->rgb[3 * x + c + tmp->stride_rgb * y];
+        
+                destroy_image(tmp);
+                return result;
+            }
         }
     
         image_t* raw() { return img; }
@@ -256,7 +285,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("display", &c_image::display, "Show image in a debug display")
         .def("hash", &c_image::hash, "Return hash of imge data")
         .def("blur", &c_image::blur, "Return gaussian blur of image")
-        .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images");
+        .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images")
+        .def("crop", &c_image::crop, "Return a crop of the surface")
+        .def("blend", &c_image::blend, "Blend a rectange from a second surface over the top");
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
