@@ -10,12 +10,15 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 
 ### Surface Abstraction
 - Unified wrapper for working with host and GPU image buffers
-- Supports multiple color formats (RGB, YUV, planar, packed, etc.)
+- Supports multiple color formats (RGB, YUV, planar, packed, mono, etc.)
 - GPU and CPU scaling using:
   - NVIDIA NPP
   - libyuv
+  - factorized scaling for large downscale factors
 - Color format & colorspace conversion
 - Fully asynchronous use of cuda with automatic chaining and synchronization
+- Additional operations like crop, blend, hash, gaussian blur, mean absolute difference
+- write surface to JPEG, or display on screen
 
 ### Video Decoding
 - Hardware and software decoder support:
@@ -24,7 +27,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 
 ### Optical Flow
 - Support for:
-  - NVIDIA Optical Flow SDK (NVOF)
+  - NVIDIA Optical Flow SDK (NVOF); latest v3 support with NV12 or mono
   - VPI (in progress…)
 
 ### Inference
