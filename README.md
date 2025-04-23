@@ -10,6 +10,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 
 ### Surface Abstraction
 - Unified wrapper for working with host and GPU image buffers
+- Reference counted immutable design makes it easy to pass surface handles between threads
 - Supports multiple color formats (RGB, YUV, planar, packed, mono, etc.)
 - it's generally intended most 'work' is done in YUV420 -and this will usually be most efficient- although operations should generally work on any format, with automatic conversion
 - GPU and CPU scaling using:
