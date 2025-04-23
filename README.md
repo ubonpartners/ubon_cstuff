@@ -11,12 +11,13 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 ### Surface Abstraction
 - Unified wrapper for working with host and GPU image buffers
 - Supports multiple color formats (RGB, YUV, planar, packed, mono, etc.)
+- it's generally intended most 'work' is done in YUV420 -and this will usually be most efficient- although operations should generally work on any format, with automatic conversion
 - GPU and CPU scaling using:
   - NVIDIA NPP
   - libyuv
-  - factorized scaling for large downscale factors
+  - factorized scaling for large downscale factors (repeated /2, then NPP for last scale)
 - Color format & colorspace conversion
-- Fully asynchronous use of cuda with automatic chaining and synchronization
+- **Fully asynchronous use of cuda with automatic chaining and synchronization**
 - Additional operations like crop, blend, hash, gaussian blur, mean absolute difference
 - write surface to JPEG, or display on screen
 
