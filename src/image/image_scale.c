@@ -113,7 +113,7 @@ static image_t *image_scale_mono_device(image_t *src, int width, int height)
         {
             int inter_w=src->width>>1;
             int inter_h=src->height>>1;
-            image_t *inter=create_image(inter_w, inter_h, IMAGE_FORMAT_YUV420_DEVICE);
+            image_t *inter=create_image(inter_w, inter_h, IMAGE_FORMAT_MONO_DEVICE);
             if (!inter) return 0;
             image_add_dependency(inter, src); // don't run this until 'src' is ready
             cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
