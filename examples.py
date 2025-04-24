@@ -2,6 +2,7 @@ import numpy as np
 import ubon_pycstuff.ubon_pycstuff as upyc
 import cv2
 import stuff
+import time
 
 def basic_test(jpeg_file):
     bgr_img = cv2.imread("/mldata/image/arrest.jpg")
@@ -19,6 +20,22 @@ def basic_test(jpeg_file):
     cv2.imshow("Round-trip image", round_trip_bgr)
     cv2.waitKey(5000)
     cv2.destroyAllWindows()
+
+def basic_test_mono(jpeg_file):
+    bgr_img = cv2.imread("/mldata/image/arrest.jpg")
+    rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    # copy image to C domain
+    img = upyc.c_image.from_numpy(rgb_img)
+    img=img.convert(upyc.YUV420_DEVICE)
+    img.sync()
+    #img=img.convert(upyc.MONO_DEVICE)
+    #img.sync()
+    #img=img.convert(upyc.YUV420_DEVICE)
+    #img.sync()
+    #img.display("Mono image")
+    img=img.scale(320,256)
+    img.display("Mono image scaled")
+    time.sleep(5000)
 
 def test_inference(jpeg_file):
     bgr_img = cv2.imread("/mldata/image/arrest.jpg")
@@ -104,6 +121,8 @@ def test_motiondet(h264_file):
             d.get_events(30)
         last=blurred
 
+upyc.cuda_set_sync_mode(False, False)
+#basic_test_mono("/mldata/image/arrest.jpg")
 basic_test("/mldata/image/arrest.jpg")
 test_inference("/mldata/image/arrest.jpg")
 test_nvof("/mldata/video/MOT20-01.264")

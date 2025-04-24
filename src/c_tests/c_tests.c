@@ -30,20 +30,22 @@ static uint32_t test_convert_yuv420(image_t *img) {return test_convert_3(img, IM
 static uint32_t test_convert_yuv420_mono(image_t *img) {return test_convert_3(img, IMAGE_FORMAT_YUV420_DEVICE,IMAGE_FORMAT_MONO_DEVICE,IMAGE_FORMAT_YUV420_DEVICE);}
 
 
-static uint32_t test_scale_generic(image_t *img, int w, int h, image_format_t fmt)
+static uint32_t test_scale_generic(image_t *img, int w, int h, int w2, int h2, image_format_t fmt)
 {
     image_t *converted=image_convert(img, fmt);
     image_sync(converted);
     image_t *scaled=image_scale(img, w, h);
-    uint32_t hash=image_hash(scaled);
+    image_t *scaled2=image_scale(scaled, w2, h2);
+    uint32_t hash=image_hash(scaled2);
     destroy_image(scaled);
+    destroy_image(scaled2);
     destroy_image(converted);
     return hash;
 }
 
-static uint32_t test_scale_yuv420_1280(image_t *img) {return test_scale_generic(img, 1280, 720, IMAGE_FORMAT_YUV420_DEVICE);}
-static uint32_t test_scale_yuv420_64(image_t *img) {return test_scale_generic(img, 64, 64, IMAGE_FORMAT_YUV420_DEVICE);}
-static uint32_t test_scale_mono_64(image_t *img) {return test_scale_generic(img, 128, 64, IMAGE_FORMAT_MONO_DEVICE);}
+static uint32_t test_scale_yuv420_1280(image_t *img) {return test_scale_generic(img, 1280, 720, 512, 240, IMAGE_FORMAT_YUV420_DEVICE);}
+static uint32_t test_scale_yuv420_64(image_t *img) {return test_scale_generic(img, 64, 64, 512, 512, IMAGE_FORMAT_YUV420_DEVICE);}
+static uint32_t test_scale_mono_64(image_t *img) {return test_scale_generic(img, 64, 64, 512, 512, IMAGE_FORMAT_MONO_DEVICE);}
 
 
 typedef struct {

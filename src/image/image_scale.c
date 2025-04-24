@@ -38,27 +38,36 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
     return dst;
 }
 
+static image_t *image_scale_half(image_t *src)
+{
+    int inter_w=src->width>>1;
+    int inter_h=src->height>>1;
+    image_t *inter=create_image(inter_w, inter_h, src->format);
+    if (!inter) return 0;
+    image_add_dependency(inter, src); // don't run this until 'src' is ready
+    cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_h, inter->stream);
+    if (src->format==IMAGE_FORMAT_YUV420_DEVICE)
+    {
+        cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+        cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+    }
+    return inter;
+}
+
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    if (src->width>2*width && src->height>2*height)
+    if (src->format==IMAGE_FORMAT_YUV420_DEVICE && src->width>=2*width && src->height>=2*height)
     {
         if (((src->width&3)==0) && ((src->height&3)==0))
         {
-            int inter_w=src->width>>1;
-            int inter_h=src->height>>1;
-            image_t *inter=create_image(inter_w, inter_h, IMAGE_FORMAT_YUV420_DEVICE);
-            if (!inter) return 0;
-            image_add_dependency(inter, src); // don't run this until 'src' is ready
-            cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
-            cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
-            cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+            image_t *inter=image_scale_half(src);
             image_t *ret=image_scale_yuv420_device(inter, width, height);
             destroy_image(inter);
             return ret;
         }
     }
 
-    image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *dst=create_image(width, height, src->format);
     if (!dst) return 0;
     image_add_dependency(dst, src); // don't run this until 'src' is ready
 
@@ -78,61 +87,24 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
                                          dst->y, dst->stride_y, dstSize, dstROI,
                                          interpolationMode, nppStreamCtx));
 
-    // Scale U and V planes (quarter resolution of Y in YUV420)
-    NppiSize srcSizeUV = {src->width / 2, src->height / 2};
-    NppiRect srcROIUV = {0, 0, src->width / 2, src->height / 2};
-    NppiSize dstSizeUV = {dst->width / 2, dst->height / 2};
-    NppiRect dstROIUV = {0, 0, dst->width / 2, dst->height / 2};
-
-    // U plane scaling
-    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->u, src->stride_uv, srcSizeUV, srcROIUV,
-                               dst->u, dst->stride_uv, dstSizeUV, dstROIUV,
-                               interpolationMode, nppStreamCtx));
-
-    // V plane scaling
-    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->v, src->stride_uv, srcSizeUV, srcROIUV,
-                               dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
-                               interpolationMode, nppStreamCtx));
-    return dst;
-}
-
-static image_t *image_scale_mono_device(image_t *src, int width, int height)
-{
-    if (src->width>2*width && src->height>2*height)
+    if (src->format==IMAGE_FORMAT_YUV420_DEVICE)
     {
-        if (((src->width&1)==0) && ((src->height&1)==0))
-        {
-            int inter_w=src->width>>1;
-            int inter_h=src->height>>1;
-            image_t *inter=create_image(inter_w, inter_h, IMAGE_FORMAT_MONO_DEVICE);
-            if (!inter) return 0;
-            image_add_dependency(inter, src); // don't run this until 'src' is ready
-            cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
-            image_t *ret=image_scale_mono_device(inter, width, height);
-            destroy_image(inter);
-            return ret;
-        }
+        // Scale U and V planes (quarter resolution of Y in YUV420)
+        NppiSize srcSizeUV = {src->width / 2, src->height / 2};
+        NppiRect srcROIUV = {0, 0, src->width / 2, src->height / 2};
+        NppiSize dstSizeUV = {dst->width / 2, dst->height / 2};
+        NppiRect dstROIUV = {0, 0, dst->width / 2, dst->height / 2};
+
+        // U plane scaling
+        CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->u, src->stride_uv, srcSizeUV, srcROIUV,
+                                dst->u, dst->stride_uv, dstSizeUV, dstROIUV,
+                                interpolationMode, nppStreamCtx));
+
+        // V plane scaling
+        CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->v, src->stride_uv, srcSizeUV, srcROIUV,
+                                dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
+                                interpolationMode, nppStreamCtx));
     }
-
-    image_t *dst=create_image(width, height, IMAGE_FORMAT_MONO_DEVICE);
-    if (!dst) return 0;
-    image_add_dependency(dst, src); // don't run this until 'src' is ready
-
-    NppiSize srcSize = {src->width, src->height};
-    NppiRect srcROI = {0, 0, src->width, src->height};
-    NppiRect dstROI = {0, 0, dst->width, dst->height};
-
-    NppStreamContext nppStreamCtx=get_nppStreamCtx();
-    nppStreamCtx.hStream=dst->stream;
-
-    // Create scaling context for Y plane
-    NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;
-    NppiSize dstSize = {dst->width, dst->height};
-
-    // Y plane scaling
-    CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->y, src->stride_y, srcSize, srcROI,
-                                         dst->y, dst->stride_y, dstSize, dstROI,
-                                         interpolationMode, nppStreamCtx));
     return dst;
 }
 
@@ -158,14 +130,13 @@ image_t *image_scale(image_t *img, int width, int height)
     {
         case IMAGE_FORMAT_YUV420_HOST:
             return image_scale_yuv420_host(img,width,height);
+        case IMAGE_FORMAT_MONO_DEVICE:
         case IMAGE_FORMAT_YUV420_DEVICE:
             return image_scale_yuv420_device(img,width,height);
         case IMAGE_FORMAT_NV12_DEVICE:
             return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
         case IMAGE_FORMAT_RGB24_HOST:
             return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
-        case IMAGE_FORMAT_MONO_DEVICE:
-            return image_scale_mono_device(img,width,height);
         default:
         ;
     }

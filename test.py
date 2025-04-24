@@ -6,7 +6,6 @@ import ubon_pycstuff.ubon_pycstuff as upyc
 class TestUbonPyCStuff(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Create a test image (ensure it’s multiple of 32 width to match your padding note)
         cls.rgb_img = np.random.randint(0, 255, (512, 320, 3), dtype=np.uint8)
         upyc.cuda_set_sync_mode(False, False)
 
@@ -22,7 +21,6 @@ class TestUbonPyCStuff(unittest.TestCase):
         
         img = upyc.c_image.from_numpy(self.rgb_img)
         img = img.convert(upyc.YUV420_DEVICE)
-        upyc.cuda_set_sync_mode(False, False)
 
         for run in range(10):
             hashes = []
@@ -35,7 +33,7 @@ class TestUbonPyCStuff(unittest.TestCase):
                 if run >= 2:
                     test = test.scale(320, 256)
                 if run == 9:
-                    test = test.scale(1280, 720)
+                    test = test.scale(816, 736)
                 if run in (3, 4, 5):
                     test = test.convert(upyc.NV12_DEVICE)
                 if run in (4, 5):
@@ -52,10 +50,8 @@ class TestUbonPyCStuff(unittest.TestCase):
                 self.assertTrue(all(h == hashes[0] for h in hashes), f"Run {run} hashes should be equal")
 
     def test_reproducibility2(self):
-        upyc.cuda_set_sync_mode(False, False)
         img = upyc.c_image.from_numpy(self.rgb_img).convert(upyc.MONO_DEVICE)
         img.sync()
-        upyc.cuda_set_sync_mode(False, False)
         random.seed(42)
         testsets=[]
         for i in range(100):
@@ -70,10 +66,10 @@ class TestUbonPyCStuff(unittest.TestCase):
                     test = test.convert(upyc.YUV420_DEVICE)
                 if testp["choices"][1]:
                     test = test.convert(upyc.MONO_DEVICE)
-                #if testp["choices"][2]:
-                #    test = test.scale(64, 64)
-                #if testp["choices"][2]:
-                #    test = test.scale(128, 64)
+                if testp["choices"][2]:
+                    test = test.scale(64, 64)
+                if testp["choices"][2]:
+                    test = test.scale(128, 64)
                 if testp["choices"][3]:
                     test = test.scale(320, 320)
                 if testp["choices"][4]:
@@ -84,8 +80,8 @@ class TestUbonPyCStuff(unittest.TestCase):
                     test = test.convert(upyc.MONO_DEVICE)
                 if testp["choices"][7]:
                     test = test.blur()
-                #if testp["choices"][5]:
-                #   test = test.scale(128, 192)
+                if testp["choices"][5]:
+                   test = test.scale(128, 192)
                 testsets[testn]["hashes"].append(test.hash())
 
             with self.subTest(run=run):

@@ -115,7 +115,7 @@ static void do_cuda_init()
 
     // Create a pool of CUDA events for dependency tracking.
     for(int i=0;i<NUM_EVENTS;i++)
-        CHECK_CUDART_CALL(cudaEventCreate(&cs.events[i]));
+        CHECK_CUDART_CALL(cudaEventCreateWithFlags(&cs.events[i], cudaEventDisableTiming));
 
     cs.force_sync=false;
     cs.force_default_stream=false;
