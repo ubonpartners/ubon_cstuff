@@ -46,24 +46,13 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
         {
             int inter_w=src->width>>1;
             int inter_h=src->height>>1;
-            image_t *inter=0;
-            if (0)
-            {
-                inter=image_scale_yuv420_device(src, inter_w, inter_h);
-            }
-            else
-            {
-                inter=create_image(inter_w, inter_h, IMAGE_FORMAT_YUV420_DEVICE);
-                if (!inter) return 0;
-                image_add_dependency(inter, src); // don't run this until 'src' is ready
-                cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
-                cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
-                cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
-            }
-            image_t *ret=image_scale_yuv420_device(inter, width, height);
-            
-            destroy_image(inter);
-            return ret;
+            image_t *inter=create_image(inter_w, inter_h, IMAGE_FORMAT_YUV420_DEVICE);
+            if (!inter) return 0;
+            image_add_dependency(inter, src); // don't run this until 'src' is ready
+            cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
+            cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+            cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
+            return inter;
         }
     }
 
@@ -109,7 +98,7 @@ static image_t *image_scale_mono_device(image_t *src, int width, int height)
 {
     if (src->width>2*width && src->height>2*height)
     {
-        if ((src->format==IMAGE_FORMAT_MONO_DEVICE) && ((src->width&1)==0) && ((src->height&1)==0))
+        if (((src->width&1)==0) && ((src->height&1)==0))
         {
             int inter_w=src->width>>1;
             int inter_h=src->height>>1;
@@ -158,6 +147,11 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
 
 image_t *image_scale(image_t *img, int width, int height)
 {
+    if (img->width==width && img->height==height)
+    {
+        return image_reference(img);
+    }
+
     switch(img->format)
     {
         case IMAGE_FORMAT_YUV420_HOST:

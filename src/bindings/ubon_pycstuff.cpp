@@ -65,6 +65,10 @@ class c_image {
             return image_hash(img);
         }
 
+        void sync() {
+            image_sync(img);
+        }
+
         std::shared_ptr<c_image> blur() {
             image_t* blurred = image_blur(img);
             return std::make_shared<c_image>(blurred);
@@ -284,6 +288,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image")
         .def("display", &c_image::display, "Show image in a debug display")
         .def("hash", &c_image::hash, "Return hash of imge data")
+        .def("sync", &c_image::hash, "Wait for all outstanding image ops")
         .def("blur", &c_image::blur, "Return gaussian blur of image")
         .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images")
         .def("crop", &c_image::crop, "Return a crop of the surface")
@@ -300,7 +305,6 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_nvof, std::shared_ptr<c_nvof>>(m, "c_nvof")
         .def(py::init<int, int>(), py::arg("width"), py::arg("height"))
         .def("run", &c_nvof::run, "Run NVIDIA Optical Flow on a c_image");
-
 
     m.def("cuda_set_sync_mode", &cuda_set_sync_mode,
             py::arg("force_sync"),

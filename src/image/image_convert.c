@@ -240,17 +240,32 @@ static image_t *image_convert_planar_fp16_rgb24_device(image_t *img, image_forma
     return ret;
 }
 
-static image_t *image_convert_yuv420_mono(image_t *img, image_format_t format)
+static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
 {
     // what we do here is not actually any work - we just create a new shell surface 
     // that points to the Y data of the original surface, and hold on to a reference
     // for that surface.
-    image_t *mono=create_image_no_surface_memory(img->width, img->height, IMAGE_FORMAT_MONO_DEVICE);
-    mono->referenced_surface=image_reference(img);
-    mono->y=img->y;
-    mono->stride_y=img->stride_y;
-    image_add_dependency(mono, img);
-    return mono;
+    
+    if (true)
+    {
+        image_t *mono=create_image_no_surface_memory(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
+        mono->referenced_surface=image_reference(src);
+        mono->y=src->y;
+        mono->stride_y=src->stride_y;
+        image_add_dependency(mono, src);
+        return mono;
+    }
+    else
+    {
+        image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
+        image_add_dependency(dst, src);
+        cudaStream_t stream = dst->stream;
+        // Async copy Y plane
+        cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
+            src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream
+        );
+    }
+    return dst;
 }
 
 static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format) 
@@ -305,7 +320,7 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_planar_fp16_rgb24_device, IMAGE_FORMAT_NONE, 110},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_mono, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_MONO_DEVICE, image_convert_mono_yuv420, IMAGE_FORMAT_NONE, 100},
+    {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_mono_yuv420, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_MONO_HOST, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_MONO_HOST, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50}
 };

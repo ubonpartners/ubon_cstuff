@@ -27,7 +27,8 @@ typedef struct cuda_stuff_context {
     bool force_sync;
     pthread_mutex_t lock;       // Mutex to protect concurrent access.
     uint32_t event_ct;          // Event counter for circular buffer indexing.
-    CUevent events[NUM_EVENTS]; // Pre-created CUDA events.
+    uint32_t event_not_ready;   
+    cudaEvent_t events[NUM_EVENTS]; // Pre-created CUDA events.
 } cuda_stuff_context_t;
 
 static cuda_stuff_context_t cs;
@@ -75,9 +76,16 @@ void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on)
     pthread_mutex_lock(&cs.lock);
     int index=cs.event_ct&(NUM_EVENTS-1);
     cs.event_ct++;
-    CHECK_CUDA_CALL(cuEventSynchronize(cs.events[index]));
-    cudaEventRecord(cs.events[index], stream_depends_on);
-    cudaStreamWaitEvent(stream, cs.events[index], 0);
+    //log_debug("Add cuda dependency for index %d\n",index);
+    if (cudaEventQuery(cs.events[index])!=cudaSuccess)
+    {
+        CHECK_CUDART_CALL(cudaEventSynchronize(cs.events[index])); // should rarely happen
+        cs.event_not_ready++;
+        log_debug("cuda event was not ready %d/%d",cs.event_not_ready,cs.event_ct);
+    }
+
+    CHECK_CUDART_CALL(cudaEventRecord(cs.events[index], stream_depends_on));
+    CHECK_CUDART_CALL(cudaStreamWaitEvent(stream, cs.events[index], 0));
     pthread_mutex_unlock(&cs.lock);
 }
 
@@ -109,7 +117,10 @@ static void do_cuda_init()
 
     // Create a pool of CUDA events for dependency tracking.
     for(int i=0;i<NUM_EVENTS;i++)
-        CHECK_CUDA_CALL(cuEventCreate(&cs.events[i], CU_EVENT_DEFAULT));
+        CHECK_CUDART_CALL(cudaEventCreate(&cs.events[i]));
+
+    cs.force_sync=false;
+    cs.force_default_stream=false;
 
     cuda_inited=true;
 }
@@ -131,6 +142,7 @@ void cuda_set_sync_mode(bool force_sync, bool force_default_stream)
     cs.force_sync=force_sync;
     cs.force_default_stream=force_default_stream;
     log_debug("cuda_set_sync_mode force_sync:%d force_default_stream:%d", cs.force_sync, cs.force_default_stream);
+    cudaDeviceSynchronize();
 }
 
 void check_cuda_inited()
@@ -158,3 +170,4 @@ void destroy_custream(CUstream stream)
     if (stream==0) return;
     CHECK_CUDA_CALL(cuStreamDestroy(stream));
 }
+
