@@ -88,7 +88,7 @@ static void allocate_image_surfaces(image_t *img)
         case IMAGE_FORMAT_YUV420_DEVICE:
         {
             int round=(img->width+15)&(~15);
-            allocate_image_device_mem(img, round*img->height*3/2);
+            allocate_image_device_mem(img, (round*img->height*3)/2);
             img->y=(uint8_t *)img->device_mem;
             img->u=img->y+(round*img->height);
             img->v=img->u+((round*img->height)>>2);
@@ -133,7 +133,7 @@ static void allocate_image_surfaces(image_t *img)
         }
         case IMAGE_FORMAT_MONO_DEVICE:
         {
-            int round=(img->width+31)&(~31);
+            int round=(img->width+15)&(~15);
             allocate_image_device_mem(img, round*img->height);
             img->y=(uint8_t *)img->device_mem;
             img->stride_y=round;

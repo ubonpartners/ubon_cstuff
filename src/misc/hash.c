@@ -7,8 +7,24 @@
 #include "log.h"
 
 #define HASH_BLOCKSIZE 4096
+#define FNV_OFFSET 2166136261u
+#define FNV_PRIME 16777619u
 
-static uint32_t hash_block(const uint32_t *mem, int num)
+void hash_2d(const uint8_t *mem, int w, int h, int stride, uint32_t *dest)
+{
+    for(int y=0;y<h;y++)
+    {
+        uint32_t hash = FNV_OFFSET;
+        for (int i=0;i<w;i++)
+        {
+            hash ^= mem[i+y*stride];
+            hash *= 16777619u;
+        }
+        dest[y]=hash;
+    }
+}
+
+uint32_t hash_u32(const uint32_t *mem, int num)
 {
     uint32_t hash = 2166136261u;
     for (int i=0;i<num;i++)
@@ -17,29 +33,4 @@ static uint32_t hash_block(const uint32_t *mem, int num)
         hash *= 16777619u;
     }
     return hash;
-}
-
-uint32_t hash_host(void *mem, int size)
-{
-    int blocks=(size+HASH_BLOCKSIZE-1)/HASH_BLOCKSIZE;
-    uint32_t partials[blocks];
-    assert((size&3)==0);
-    uint8_t *mem8=(uint8_t*)mem;
-
-    for(int i=0;i<blocks;i++)
-    {
-        partials[i]=hash_block((const uint32_t *)(mem8+HASH_BLOCKSIZE*i), std::min(HASH_BLOCKSIZE, size-HASH_BLOCKSIZE*i)/4);
-    }
-    return hash_block(partials, blocks);
-}
-
-uint32_t hash_2d_host(uint8_t *mem, int w, int h, int stride)
-{
-    uint32_t partials[h];
-    assert((w&3)==0);
-    for(int i=0;i<h;i++)
-    {
-        partials[i]=hash_block((const uint32_t *)(mem+stride*i), w>>2);
-    }
-    return hash_block(partials, h);
 }

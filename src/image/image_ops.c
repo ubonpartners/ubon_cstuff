@@ -30,18 +30,58 @@ void clear_image(image_t *img)
     }
 }
 
+uint32_t hash_plane(uint8_t *p, int w, int h, int stride, bool device, cudaStream_t stream)
+{
+    uint32_t hashes[h];
+    if (device==false)
+    {
+        cudaStreamSynchronize(stream);  
+        hash_2d(p, w, h, stride, hashes);
+    }
+    else
+    {
+        cuda_hash_2d(p, w, h, stride, hashes, stream);
+        cudaStreamSynchronize(stream);
+    }
+    return hash_u32(hashes, h);
+}
+
 uint32_t image_hash(image_t *img)
 {
     if (img==0) return 0;
-    if ((img->width&31)!=0)
+    uint32_t hashes[4];
+    int nhashes=0;
+    bool is_device=image_format_is_device(img->format);
+
+    if (  (img->format==IMAGE_FORMAT_YUV420_DEVICE)
+        ||(img->format==IMAGE_FORMAT_MONO_DEVICE)
+        ||(img->format==IMAGE_FORMAT_YUV420_HOST)
+        ||(img->format==IMAGE_FORMAT_MONO_HOST)
+        ||(img->format==IMAGE_FORMAT_NV12_DEVICE))
+        hashes[nhashes++]=hash_plane(img->y, img->width, img->height, img->stride_y, is_device, img->stream);
+    if ((img->format==IMAGE_FORMAT_YUV420_DEVICE)||(img->format==IMAGE_FORMAT_YUV420_HOST))
     {
-        log_error("Hash called on %dx%d image",img->width,img->height);
+        hashes[nhashes++]=hash_plane(img->u, img->width/2, img->height/2, img->stride_uv, is_device, img->stream);
+        hashes[nhashes++]=hash_plane(img->v, img->width/2, img->height/2, img->stride_uv, is_device, img->stream);
     }
-    assert((img->width&31)==0); // fixme: currently only works if width divisible by 32
-    if (img->host_mem!=0)
-        return hash_host(img->host_mem, img->host_mem_size);
-    else 
-        return hash_gpu((void*)img->device_mem, img->device_mem_size, img->stream);
+    if (img->format==IMAGE_FORMAT_NV12_DEVICE)
+    {
+        hashes[nhashes++]=hash_plane(img->u, img->width, img->height/2, img->stride_uv, is_device, img->stream);
+    }
+    if ((img->format==IMAGE_FORMAT_RGB24_DEVICE)||(img->format==IMAGE_FORMAT_RGB24_HOST))
+    {
+        hashes[nhashes++]=hash_plane(img->rgb, img->width*3, img->height, img->stride_rgb, is_device, img->stream);
+    }
+    if ((img->format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)||(img->format==IMAGE_FORMAT_RGB_PLANAR_FP32_HOST))
+    {
+        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*4, img->height, img->stride_rgb, is_device, img->stream);
+    }
+    if ((img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)||(img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_HOST))
+    {
+        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*2, img->height, img->stride_rgb, is_device, img->stream);
+    }
+    uint32_t ret=hash_u32(hashes, nhashes);
+    return ret;
 }
 
 image_t *image_blur(image_t *img) 

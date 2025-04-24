@@ -40,7 +40,7 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    if (0)//src->width>2*width && src->height>2*height)
+    if (src->width>2*width && src->height>2*height)
     {
         if (((src->width&3)==0) && ((src->height&3)==0))
         {

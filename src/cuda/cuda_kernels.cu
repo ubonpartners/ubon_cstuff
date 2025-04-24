@@ -72,7 +72,7 @@ static __global__ void yuvToRgbKernel_fp32(const unsigned char* y_plane, const u
 void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
                      uint8_t *dest,
-                     int width, int height, CUstream stream) 
+                     int width, int height, cudaStream_t stream) 
 {
     // Define block and grid sizes
     dim3 block(16, 16);
@@ -92,7 +92,7 @@ void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_pl
 void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
                      uint8_t *dest,
-                     int width, int height, CUstream stream) 
+                     int width, int height, cudaStream_t stream) 
 {
     // Define block and grid sizes
     dim3 block(16, 16);
@@ -117,7 +117,7 @@ static __global__ void half_to_float_kernel(const __half* d_input, float* d_outp
     }
 }
 
-void cuda_half_to_float(void* d_input, void* h_output, int size, CUstream stream) 
+void cuda_half_to_float(void* d_input, void* h_output, int size, cudaStream_t stream) 
 {
     // Launch kernel with appropriate configuration
     int blockSize = 256;
@@ -142,7 +142,7 @@ static __global__ void fp16_planar_to_RGB24_kernel(const __half *src, unsigned c
     }
 }
 
-void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, CUstream stream) 
+void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream) 
 {
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
@@ -179,7 +179,7 @@ static __global__ void downsample_2x2_kernel(const uint8_t* src, int src_stride,
 void cuda_downsample_2x2(const uint8_t* d_src, int src_stride,
     uint8_t* d_dst, int dst_stride,
     int dst_width, int dst_height,
-    CUstream stream)
+    cudaStream_t stream)
 {
     dim3 block(16, 16);
     dim3 grid((dst_width + block.x - 1) / block.x, (dst_height + block.y - 1) / block.y);
@@ -220,7 +220,7 @@ void cuda_interleave_uv(
     int dest_stride_uv,
     int width,
     int height,
-    CUstream stream)
+    cudaStream_t stream)
 {
     dim3 block(32, 8);
     dim3 grid((width + block.x - 1) / block.x,
@@ -236,64 +236,38 @@ void cuda_interleave_uv(
     );
 }
 
-static __global__ void fnv1a_chunk_hash_kernel(
-    const uint8_t* data,
-    size_t size,
-    size_t chunk_size,
-    uint32_t* partial_hashes
-) {
-    size_t block_id = blockIdx.x;
-    size_t offset = block_id * chunk_size;
+#define FNV_OFFSET 2166136261u
+#define FNV_PRIME 16777619u
 
-    if (offset >= size)
-        return;
+// Kernel: Each thread computes a hash for a single row
+static __global__ void row_hash_kernel(const uint8_t* data, int w, int h, int stride, uint32_t* row_hashes) 
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-    size_t end = min(offset + chunk_size, size);
-    uint32_t hash = 2166136261u;
+    if (row < h) 
+    {
+        const uint8_t* row_ptr = data + row * stride;
 
-    // Let one thread do the hash (or loop over threads if needed)
-    if (threadIdx.x == 0) {
-        int num=(end-offset)/4;
-        uint32_t *p=(uint32_t *)(data+offset);
-        for (int i=0;i<num;i++)
+        uint32_t hash = FNV_OFFSET;
+        for (int i = 0; i < w; ++i) 
         {
-            hash ^= p[i];
-            hash *= 16777619u;
+            hash ^= row_ptr[i];
+            hash *= FNV_PRIME;
         }
-        partial_hashes[block_id] = hash;
+
+        row_hashes[row] = hash;
     }
 }
 
-uint32_t hash_gpu(void* d_data, int size_bytes, CUstream stream)
+void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream) 
 {
-    size_t chunk_size=4096;
-    size_t num_chunks = (size_bytes + chunk_size - 1) / chunk_size;
-
-    uint32_t* d_partials;
-    uint32_t h_partials[num_chunks];
-
-    cudaMallocAsync(&d_partials, num_chunks * sizeof(uint32_t), stream);
-
-    fnv1a_chunk_hash_kernel<<<num_chunks, 1, 0, stream>>>(
-        static_cast<const uint8_t*>(d_data),
-        size_bytes,
-        chunk_size,
-        d_partials
-    );
-
-    cudaMemcpyAsync(h_partials, d_partials, num_chunks * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-    cudaFreeAsync(d_partials, stream);
-
-    // Combine partial hashes on host
-    uint32_t final_hash = 2166136261u;
-    for (int i=0;i<num_chunks;i++) 
-    {
-        final_hash ^= h_partials[i];
-        final_hash *= 16777619u;
-    }
-    
-    return final_hash;
+    uint32_t *dest_device=0;
+    cudaMallocAsync(&dest_device, h * sizeof(uint32_t), stream);
+    int threads = 256;
+    int blocks = (h + threads - 1) / threads;
+    row_hash_kernel<<<blocks, threads, 0, stream>>>(d_data, w, h, stride, dest_device);
+    cudaMemcpyAsync(dest, dest_device, h * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream);
+    cudaFreeAsync(dest, stream);
 }
 
 // Kernel to compute MAD per 4x4 block
@@ -330,7 +304,7 @@ static __global__ void kernel_block_mad_4x4(
 }
 
 void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b, 
-                          uint8_t *out, int stride_out, int width, int height, CUstream stream) 
+                          uint8_t *out, int stride_out, int width, int height, cudaStream_t stream) 
 {
     dim3 blockDim(16, 16);
     dim3 gridDim((width + blockDim.x - 1) / blockDim.x,

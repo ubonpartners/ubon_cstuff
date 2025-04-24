@@ -43,7 +43,7 @@ static uint32_t test_scale_generic(image_t *img, int w, int h, image_format_t fm
 
 static uint32_t test_scale_yuv420_1280(image_t *img) {return test_scale_generic(img, 1280, 720, IMAGE_FORMAT_YUV420_DEVICE);}
 static uint32_t test_scale_yuv420_64(image_t *img) {return test_scale_generic(img, 64, 64, IMAGE_FORMAT_YUV420_DEVICE);}
-static uint32_t test_scale_mono_64(image_t *img) {return test_scale_generic(img, 64, 64, IMAGE_FORMAT_MONO_DEVICE);}
+static uint32_t test_scale_mono_64(image_t *img) {return test_scale_generic(img, 128, 64, IMAGE_FORMAT_MONO_DEVICE);}
 
 
 typedef struct {
@@ -104,9 +104,11 @@ static void run_one_test(const char *txt, uint32_t (*test)(image_t *img), int ru
 int run_all_c_tests()
 {
     printf("Running all tests....\n");
+    
+    cuda_set_sync_mode(true, true);
 
     image_t *img_base=load_jpeg("/mldata/image/arrest2.jpg");
-    image_t *img=image_scale(img_base, 1280, 720);
+    image_t *img=image_scale(img_base, 64, 64);
 
     //display_image("test", img);
     //usleep(5000);

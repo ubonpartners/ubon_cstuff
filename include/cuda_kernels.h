@@ -23,8 +23,8 @@ int src_stride_uv,
     int width,
     int height,
     cudaStream_t stream);
-uint32_t hash_gpu(void* d_data, int size_bytes, cudaStream_t stream);
+void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream);
 void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b, 
-    uint8_t *out, int stride_out, int width, int height, cudaStream_t stream);
+uint8_t *out, int stride_out, int width, int height, cudaStream_t stream);
 }
 #endif
