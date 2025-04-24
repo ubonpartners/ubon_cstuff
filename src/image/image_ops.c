@@ -35,13 +35,13 @@ uint32_t hash_plane(uint8_t *p, int w, int h, int stride, bool device, cudaStrea
     uint32_t hashes[h];
     if (device==false)
     {
-        cudaStreamSynchronize(stream);  
+        CHECK_CUDART_CALL(cudaStreamSynchronize(stream));  
         hash_2d(p, w, h, stride, hashes);
     }
     else
     {
         cuda_hash_2d(p, w, h, stride, hashes, stream);
-        cudaStreamSynchronize(stream);
+        CHECK_CUDART_CALL(cudaStreamSynchronize(stream));
     }
     return hash_u32(hashes, h);
 }
@@ -192,29 +192,26 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
     h=std::max(0, std::min(std::min(h, src2->height-sy), src->height-dy));
     if (w==0 || h==0) return image_reference(src);
     
-
     // Create a copy of src to modify and return
     image_t *out = create_image(src->width, src->height, src->format);
     image_add_dependency(out, src);
     image_add_dependency(out, src2);
 
-    cudaStream_t stream = out->stream;
-
     // Copy full Y plane from src into out
-    cudaMemcpy2DAsync(out->y, out->stride_y,
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(out->y, out->stride_y,
                       src->y, src->stride_y,
                       src->width, src->height,
                       cudaMemcpyDeviceToDevice,
-                      stream);
+                      out->stream));
 
     // Copy selected region from src2 Y plane
     for (int row = 0; row < h; row++) {
-        cudaMemcpyAsync(
+        CHECK_CUDART_CALL(cudaMemcpyAsync(
             out->y + (dy + row) * out->stride_y + dx,
             src2->y + (sy + row) * src2->stride_y + sx,
             w,
             cudaMemcpyDeviceToDevice,
-            stream);
+            out->stream));
     }
 
     if (src->format == IMAGE_FORMAT_YUV420_DEVICE) {
@@ -224,29 +221,29 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
         int dx_uv = dx / 2, dy_uv = dy / 2;
 
         // Copy full U and V planes from src into out
-        cudaMemcpy2DAsync(out->u, out->stride_uv, src->u, src->stride_uv,
+        CHECK_CUDART_CALL(cudaMemcpy2DAsync(out->u, out->stride_uv, src->u, src->stride_uv,
                           src->width / 2, src->height / 2,
-                          cudaMemcpyDeviceToDevice, stream);
+                          cudaMemcpyDeviceToDevice, out->stream));
 
-        cudaMemcpy2DAsync(out->v, out->stride_uv, src->v, src->stride_uv,
+        CHECK_CUDART_CALL(cudaMemcpy2DAsync(out->v, out->stride_uv, src->v, src->stride_uv,
                           src->width / 2, src->height / 2,
-                          cudaMemcpyDeviceToDevice, stream);
+                          cudaMemcpyDeviceToDevice, out->stream));
 
         // Copy U and V blocks
         for (int row = 0; row < uv_h; row++) {
-            cudaMemcpyAsync(
+            CHECK_CUDART_CALL(cudaMemcpyAsync(
                 out->u + (dy_uv + row) * out->stride_uv + dx_uv,
                 src2->u + (sy_uv + row) * src2->stride_uv + sx_uv,
                 uv_w,
                 cudaMemcpyDeviceToDevice,
-                stream);
+                out->stream));
 
-            cudaMemcpyAsync(
+            CHECK_CUDART_CALL(cudaMemcpyAsync(
                 out->v + (dy_uv + row) * out->stride_uv + dx_uv,
                 src2->v + (sy_uv + row) * src2->stride_uv + sx_uv,
                 uv_w,
                 cudaMemcpyDeviceToDevice,
-                stream);
+                out->stream));
         }
     }
 

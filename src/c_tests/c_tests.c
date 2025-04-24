@@ -12,6 +12,7 @@
 #include "dataset.h"
 #include "nvof.h"
 #include "c_tests.h"
+#include "misc.h"
 
 
 static uint32_t test_convert_3(image_t *img, image_format_t fmt1, image_format_t fmt2,  image_format_t fmt3)
@@ -75,6 +76,7 @@ static void run_one_test(const char *txt, uint32_t (*test)(image_t *img), int ru
     int chunk = runs / num_threads;
     int remainder = runs % num_threads;
 
+    double start_time=time_now_sec();
     int start = 0;
     for (int i = 0; i < num_threads; i++) {
         int end = start + chunk + (i < remainder ? 1 : 0);
@@ -92,6 +94,7 @@ static void run_one_test(const char *txt, uint32_t (*test)(image_t *img), int ru
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
     }
+    double elapsed_time=time_now_sec()-start_time;
 
     int fails = 0;
     for (int i = 1; i < runs; i++) {
@@ -99,7 +102,7 @@ static void run_one_test(const char *txt, uint32_t (*test)(image_t *img), int ru
             fails++;
         }
     }
-    printf("%40s FAILS:%d\n", txt, fails);
+    printf("%40s FAILS:%d; %f iterations/sec\n", txt, fails, (float)(runs/elapsed_time));
     free(hashes);
 }
 
@@ -107,16 +110,16 @@ int run_all_c_tests()
 {
     printf("Running all tests....\n");
     
-    cuda_set_sync_mode(true, true);
+    cuda_set_sync_mode(false, false);
 
     image_t *img_base=load_jpeg("/mldata/image/arrest2.jpg");
-    image_t *img=image_scale(img_base, 64, 64);
+    image_t *img=image_scale(img_base, 1280, 720);
 
     //display_image("test", img);
     //usleep(5000);
     
-    int runs=1200;
-    int threads=8;
+    int runs=5000;
+    int threads=16;
     run_one_test("test convert yuv420_device", test_convert_yuv420, runs, img, threads);
     run_one_test("test convert yuv420_mono_device", test_convert_yuv420_mono, runs, img, threads);
     run_one_test("test scale yuv420_device 1280x720", test_scale_yuv420_1280, runs, img, threads);

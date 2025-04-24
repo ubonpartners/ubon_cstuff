@@ -44,13 +44,13 @@ static image_t *image_convert_yuv420_to_nv12_device(image_t *src, image_format_t
     int uv_height = height / 2;
 
     // Copy Y-plane
-    cudaMemcpy2DAsync(
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(
         dst->y, dst->stride_y,
         src->y, src->stride_y,
         width, height,
         cudaMemcpyDeviceToDevice,
         dst->stream
-    );
+    ));
 
     // Interleave U (Cb) and V (Cr) into NV12 format
     cuda_interleave_uv(
@@ -128,34 +128,16 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t f
 
 static void copyasync2d(void *src, int src_stride, bool src_device, void *dest, int dest_stride, bool dest_device, int width, int height, CUstream stream)
 {
-    CUDA_MEMCPY2D copyP;
-    memset(&copyP, 0, sizeof(copyP));
-    //printf("COPY2D %dx%d ss %d ds %d\n",width,height,src_stride,dest_stride);
-    if (src_device)
-    {
-        copyP.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-        copyP.srcDevice = (CUdeviceptr)src;
-    } 
+    cudaMemcpyKind kind;
+    if (src_device && dest_device)
+        kind = cudaMemcpyDeviceToDevice;
+    else if (!src_device && dest_device)
+        kind = cudaMemcpyHostToDevice;
+    else if (src_device && !dest_device)
+        kind = cudaMemcpyDeviceToHost;
     else
-    {
-        copyP.srcMemoryType = CU_MEMORYTYPE_HOST;
-        copyP.srcHost = src;
-    }
-    if (dest_device)
-    {
-        copyP.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-        copyP.dstDevice = (CUdeviceptr)dest;
-    } 
-    else
-    {
-        copyP.dstMemoryType = CU_MEMORYTYPE_HOST;
-        copyP.dstHost = dest;
-    }
-    copyP.srcPitch = src_stride;
-    copyP.dstPitch = dest_stride;
-    copyP.WidthInBytes = width;
-    copyP.Height = height;
-    assert(CUDA_SUCCESS==cuMemcpy2DAsync(&copyP, stream));
+        kind = cudaMemcpyHostToHost;
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(dest, dest_stride,src, src_stride,width, height,kind, stream));
 }
 
 static image_t *image_convert_yuv420_device_host(image_t *img, image_format_t format)
@@ -182,14 +164,7 @@ static image_t *image_convert_rgb_planar_fp_device_host(image_t *img, image_form
     image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    if (dest_device && (!src_device))
-    {
-        cuMemcpyHtoDAsync((CUdeviceptr)ret->rgb, (const void *)img->rgb, img->width*img->height*bpf*3, ret->stream); 
-    }
-    else if ((!dest_device) && (src_device))
-    {
-        cuMemcpyDtoHAsync((void*)ret->rgb, (CUdeviceptr)img->rgb, img->width*img->height*bpf*3, ret->stream); 
-    }
+    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*3, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream)); 
     return ret;
 }
 
@@ -261,9 +236,8 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
         image_add_dependency(dst, src);
         cudaStream_t stream = dst->stream;
         // Async copy Y plane
-        cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
-            src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream
-        );
+        CHECK_CUDART_CALL(cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
+            src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream));
         return dst;
     }
 }
@@ -274,15 +248,14 @@ static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
     image_add_dependency(dst, src);
     cudaStream_t stream = dst->stream;
     // Async copy Y plane
-    cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
-        src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream
-    );
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
+        src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream));
     // Calculate size of U/V planes (half width and height)
     int uv_width = src->width / 2;
     int uv_height = src->height / 2;
     // Async memset U and V planes to 0x80 (neutral chroma)
-    cudaMemset2DAsync(dst->u, dst->stride_uv, 0x80, uv_width, uv_height, dst->stream);
-    cudaMemset2DAsync(dst->v, dst->stride_uv, 0x80, uv_width, uv_height, dst->stream);
+    CHECK_CUDART_CALL(cudaMemset2DAsync(dst->u, dst->stride_uv, 0x80, uv_width, uv_height, dst->stream));
+    CHECK_CUDART_CALL(cudaMemset2DAsync(dst->v, dst->stride_uv, 0x80, uv_width, uv_height, dst->stream));
     return dst;
 }
 
