@@ -33,6 +33,11 @@ void clear_image(image_t *img)
 uint32_t image_hash(image_t *img)
 {
     if (img==0) return 0;
+    if ((img->width&31)!=0)
+    {
+        log_error("Hash called on %dx%d image",img->width,img->height);
+    }
+    assert((img->width&31)==0); // fixme: currently only works if width divisible by 32
     if (img->host_mem!=0)
         return hash_host(img->host_mem, img->host_mem_size);
     else 

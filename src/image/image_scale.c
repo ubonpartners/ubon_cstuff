@@ -40,9 +40,9 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    if (src->width>2*width && src->height>2*height)
+    if (0)//src->width>2*width && src->height>2*height)
     {
-        if ((src->format==IMAGE_FORMAT_YUV420_DEVICE) && ((src->width&3)==0) && ((src->height&3)==0))
+        if (((src->width&3)==0) && ((src->height&3)==0))
         {
             int inter_w=src->width>>1;
             int inter_h=src->height>>1;
@@ -52,7 +52,9 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
             cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_w, inter->stream);
             cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
             cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
-            return inter;
+            image_t *ret=image_scale_yuv420_device(inter, width, height);
+            destroy_image(inter);
+            return ret;
         }
     }
 

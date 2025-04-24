@@ -10,6 +10,7 @@
 #include "jpeg.h"
 #include "dataset.h"
 #include "nvof.h"
+#include "c_tests.h"
 
 static infer_t *inf=0;
 static nvof_t *v=0;
@@ -33,6 +34,11 @@ int main(int argc, char *argv[])
 {
     init_cuda_stuff();
     image_init();
+
+    if (argc>1 && strcmp(argv[1], "--test")==0)
+    {
+        return run_all_c_tests();
+    }
 
     /*dataset_t *ds=dataset_create("/mldata/coco-face/val/images");
     int num=dataset_get_num(ds);

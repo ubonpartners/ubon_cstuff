@@ -20,22 +20,22 @@ static void allocate_image_device_mem(image_t *img, int size)
     }
     else
     {
-        CHECK_CUDA_CALL(cuMemAlloc(&img->device_mem, size));
+        CHECK_CUDART_CALL(cudaMalloc((void**)&img->device_mem, size));
     }
 }
 
 static void allocate_image_host_mem(image_t *img, int size)
 {
     img->host_mem_size=size;
-    CHECK_CUDA_CALL(cuMemAllocHost(&img->host_mem, size));
+    CHECK_CUDART_CALL(cudaMallocHost(&img->host_mem, size));
 }
 
 static void free_image_mem(image_t *img)
 {
     if (img->host_mem)
     {
-        cuStreamSynchronize(img->stream);
-        cuMemFreeHost(img->host_mem);
+        cudaStreamSynchronize(img->stream);
+        cudaFreeHost(img->host_mem);
     }
     if (img->device_mem)
     {
@@ -45,8 +45,8 @@ static void free_image_mem(image_t *img)
         }
         else
         {
-            cuStreamSynchronize(img->stream);
-            cuMemFree(img->device_mem);
+            cudaStreamSynchronize(img->stream);
+            cudaFree((void*)img->device_mem);
         }
     }
     img->host_mem=0;
@@ -87,7 +87,7 @@ static void allocate_image_surfaces(image_t *img)
         }
         case IMAGE_FORMAT_YUV420_DEVICE:
         {
-            int round=(img->width+31)&(~31);
+            int round=(img->width+15)&(~15);
             allocate_image_device_mem(img, round*img->height*3/2);
             img->y=(uint8_t *)img->device_mem;
             img->u=img->y+(round*img->height);
@@ -162,7 +162,7 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
     img->height=height;
     img->format=fmt;
     img->reference_count=1;
-    img->stream=create_custream();
+    img->stream=create_cuda_stream();
     return img;
 }
 
@@ -188,7 +188,7 @@ void destroy_image(image_t *img)
     if (reference_count>1) return;
     image_t *referenced_surface=img->referenced_surface;
     free_image_mem(img);
-    destroy_custream(img->stream);
+    destroy_cuda_stream(img->stream);
     free(img);
     if (referenced_surface) destroy_image(referenced_surface);
 }
@@ -197,7 +197,7 @@ void image_sync(image_t *img)
 {
     if (!img) return;
     //log_debug("synchronize %dx%d %s",img->width,img->height,image_format_name(img->format));
-    cuStreamSynchronize(img->stream);
+    cudaStreamSynchronize(img->stream);
 }
 
 void image_add_dependency(image_t *img, image_t *depends_on)

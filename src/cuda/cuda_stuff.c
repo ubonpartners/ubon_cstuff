@@ -33,19 +33,18 @@ typedef struct cuda_stuff_context {
 
 static cuda_stuff_context_t cs;
 static std::once_flag initFlag;
-static CUcontext cuContext;
 
 // cuda_stream_add_dependency : allows you to fire-and-forget say that
 // future work run on "stream_depends_on" can use anything previously
 // issued on "stream"
 
 // the intended model is that each object e.g. videosurface, has it's own
-// CUstream, that stream is used to generate that object's contents. You
+// cudaStream_t, that stream is used to generate that object's contents. You
 // can use cuda_stream_add_dependency to add dependencies on the source 
 // objects used
 
 // for example suppose we have surfaceA and surfaceB
-// surfaceA->stream and surfaceB->stream are the CUstreams used to create
+// surfaceA->stream and surfaceB->stream are the cudaStream_ts used to create
 // the contents of A and B (we don't need to know how or what kernel)
 // Supposed we want run a kernel to make surface C from a mix of A an B.
 // 1) create empty surface C with C->stream
@@ -70,7 +69,7 @@ static CUcontext cuContext;
 //   3. Records an event on 'stream_depends_on' and makes 'stream' wait
 //      on that event.
 //--------------------------------------------------------------------
-void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on)
+void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends_on)
 {
     //cudaDeviceSynchronize();
     pthread_mutex_lock(&cs.lock);
@@ -91,11 +90,10 @@ void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on)
 
 static void do_cuda_init()
 {
-    CHECK_CUDA_CALL(cuInit(0));
-    CHECK_CUDA_CALL(cuCtxCreate(&cuContext, 0, 0));
-    
+    log_debug("Cuda init");
+
     // Set the CUDA device
-    int device = 0;
+    int device=0;
     cudaSetDevice(device);
     
     // Retrieve device properties to populate the NPP stream context.
@@ -153,21 +151,24 @@ void check_cuda_inited()
 CUcontext get_CUcontext()
 {
     assert(cuda_inited);
+    CUcontext cuContext;
+    CUresult res = cuCtxGetCurrent(&cuContext);
+    assert(res== CUDA_SUCCESS);
     return cuContext;
 }
 
-CUstream create_custream()
+cudaStream_t create_cuda_stream()
 {
-    CUstream ret=0;
+    cudaStream_t ret = 0;
     if (cs.force_sync) cudaDeviceSynchronize();
     if (cs.force_default_stream) return ret;
-    CHECK_CUDA_CALL(cuStreamCreate(&ret, CU_STREAM_DEFAULT));
+    CHECK_CUDART_CALL(cudaStreamCreate(&ret));
     return ret;
 }
 
-void destroy_custream(CUstream stream)
+void destroy_cuda_stream(cudaStream_t stream)
 {
     if (stream==0) return;
-    CHECK_CUDA_CALL(cuStreamDestroy(stream));
+    CHECK_CUDART_CALL(cudaStreamDestroy(stream));
 }
 

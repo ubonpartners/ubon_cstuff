@@ -32,3 +32,14 @@ uint32_t hash_host(void *mem, int size)
     }
     return hash_block(partials, blocks);
 }
+
+uint32_t hash_2d_host(uint8_t *mem, int w, int h, int stride)
+{
+    uint32_t partials[h];
+    assert((w&3)==0);
+    for(int i=0;i<h;i++)
+    {
+        partials[i]=hash_block((const uint32_t *)(mem+stride*i), w>>2);
+    }
+    return hash_block(partials, h);
+}

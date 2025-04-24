@@ -141,7 +141,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     {
         assert(img->stride_y==img->stride_uv);
     }
-    
+    //log_debug("nvof size %dx%d img %dx%d",v->width,v->height,img->width,img->height);
     assert(img->width==v->width && img->height==v->height);
     //log_debug("nvof size %dx%d img %dx%d",v->width,v->height,img->width,img->height);
     //display_image("nvof",img);
@@ -236,7 +236,7 @@ nvof_t *nvof_create(void *context, int max_width, int max_height)
     n->use_nv12=true;
     n->max_width=max_width;
     n->max_height=max_height;
-    n->nvof_stream=0;//create_custream();
+    n->nvof_stream=create_cuda_stream();
     CHECK_OF(nvOFAPI.nvCreateOpticalFlowCuda(get_CUcontext(), &n->hOf));
 
     return n;
@@ -246,7 +246,7 @@ void nvof_destroy(nvof_t *n)
 {
     if (n) 
     {
-        destroy_custream(n->nvof_stream);
+        destroy_cuda_stream(n->nvof_stream);
         destroy_nvof_buffer(n, &n->inputFrame);
         destroy_nvof_buffer(n, &n->referenceFrame);
         destroy_nvof_buffer(n, &n->flowBuf);

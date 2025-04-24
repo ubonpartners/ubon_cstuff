@@ -264,8 +264,8 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
         cudaMemcpy2DAsync(dst->y, dst->stride_y,src->y, src->stride_y,
             src->width, src->height,cudaMemcpyDeviceToDevice,dst->stream
         );
+        return dst;
     }
-    return dst;
 }
 
 static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format) 

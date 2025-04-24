@@ -29,10 +29,10 @@
 void check_cuda_inited();
 void init_cuda_stuff();
 NppStreamContext get_nppStreamCtx();
-void cuda_stream_add_dependency(CUstream stream, CUstream stream_depends_on);
+void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends_on);
 CUcontext get_CUcontext();
-CUstream create_custream();
-void destroy_custream(CUstream s);
+cudaStream_t create_cuda_stream();
+void destroy_cuda_stream(cudaStream_t s);
 void cuda_set_sync_mode(bool force_sync, bool force_default_stream);
 
 #endif
