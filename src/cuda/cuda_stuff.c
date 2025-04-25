@@ -94,7 +94,7 @@ static void do_cuda_init()
 
     // Set the CUDA device
     int device=0;
-    cudaSetDevice(device);
+    CHECK_CUDART_CALL(cudaSetDevice(device));
     
     // Retrieve device properties to populate the NPP stream context.
     cudaDeviceProp prop;
@@ -119,6 +119,9 @@ static void do_cuda_init()
 
     cs.force_sync=false;
     cs.force_default_stream=false;
+
+    cudaStream_t ret = 0;
+    CHECK_CUDART_CALL(cudaStreamCreate(&ret));
 
     cuda_inited=true;
 }

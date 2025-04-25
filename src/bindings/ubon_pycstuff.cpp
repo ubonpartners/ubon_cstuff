@@ -13,6 +13,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "simple_decoder.h"
 #include "display.h"
 #include "nvof.h"
+#include "log.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -264,7 +265,7 @@ class c_infer {
             };
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
-    std::cout << "ubon_pycstuff bindings loaded" << std::endl;
+    //std::cout << "ubon_pycstuff bindings loaded" << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
         .value("NONE", IMAGE_FORMAT_NONE)
         .value("YUV420_DEVICE", IMAGE_FORMAT_YUV420_DEVICE)
@@ -313,7 +314,12 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             "`force_sync`: forces synchronization after operations. "
             "`force_default_stream`: restricts to the default stream.");
 
-            
+    m.def("log_set_level", &log_set_level,
+            py::arg("level"),
+            "Set the logging level. "
+            "`level`: 0 (TRACE) to 5 (FATAL).");
+
+    log_set_level(LOG_WARN);        
     init_cuda_stuff();
     image_init();
 }
