@@ -32,6 +32,18 @@ class c_image {
         c_image(image_t* ptr) {
             img = ptr;
         }
+
+        std::pair<int, int> size() const {
+            return {img->height, img->width};
+        }
+
+        image_format_t format() const {
+            return img->format;
+        }
+
+        std::string format_name() const {
+            return image_format_name(img->format);
+        }
     
         static std::shared_ptr<c_image> from_numpy(py::array_t<uint8_t> input_rgb) {
             auto buf = input_rgb.unchecked<3>();
@@ -284,12 +296,23 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_image, std::shared_ptr<c_image>>(m, "c_image")
         .def(py::init<int, int, image_format_t>(), "Create empty image")
         .def_static("from_numpy", &c_image::from_numpy, "Create from NumPy RGB array")
+        .def_property_readonly("size", &c_image::size, "Return (height, width) of the image")
+        .def_property_readonly("format", &c_image::format, "Get the image format")
+        .def_property_readonly("format_name", &c_image::format_name, "Get the image format name as a string")
+        .def("__repr__",
+            [](const c_image &self) {
+                std::ostringstream oss;
+                oss << "<c_image format='" << image_format_name(self.format())
+                    << "' width:" << self.size().second << ", height:" << self.size().first << ")>";
+                return oss.str();
+            }
+        )
         .def("scale", &c_image::scale, "Scale image")
         .def("convert", &c_image::convert, "Convert format")
         .def("to_numpy", &c_image::to_numpy, "Get NumPy RGB image")
         .def("display", &c_image::display, "Show image in a debug display")
         .def("hash", &c_image::hash, "Return hash of imge data")
-        .def("sync", &c_image::hash, "Wait for all outstanding image ops")
+        .def("sync", &c_image::sync, "Wait for all outstanding image ops")
         .def("blur", &c_image::blur, "Return gaussian blur of image")
         .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images")
         .def("crop", &c_image::crop, "Return a crop of the surface")

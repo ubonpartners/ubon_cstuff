@@ -134,7 +134,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     nvof_set_size(v, w, h);
 
     image_t *scaled=image_scale(img_in, v->width, v->height);
-    image_format_t target_format=(v->use_nv12) ? IMAGE_FORMAT_NV12_DEVICE : IMAGE_FORMAT_YUV420_DEVICE;
+    image_format_t target_format=(v->use_nv12) ? IMAGE_FORMAT_NV12_DEVICE : IMAGE_FORMAT_MONO_DEVICE;
     image_t *img=image_convert(scaled, target_format);
 
     if (v->use_nv12)
@@ -197,11 +197,12 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
         copyP2.Height = v->outH;
         CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP2, v->nvof_stream));
         
-        cuStreamSynchronize(v->nvof_stream);
+        cuStreamSynchronize(v->nvof_stream); // annoying
     }
     else
     {
         memset(v->costBufHost, 255, v->outW*v->outH); // optical flow not run, set costs to max
+        memset(v->flowBufHost, 0, 4*v->outW*v->outH); // optical flow not run, return zero vectors
         cuStreamSynchronize(v->nvof_stream);
     }
     

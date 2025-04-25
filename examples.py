@@ -10,7 +10,7 @@ def basic_test(jpeg_file):
 
     # copy image to C domain
     img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
-
+    print(img)
     #scale to 720p
     img_scaled = img.scale(1280, 720) # implicily will get copied to GPU and converted to YUV420
 
@@ -27,6 +27,7 @@ def basic_test_mono(jpeg_file):
     # copy image to C domain
     img = upyc.c_image.from_numpy(rgb_img)
     img=img.convert(upyc.YUV420_DEVICE)
+    print(img)
     img.sync()
     #img=img.convert(upyc.MONO_DEVICE)
     #img.sync()
@@ -41,6 +42,7 @@ def test_inference(jpeg_file):
     bgr_img = cv2.imread("/mldata/image/arrest.jpg")
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
     img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
+    print(img)
 
     # run tensortRT inference
     inf = upyc.c_infer("/mldata/weights/trt/yolo11l-dpa-131224.trt", "")

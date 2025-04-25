@@ -6,14 +6,27 @@
 #include <cuda.h>
 #include <assert.h>
 #include <mutex>
+#include <stdint.h>
 
 static bool async_cuda_mem=true;
 static std::once_flag initFlag;
 static bool image_inited=false;
 
+static uint64_t total_image_device_mem=0;
+static uint64_t total_image_host_mem=0;
+static uint64_t total_image_device_allocations=0;
+static uint64_t total_image_host_allocations=0;
+
+static void image_mem_init()
+{
+    // some stuff
+}
+
 static void allocate_image_device_mem(image_t *img, int size)
 {
     img->device_mem_size=size;
+    __atomic_add_fetch(&total_image_device_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&total_image_device_allocations, 1, __ATOMIC_RELAXED);
     if (async_cuda_mem)
     {
         CHECK_CUDART_CALL(cudaMallocAsync((void**)&img->device_mem, (size_t)size, img->stream));
@@ -27,6 +40,8 @@ static void allocate_image_device_mem(image_t *img, int size)
 static void allocate_image_host_mem(image_t *img, int size)
 {
     img->host_mem_size=size;
+    __atomic_add_fetch(&total_image_host_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&total_image_host_allocations, 1, __ATOMIC_RELAXED);
     CHECK_CUDART_CALL(cudaMallocHost(&img->host_mem, size));
 }
 
@@ -36,6 +51,8 @@ static void free_image_mem(image_t *img)
     {
         cudaStreamSynchronize(img->stream);
         cudaFreeHost(img->host_mem);
+        __atomic_sub_fetch(&total_image_host_mem, img->device_mem_size, __ATOMIC_RELAXED);
+        __atomic_sub_fetch(&total_image_host_allocations, 1, __ATOMIC_RELAXED);
     }
     if (img->device_mem)
     {
@@ -48,6 +65,8 @@ static void free_image_mem(image_t *img)
             cudaStreamSynchronize(img->stream);
             cudaFree((void*)img->device_mem);
         }
+        __atomic_sub_fetch(&total_image_device_mem, img->device_mem_size, __ATOMIC_RELAXED);
+        __atomic_sub_fetch(&total_image_device_allocations, 1, __ATOMIC_RELAXED);
     }
     img->host_mem=0;
     img->device_mem=0;
@@ -196,6 +215,7 @@ void destroy_image(image_t *img)
 void image_sync(image_t *img)
 {
     if (!img) return;
+    assert(img->reference_count>0);
     //log_debug("synchronize %dx%d %s",img->width,img->height,image_format_name(img->format));
     cudaStreamSynchronize(img->stream);
 }
@@ -231,6 +251,7 @@ extern void image_conversion_init();
 static void do_image_init()
 {
     image_conversion_init();
+    image_mem_init();
     image_inited=true;
 }
 
