@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(uboncstuff LANGUAGES C CXX CUDA)
+option(ORIN_NANO "Enable Orin Nano" OFF)
 
 # Ensure Python3 is found first so Python3_EXECUTABLE is available
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -32,10 +33,43 @@ enable_language(CUDA)
 #set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3 -gencode arch=compute_60,code=sm_60 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89")
 
 # Include dirs
-include_directories(
+set(PROJECT_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
     ${CUDA_INCLUDE_DIRS}
 )
+
+set(COMMON_LIBS
+    -lpthread -lm -ldl -lrt
+)
+
+if(ORIN_NANO)
+    list(APPEND PROJECT_INCLUDE_DIRS
+        /usr/local/cuda/include
+    )
+    set(ARCH_LIBS
+        -lSDL2 -ljpeg -lopenh264 -lyuv
+        -lcuda -lcudart -lnvv4l2
+        -lnppc -lnppisu -lnppig -lnppicc -lnppif
+        -lnvbufsurface -lnvbufsurftransform
+        -lnvvpi -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -L/usr/lib/aarch64-linux-gnu
+        -L/usr/lib/aarch64-linux-gnu/nvidia
+        -L/usr/lib/aarch64-linux-gnu/tegra
+        -L/usr/local/cuda/lib64
+    )
+else()
+    set(ARCH_LIBS
+        -L/usr/local/cuda/lib64
+        -lnvinfer -lcudart -lcublas -lnvonnxparser
+        -lopenh264 -lcuda -lnvcuvid -lyuv
+        -lnppc -lnppisu -lnppig -lnppicc -lnppif -lSDL2 -ljpeg
+        -lnvvpi
+        -lnvidia-opticalflow
+    )
+endif()
+
+include_directories(${PROJECT_INCLUDE_DIRS})
+
 
 # Gather sources
 file(GLOB SRC_FILES
@@ -74,12 +108,8 @@ add_executable(uboncstuff ${MAIN_FILE})
 target_link_libraries(uboncstuff
     uboncstufflib
     yaml-cpp
-    -L/usr/local/cuda/lib64
-    -lnvinfer -lcudart -lcublas -lpthread -lnvonnxparser
-    -lopenh264 -lcuda -lnvcuvid -lyuv
-    -lnppc -lnppisu -lnppig -lnppicc -lnppif -lSDL2 -ljpeg
-    -lnvvpi
-    -lnvidia-opticalflow
+    ${COMMON_LIBS}
+    ${ARCH_LIBS}
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
