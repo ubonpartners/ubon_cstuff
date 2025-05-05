@@ -30,7 +30,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 ### Optical Flow
 - Support for:
   - NVIDIA Optical Flow SDK (NVOF); latest v3 support with NV12 or mono
-  - VPI (in progress…)
+  - VPI (in progress…) based on https://docs.nvidia.com/vpi/installation.html
 
 ### Inference
 - TensorRT accelerated inference with support for batched processing and flexible surface input
@@ -43,12 +43,19 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - sudo apt install libyuv-dev
 - sudo apt install libsdl2-dev
 - sudo apt install libyaml-cpp-dev
+- sudo apt install pybind11-dev
+- sudo apt install libopenh264-dev
+- sudo apt install libnvvpi3 vpi3-dev vpi3-samples
 
 ---
 
 ## 🐍 Python Bindings
 
 All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
+- Dependencies:
+  - pip install -r requirements.txt
+  - Install the latest [Stuff][git@github.com:ubonpartners/stuff.git]
+  - Install this package ubon_cstuff either using pip or wheel
 
 See the usage example here:  
 👉 [The examples](https://github.com/ubonpartners/ubon_cstuff/blob/main/examples.py)

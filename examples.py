@@ -3,9 +3,40 @@ import ubon_pycstuff.ubon_pycstuff as upyc
 import cv2
 import stuff
 import time
+import os
+import sys
+import argparse
 
-def basic_test(jpeg_file):
-    bgr_img = cv2.imread("/mldata/image/arrest.jpg")
+def argument_parser():
+    parser = argparse.ArgumentParser("ubon_cstuff examples")
+    parser.add_argument("--basic_test", dest="basic_test",
+        help="Basic Test <jpg file>", default=None, type=str)
+    parser.add_argument("--basic_test_mono", dest="basic_test_mono",
+        help="Basic Test Mono <jpg file>", default=None, type=str)
+    parser.add_argument("--test_inference", dest="test_inference",
+        help="Test Inference <jpg file>", default=None, type=str)
+    parser.add_argument("--test_nvof", dest="test_nvof",
+        help="Test NVOF <h264 nal file>", default=None, type=str)
+    parser.add_argument("--test_motiondet", dest="test_motiondet",
+        help="Test Motion Detection <h264 nal file>", default=None, type=str)
+    parser.add_argument("--trt_model", dest="trt_model",
+        help="Tensor RT Model to use <model.trt file>", default=None, type=str)
+    parser.print_help()
+    args = parser.parse_args()
+    print(f"args = {args}\n")
+    # validate all given files do exist.
+    exist = True
+    for k, v in vars(args).items():
+        if v is not None and not os.path.exists(v):
+            print(f"argument --{k} {v} does not exist")
+            exist = False
+    if exist is False:
+        print("Exiting since one of the input file is not existing")
+        sys.exit(2)
+    return args
+
+def basic_test(jpeg_file="/mldata/image/arrest.jpg"):
+    bgr_img = cv2.imread(jpeg_file)
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
 
     # copy image to C domain
@@ -21,8 +52,8 @@ def basic_test(jpeg_file):
     cv2.waitKey(5000)
     cv2.destroyAllWindows()
 
-def basic_test_mono(jpeg_file):
-    bgr_img = cv2.imread("/mldata/image/arrest.jpg")
+def basic_test_mono(jpeg_file="/mldata/image/arrest.jpg"):
+    bgr_img = cv2.imread(jpeg_file)
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
     # copy image to C domain
     img = upyc.c_image.from_numpy(rgb_img)
@@ -36,16 +67,16 @@ def basic_test_mono(jpeg_file):
     #img.display("Mono image")
     img=img.scale(320,256)
     img.display("Mono image scaled")
-    time.sleep(5000)
+    time.sleep(10)
 
-def test_inference(jpeg_file):
-    bgr_img = cv2.imread("/mldata/image/arrest.jpg")
+def test_inference(jpeg_file="/mldata/image/arrest.jpg", trt_model="/mldata/weights/trt/yolo11l-dpa-131224.trt"):
+    bgr_img = cv2.imread(jpeg_file)
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
     img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
     print(img)
 
     # run tensortRT inference
-    inf = upyc.c_infer("/mldata/weights/trt/yolo11l-dpa-131224.trt", "")
+    inf = upyc.c_infer(trt_model, "")
     dets=inf.run(img)
     for d in dets:
         print(d)
@@ -56,7 +87,7 @@ def test_inference(jpeg_file):
     display.show(rgb_img, is_rgb=True)
     display.get_events(5000)
 
-def test_nvof(h264_file):
+def test_nvof(h264_file="/mldata/video/MOT20-01.264"):
     # create a NVDEC video decoder
     decoder = upyc.c_decoder()
     with open(h264_file, "rb") as f:
@@ -96,7 +127,7 @@ def test_nvof(h264_file):
         d.show(arr, is_rgb=True)
         d.get_events(30)
 
-def test_motiondet(h264_file):
+def test_motiondet(h264_file="/mldata/tracking/cevo_april25/video/generated_h264/INof_LD_Out_Light_FFcam_002.h264"):
     # create a NVDEC video decoder
     # blur the frames and take frame differences
     # display the differences
@@ -123,11 +154,24 @@ def test_motiondet(h264_file):
             d.get_events(30)
         last=blurred
 
-upyc.cuda_set_sync_mode(False, False)
-#basic_test_mono("/mldata/image/arrest.jpg")
-basic_test("/mldata/image/arrest.jpg")
-test_inference("/mldata/image/arrest.jpg")
-test_nvof("/mldata/video/MOT20-01.264")
-test_motiondet("/mldata/tracking/cevo_april25/video/generated_h264/INof_LD_Out_Light_FFcam_002.h264")
+args = argument_parser()
 
+upyc.cuda_set_sync_mode(False, False)
+if args.basic_test is not None:
+    print(f"basic_test: {args.basic_test}")
+    basic_test(args.basic_test)
+if args.basic_test_mono is not None:
+    print(f"basic_test_mono: {args.basic_test_mono}")
+    basic_test_mono(args.basic_test_mono)
+if args.test_inference is not None and args.trt_model is not None:
+    print(f"test_inference: {args.test_inference}")
+    test_inference(args.test_inference, args.trt_model)
+if args.test_nvof is not None:
+    print(f"test_nvof: {args.test_nvof}")
+    test_nvof(args.test_nvof)
+if args.test_motiondet is not None:
+    print(f"test_motiondet: {args.test_motiondet}")
+    test_motiondet(args.test_motiondet)
+
+print("completed")
 

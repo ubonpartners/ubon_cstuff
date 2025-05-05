@@ -1,10 +1,31 @@
 add_library(ubon_pycstuff MODULE ubon_pycstuff.cpp)
 target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+if(ORIN_NANO)
+    set(ARCH_LIBS
+        pthread SDL2 jpeg openh264 yuv
+        cuda cudart nvv4l2
+        nppc nppisu nppig nppicc nppif
+        nvbufsurface nvbufsurftransform
+        nvvpi nvinfer nvonnxparser nvinfer_plugin
+        -L/usr/lib/aarch64-linux-gnu
+        -L/usr/lib/aarch64-linux-gnu/nvidia
+        -L/usr/lib/aarch64-linux-gnu/tegra
+        -L/usr/local/cuda/lib64
+    )
+else()
+    set(ARCH_LIBS
+        pthread cuda cudart cublas nvinfer nvonnxparser openh264
+        nvcuvid nppc nppisu nppig nppicc nppif jpeg SDL2 yuv
+        nvidia-opticalflow yaml-cpp # etc
+    )
+endif()
+
 target_link_libraries(ubon_pycstuff PRIVATE
     uboncstufflib  # your static lib
     pybind11::module
     Python3::Python
-    pthread cuda cudart cublas nvinfer nvonnxparser openh264 nvcuvid nppc nppisu nppig nppicc nppif jpeg SDL2 yuv nvidia-opticalflow yaml-cpp # etc
+    ${ARCH_LIBS}
 )
 
 # Determine if we're doing a normal local build or a wheel build
