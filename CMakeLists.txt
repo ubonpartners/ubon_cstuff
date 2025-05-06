@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(uboncstuff LANGUAGES C CXX CUDA)
-option(ORIN_NANO "Enable Orin Nano" OFF)
+message("")
+if(DEFINED ENV{JETSON_SOC})
+    message(STATUS, "Enabling Orin Nano = UBONCSTUFF_PLATFORM=1")
+else()
+    message(STATUS, "Disabling Orin Nano = UBONCSTUFF_PLATFORM=0")
+endif()
 
 # Ensure Python3 is found first so Python3_EXECUTABLE is available
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -42,7 +47,9 @@ set(COMMON_LIBS
     -lpthread -lm -ldl -lrt
 )
 
-if(ORIN_NANO)
+if(DEFINED ENV{JETSON_SOC})
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=1")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     list(APPEND PROJECT_INCLUDE_DIRS
         /usr/local/cuda/include
     )
@@ -58,6 +65,8 @@ if(ORIN_NANO)
         -L/usr/local/cuda/lib64
     )
 else()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=0")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=0")
     set(ARCH_LIBS
         -L/usr/local/cuda/lib64
         -lnvinfer -lcudart -lcublas -lnvonnxparser

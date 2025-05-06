@@ -9,6 +9,7 @@
 #include <iostream>
 #include <mutex>
 
+#if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 #define CHECK_OF(call) \
     do { \
         NV_OF_STATUS _status = (call); \
@@ -258,4 +259,5 @@ void nvof_destroy(nvof_t *n)
         free(n);
     }
 }
+#endif //(UBONCSTUFF_PLATFORM == 0)
 

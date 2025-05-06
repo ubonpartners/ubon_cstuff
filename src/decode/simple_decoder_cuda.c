@@ -9,6 +9,7 @@
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
 
+#if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 struct simple_decoder 
 {
     int width;
@@ -139,3 +140,5 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     packet.payload_size=data_size;
     CHECK_CUDA_CALL(cuvidParseVideoData(dec->videoParser, &packet));
 }
+#endif //(UBONCSTUFF_PLATFORM == 0)
+

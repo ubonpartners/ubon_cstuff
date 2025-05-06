@@ -23,6 +23,11 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - write surface to JPEG, or display on screen
 
 ### Video Decoding
+- Platforms Supported
+  - Desktop x86_64 with Nvidia card => UBONCSTUFF_PLATFORM=0
+  - Integrated Nvidia Orin Nano  => UBONCSTUFF_PLATFORM=1
+
+### Video Decoding
 - Hardware and software decoder support:
   - OpenH264 (software)
   - NVDEC (NVIDIA GPU-accelerated decode)
