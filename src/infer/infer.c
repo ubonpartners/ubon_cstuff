@@ -56,6 +56,19 @@ public:
     }
 } trt_Logger;
 
+// Platform specific changes
+static void create_exec_context(infer_t *inf)
+{
+#if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
+    inf->ec = inf->engine->createExecutionContext();
+#elif (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
+    inf->ec = inf->engine->createExecutionContext(ExecutionContextAllocationStrategy::kSTATIC);
+#else
+    #error "Unsupported Platform"
+#endif
+
+    return;
+}
 
 static void infer_build(const char *onnx_filename, const char *out_filename)
 {
@@ -197,7 +210,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
    // int detection_attribute_size = inf->engine->getBindingDimensions(1).d[1];
   //  printf("detection_attribute_size=%d\n", detection_attribute_size);
 
-    inf->ec = inf->engine->createExecutionContext(ExecutionContextAllocationStrategy::kSTATIC);
+    create_exec_context(inf);
     assert(inf->ec!=0);
     //inf->ec->setOptimizationProfileAsync(0, 0);
 

@@ -1,7 +1,7 @@
 add_library(ubon_pycstuff MODULE ubon_pycstuff.cpp)
 target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
-if(ORIN_NANO)
+if(DEFINED ENV{JETSON_SOC})
     set(ARCH_LIBS
         pthread SDL2 jpeg openh264 yuv
         cuda cudart nvv4l2
