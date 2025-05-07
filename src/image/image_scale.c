@@ -23,7 +23,7 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 {
     image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_HOST);
     if (!dst) return 0;
-    image_add_dependency(dst, src); 
+    image_add_dependency(dst, src);
     I420Scale(
             src->y, src->stride_y,
             src->u, src->stride_uv,
@@ -56,7 +56,7 @@ static image_t *image_scale_half(image_t *src)
 
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    if (src->format==IMAGE_FORMAT_YUV420_DEVICE && src->width>=2*width && src->height>=2*height)
+    /*if (src->format==IMAGE_FORMAT_YUV420_DEVICE && src->width>=2*width && src->height>=2*height)
     {
         if (((src->width&3)==0) && ((src->height&3)==0))
         {
@@ -65,7 +65,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
             destroy_image(inter);
             return ret;
         }
-    }
+    }*/
 
     image_t *dst=create_image(width, height, src->format);
     if (!dst) return 0;
@@ -79,7 +79,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     nppStreamCtx.hStream=dst->stream;
 
     // Create scaling context for Y plane
-    NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;
+    NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;//NPPI_INTER_LANCZOS;
     NppiSize dstSize = {dst->width, dst->height};
 
     // Y plane scaling

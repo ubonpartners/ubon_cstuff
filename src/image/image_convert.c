@@ -8,6 +8,9 @@
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 #include "misc.h"
+#include <stdint.h>
+#include <assert.h>
+#include <math.h>
 #include <mutex>
 
 #define CHECK_NPPcall(call) \
@@ -66,40 +69,62 @@ static image_t *image_convert_yuv420_to_nv12_device(image_t *src, image_format_t
     return dst;
 }
 
-static int clip(int x)
-{
-    if (x<0) return 0;
-    if (x>255) return 255;
-    return x;
+static inline uint8_t clip_float_to_u8(float val) {
+    return (uint8_t)(fminf(fmaxf(val, 0.0f), 255.0f));
 }
 
-static void yuv2rgb(unsigned char y, unsigned char u, unsigned char v, unsigned char *r, unsigned char *g, unsigned char *b) 
+// BT.709 limited range to RGB conversion
+static void yuv2rgb_bt709(uint8_t y, uint8_t u, uint8_t v, uint8_t* r, uint8_t* g, uint8_t* b)
 {
-    int c = y - 16;
-    int d = u - 128;
-    int e = v - 128;
-    *r = (unsigned char) (clip(( 298 * c + 409 * e + 128) >> 8));
-    *g = (unsigned char) (clip(( 298 * c - 100 * d - 208 * e + 128) >> 8));
-    *b = (unsigned char) (clip(( 298 * c + 516 * d + 128) >> 8));
+    // Limited range assumption
+    float yf = (float)y;
+    float uf = (float)u - 128.0f;
+    float vf = (float)v - 128.0f;
+
+    float c = yf - 16.0f;
+    float r_f = 1.164f * c + 1.793f * vf;
+    float g_f = 1.164f * c - 0.213f * uf - 0.533f * vf;
+    float b_f = 1.164f * c + 2.112f * uf;
+
+    *r = clip_float_to_u8(r_f);
+    *g = clip_float_to_u8(g_f);
+    *b = clip_float_to_u8(b_f);
 }
 
-static image_t *image_convert_yuv420_to_rgb24_host(image_t *src, image_format_t format)
+static image_t* image_convert_yuv420_to_rgb24_host(image_t* src, image_format_t format)
 {
-    assert(src->format==IMAGE_FORMAT_YUV420_HOST);
-    image_t *dst=create_image(src->width, src->height, IMAGE_FORMAT_RGB24_HOST);
-    if (!dst) return 0;
+    assert(src->format == IMAGE_FORMAT_YUV420_HOST);
+    image_t* dst = create_image(src->width, src->height, IMAGE_FORMAT_RGB24_HOST);
+    if (!dst) return NULL;
+
     image_add_dependency(dst, src);
-    for(int y=0;y<src->height;y++)
-    {
-        for(int x=0;x<src->width;x++)
-        {
-            uint8_t cy=src->y[x+y*src->stride_y];
-            uint8_t cu=src->u[(x>>1)+(y>>1)*src->stride_uv];
-            uint8_t cv=src->v[(x>>1)+(y>>1)*src->stride_uv];
-            uint8_t *d=dst->rgb+y*dst->stride_rgb+3*x;
-            yuv2rgb(cy,cu,cv,d+0,d+1,d+2);
+
+    for (int y = 0; y < src->height; y++) {
+        for (int x = 0; x < src->width; x++) {
+            uint8_t cy = src->y[y * src->stride_y + x];
+            uint8_t cu = src->u[(y >> 1) * src->stride_uv + (x >> 1)];
+            uint8_t cv = src->v[(y >> 1) * src->stride_uv + (x >> 1)];
+
+            uint8_t* d = dst->rgb + y * dst->stride_rgb + 3 * x;
+            yuv2rgb_bt709(cy, cu, cv, d, d + 1, d + 2);
         }
     }
+
+    return dst;
+}
+
+static image_t* image_convert_yuv420_to_rgb24_device(image_t* src, image_format_t format)
+{
+    assert(src->format == IMAGE_FORMAT_YUV420_DEVICE);
+    image_t* dst = create_image(src->width, src->height, IMAGE_FORMAT_RGB24_DEVICE);
+    if (!dst) return NULL;
+
+    image_add_dependency(dst, src);
+
+    cuda_convertYUVtoRGB24(src->y, src->u, src->v,
+        src->stride_y, src->stride_uv,
+        dst->rgb, dst->stride_rgb, src->width, src->height, dst->stream);
+
     return dst;
 }
 
@@ -108,7 +133,7 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t f
     image_t *dest=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dest) return 0;
     Npp8u *pDst[3];
-    
+
     NppiSize oSizeROI = {src->width, src->height};
     int nDstYStep = dest->stride_y;    // Y channel step
     int nDstUVStep = dest->stride_uv; // U and V channel step
@@ -142,8 +167,8 @@ static void copyasync2d(void *src, int src_stride, bool src_device, void *dest, 
 
 static image_t *image_convert_yuv420_device_host(image_t *img, image_format_t format)
 {
-    bool src_device=image_format_is_device(img->format); 
-    bool dest_device=image_format_is_device(format); 
+    bool src_device=image_format_is_device(img->format);
+    bool dest_device=image_format_is_device(format);
     image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
@@ -156,15 +181,15 @@ static image_t *image_convert_yuv420_device_host(image_t *img, image_format_t fo
 
 static image_t *image_convert_rgb_planar_fp_device_host(image_t *img, image_format_t format)
 {
-    bool src_device=image_format_is_device(img->format); 
-    bool dest_device=image_format_is_device(format); 
+    bool src_device=image_format_is_device(img->format);
+    bool dest_device=image_format_is_device(format);
     int bpf=((format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
              ||(format==IMAGE_FORMAT_RGB_PLANAR_FP16_HOST)) ? 2 : 4;
-    
+
     image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*3, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream)); 
+    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*3, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
     return ret;
 }
 
@@ -217,10 +242,10 @@ static image_t *image_convert_planar_fp16_rgb24_device(image_t *img, image_forma
 
 static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
 {
-    // what we do here is not actually any work - we just create a new shell surface 
+    // what we do here is not actually any work - we just create a new shell surface
     // that points to the Y data of the original surface, and hold on to a reference
     // for that surface.
-    
+
     if (true)
     {
         image_t *mono=create_image_no_surface_memory(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
@@ -242,7 +267,7 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
     }
 }
 
-static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format) 
+static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
 {
     image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     image_add_dependency(dst, src);
@@ -284,6 +309,7 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_RGB24_HOST, IMAGE_FORMAT_RGB24_DEVICE, image_convert_rgb24_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB24_HOST, image_convert_rgb24_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_YUV420_HOST, IMAGE_FORMAT_RGB24_HOST, image_convert_yuv420_to_rgb24_host, IMAGE_FORMAT_NONE, 200},
+    {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_yuv420_to_rgb24_device, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_rgb24_to_yuv_device, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_yuv420_device_planar_rgb_fp16, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_yuv420_device_planar_rgb_fp32, IMAGE_FORMAT_NONE, 120},
@@ -331,7 +357,7 @@ void image_conversion_init()
                     }
                 }
 
-                if (best_intermediate != IMAGE_FORMAT_NONE) 
+                if (best_intermediate != IMAGE_FORMAT_NONE)
                 {
                     image_conversion_method_t *new_entry = (image_conversion_method_t *)malloc(sizeof(image_conversion_method_t));
                     memset(new_entry, 0, sizeof(image_conversion_method_t));
@@ -353,7 +379,7 @@ image_t *image_convert(image_t *img, image_format_t format)
     if (format==img->format) return image_reference(img);
 
     image_conversion_method_t *c=conversion_table[img->format][format];
-    
+
     if (c->convert_direct!=0)
     {
         //log_debug("convert direct");
@@ -370,8 +396,7 @@ image_t *image_convert(image_t *img, image_format_t format)
         //log_debug("OK!");
         return ret;
     }
-    
+
     printf("Cannot convert %s->%s\n",image_format_name(img->format),image_format_name(format));
     return 0; // unsupported conversion
 }
-

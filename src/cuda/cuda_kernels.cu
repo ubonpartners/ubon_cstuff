@@ -10,61 +10,67 @@ static __device__ inline float clamp(float x) {
     return x < 0 ? 0 : (x > 1 ? 1 : x);
 }
 
-// CUDA Kernel to convert YUV (8-bit unsigned int) to RGB (float16)
+// CUDA Kernel to convert YUV (8-bit unsigned int, BT.709) to RGB (float16)
 static __global__ void yuvToRgbKernel_fp16(const unsigned char* y_plane, const unsigned char* u_plane, const unsigned char* v_plane,
                                __half* r_plane, __half* g_plane, __half* b_plane,
-                               int width, int height, int y_stride, int uv_stride) 
+                               int width, int height, int y_stride, int uv_stride)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x < width && y < height) {
-        // Get 8-bit YUV values and normalize to the range [0, 1]
-        float y_value = y_plane[y * y_stride + x];
-        float u_value = u_plane[(y / 2) * uv_stride + (x / 2)];
-        float v_value = v_plane[(y / 2) * uv_stride + (x / 2)];
+        // Load YUV values from planes
+        int y_index = y * y_stride + x;
+        int uv_index = (y / 2) * uv_stride + (x / 2);
 
-        // Convert YUV to RGB
-        float c = (y_value - 16.0f) / 255.0f;
-        float d = (u_value - 128.0f) / 255.0f;
-        float e = (v_value - 128.0f) / 255.0f;
+        float y_value = static_cast<float>(y_plane[y_index]);
+        float u_value = static_cast<float>(u_plane[uv_index]);
+        float v_value = static_cast<float>(v_plane[uv_index]);
 
-        float r = clamp(1.164f * c + 1.596f * e);
-        float g = clamp(1.164f * c - 0.392f * d - 0.813f * e);
-        float b = clamp(1.164f * c + 2.017f * d);
+        // BT.709 conversion (limited range)
+        float c = y_value - 16.0f;
+        float d = u_value - 128.0f;
+        float e = v_value - 128.0f;
 
-        // Write RGB values to the output as float16
-        r_plane[y * width + x] = __float2half(r);
-        g_plane[y * width + x] = __float2half(g);
-        b_plane[y * width + x] = __float2half(b);
+        float r = (1.164f * c + 1.793f * e) / 255.0f;
+        float g = (1.164f * c - 0.213f * d - 0.533f * e) / 255.0f;
+        float b = (1.164f * c + 2.112f * d) / 255.0f;
+
+        r_plane[y * width + x] = __float2half(clamp(r));
+        g_plane[y * width + x] = __float2half(clamp(g));
+        b_plane[y * width + x] = __float2half(clamp(b));
     }
 }
 
+// CUDA Kernel to convert YUV (8-bit unsigned int, BT.709) to RGB (float32)
 static __global__ void yuvToRgbKernel_fp32(const unsigned char* y_plane, const unsigned char* u_plane, const unsigned char* v_plane,
                                float* r_plane, float* g_plane, float* b_plane,
-                               int width, int height, int y_stride, int uv_stride) 
+                               int width, int height, int y_stride, int uv_stride)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x < width && y < height) {
-        // Get 8-bit YUV values and normalize to the range [0, 1]
-        float y_value = y_plane[y * y_stride + x];
-        float u_value = u_plane[(y / 2) * uv_stride + (x / 2)];
-        float v_value = v_plane[(y / 2) * uv_stride + (x / 2)];
+        // Load YUV values from planes
+        int y_index = y * y_stride + x;
+        int uv_index = (y / 2) * uv_stride + (x / 2);
 
-        // Convert YUV to RGB
-        float c = (y_value - 16.0f) / 255.0f;
-        float d = (u_value - 128.0f) / 255.0f;
-        float e = (v_value - 128.0f) / 255.0f;
+        float y_value = static_cast<float>(y_plane[y_index]);
+        float u_value = static_cast<float>(u_plane[uv_index]);
+        float v_value = static_cast<float>(v_plane[uv_index]);
 
-        float r = clamp(1.164f * c + 1.596f * e);
-        float g = clamp(1.164f * c - 0.392f * d - 0.813f * e);
-        float b = clamp(1.164f * c + 2.017f * d);
+        // BT.709 conversion (limited range)
+        float c = y_value - 16.0f;
+        float d = u_value - 128.0f;
+        float e = v_value - 128.0f;
 
-        r_plane[y * width + x] = r;
-        g_plane[y * width + x] = g;
-        b_plane[y * width + x] = b;
+        float r = (1.164f * c + 1.793f * e) / 255.0f;
+        float g = (1.164f * c - 0.213f * d - 0.533f * e) / 255.0f;
+        float b = (1.164f * c + 2.112f * d) / 255.0f;
+
+        r_plane[y * width + x] = clamp(r);
+        g_plane[y * width + x] = clamp(g);
+        b_plane[y * width + x] = clamp(b);
     }
 }
 
@@ -72,7 +78,7 @@ static __global__ void yuvToRgbKernel_fp32(const unsigned char* y_plane, const u
 void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
                      uint8_t *dest,
-                     int width, int height, cudaStream_t stream) 
+                     int width, int height, cudaStream_t stream)
 {
     // Define block and grid sizes
     dim3 block(16, 16);
@@ -92,7 +98,7 @@ void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_pl
 void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
                      uint8_t *dest,
-                     int width, int height, cudaStream_t stream) 
+                     int width, int height, cudaStream_t stream)
 {
     // Define block and grid sizes
     dim3 block(16, 16);
@@ -109,7 +115,68 @@ void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_pl
 
 }
 
-static __global__ void half_to_float_kernel(const __half* d_input, float* d_output, int size) 
+static __device__ uint8_t clamp_u8(float val) {
+    return static_cast<uint8_t>(fminf(fmaxf(val, 0.0f), 255.0f));
+}
+
+static __global__ void yuv420_to_rgb24_kernel(
+    const uint8_t* __restrict__ y_plane,
+    const uint8_t* __restrict__ u_plane,
+    const uint8_t* __restrict__ v_plane,
+    uint8_t* __restrict__ rgb_out,
+    int width,
+    int height,
+    int y_stride,
+    int uv_stride,
+    int rgb_stride)  // number of bytes per row in output
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    // Get YUV values
+    int y_index = y * y_stride + x;
+    int uv_index = (y / 2) * uv_stride + (x / 2);
+
+    float yf = static_cast<float>(y_plane[y_index]);
+    float uf = static_cast<float>(u_plane[uv_index]) - 128.0f;
+    float vf = static_cast<float>(v_plane[uv_index]) - 128.0f;
+
+    // BT.709 limited-range conversion
+    float c = yf - 16.0f;
+
+    float r = 1.164f * c + 1.793f * vf;
+    float g = 1.164f * c - 0.213f * uf - 0.533f * vf;
+    float b = 1.164f * c + 2.112f * uf;
+
+    uint8_t R = clamp_u8(r);
+    uint8_t G = clamp_u8(g);
+    uint8_t B = clamp_u8(b);
+
+    // Write packed RGB output
+    int rgb_index = y * rgb_stride + x * 3;
+    rgb_out[rgb_index + 0] = R;
+    rgb_out[rgb_index + 1] = G;
+    rgb_out[rgb_index + 2] = B;
+}
+
+void cuda_convertYUVtoRGB24(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
+    int y_stride, int uv_stride,
+    uint8_t *dest, int dest_stride,
+    int width, int height, cudaStream_t stream)
+{
+    dim3 blockDim(16, 16);
+    dim3 gridDim((width + 15) / 16, (height + 15) / 16);
+
+    yuv420_to_rgb24_kernel<<<gridDim, blockDim>>>(
+        d_y_plane, d_u_plane, d_v_plane, dest,
+        width, height,
+        y_stride, uv_stride, dest_stride);
+}
+
+static __global__ void half_to_float_kernel(const __half* d_input, float* d_output, int size)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -117,7 +184,7 @@ static __global__ void half_to_float_kernel(const __half* d_input, float* d_outp
     }
 }
 
-void cuda_half_to_float(void* d_input, void* h_output, int size, cudaStream_t stream) 
+void cuda_half_to_float(void* d_input, void* h_output, int size, cudaStream_t stream)
 {
     // Launch kernel with appropriate configuration
     int blockSize = 256;
@@ -130,7 +197,7 @@ static __global__ void fp16_planar_to_RGB24_kernel(const __half *src, unsigned c
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x < width && y < height) 
+    if (x < width && y < height)
     {
         float r=__half2float(src[x+y*width+width*height*0]);
         float g=__half2float(src[x+y*width+width*height*1]);
@@ -142,7 +209,7 @@ static __global__ void fp16_planar_to_RGB24_kernel(const __half *src, unsigned c
     }
 }
 
-void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream) 
+void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream)
 {
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
@@ -240,16 +307,16 @@ void cuda_interleave_uv(
 #define FNV_PRIME 16777619u
 
 // Kernel: Each thread computes a hash for a single row
-static __global__ void row_hash_kernel(const uint8_t* data, int w, int h, int stride, uint32_t* row_hashes) 
+static __global__ void row_hash_kernel(const uint8_t* data, int w, int h, int stride, uint32_t* row_hashes)
 {
     int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (row < h) 
+    if (row < h)
     {
         const uint8_t* row_ptr = data + row * stride;
 
         uint32_t hash = FNV_OFFSET;
-        for (int i = 0; i < w; ++i) 
+        for (int i = 0; i < w; ++i)
         {
             hash ^= row_ptr[i];
             hash *= FNV_PRIME;
@@ -259,7 +326,7 @@ static __global__ void row_hash_kernel(const uint8_t* data, int w, int h, int st
     }
 }
 
-void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream) 
+void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream)
 {
     uint32_t *dest_device=0;
     cudaMallocAsync(&dest_device, h * sizeof(uint32_t), stream);
@@ -303,8 +370,8 @@ static __global__ void kernel_block_mad_4x4(
     out[by * out_stride + bx] = ((sum+2)>>2);
 }
 
-void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b, 
-                          uint8_t *out, int stride_out, int width, int height, cudaStream_t stream) 
+void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
+                          uint8_t *out, int stride_out, int width, int height, cudaStream_t stream)
 {
     dim3 blockDim(16, 16);
     dim3 gridDim((width + blockDim.x - 1) / blockDim.x,
@@ -318,4 +385,3 @@ void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
 }
 
 } // extern "C"
-

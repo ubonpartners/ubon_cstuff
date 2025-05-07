@@ -12,6 +12,10 @@ void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_pl
                      int y_stride, int uv_stride,
                      uint8_t *dest,
                      int width, int height, cudaStream_t stream);
+void cuda_convertYUVtoRGB24(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
+                    int y_stride, int uv_stride,
+                    uint8_t *dest, int dest_stride,
+                    int width, int height, cudaStream_t stream);
 
 void cuda_half_to_float(void * d_input, void* h_output, int size);
 void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
@@ -24,7 +28,7 @@ int src_stride_uv,
     int height,
     cudaStream_t stream);
 void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream);
-void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b, 
+void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
 uint8_t *out, int stride_out, int width, int height, cudaStream_t stream);
 }
 #endif

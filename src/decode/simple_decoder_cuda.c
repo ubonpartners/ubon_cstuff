@@ -10,12 +10,14 @@
 #include "cuda_stuff.h"
 
 #if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
-struct simple_decoder 
+struct simple_decoder
 {
-    int width;
-    int height;
+    int coded_width;
+    int coded_height;
     int out_width;
     int out_height;
+    int target_width;
+    int target_height;
     void *context;
     //CUstream stream;
     CUvideodecoder decoder;
@@ -24,24 +26,40 @@ struct simple_decoder
     void (*frame_callback)(void *context, image_t *decoded_frame);
 };
 
-int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat) 
+int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
 {
     simple_decoder_t *dec = (simple_decoder_t *)pUserData;
 
-    if (dec->decoder != NULL && (pFormat->coded_width != dec->width || pFormat->coded_height != dec->height)) 
+    if (dec->decoder != NULL && (pFormat->coded_width != dec->coded_width || pFormat->coded_height != dec->coded_height))
     {
         // Resolution change, reinitialize the decoder
         CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
         dec->decoder = NULL;
     }
 
-    if (dec->decoder == NULL) 
+    if (dec->decoder == NULL)
     {
         // Initialize decoder with the new format
         dec->videoFormat = *pFormat;
-        dec->width = pFormat->coded_width;
-        dec->height = pFormat->coded_height;
-        printf("Create cuda decoder %dx%d\n",dec->width,dec->height);
+        dec->coded_width = pFormat->coded_width;
+        dec->coded_height = pFormat->coded_height;
+
+        if (dec->target_width==0)
+        {
+            dec->out_width=pFormat->display_area.right-pFormat->display_area.left;
+            dec->out_height=pFormat->display_area.bottom-pFormat->display_area.top;
+        }
+        else
+        {
+            dec->out_width=dec->target_width;
+            dec->out_height=dec->target_height;
+        }
+
+        printf("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d\n",
+            dec->coded_width,dec->coded_height,
+            pFormat->display_area.left,pFormat->display_area.top,
+            pFormat->display_area.right,pFormat->display_area.bottom,
+            dec->out_width,dec->out_height);
 
         CUVIDDECODECREATEINFO decodeCreateInfo = {0};
         decodeCreateInfo.CodecType = pFormat->codec;
@@ -53,6 +71,10 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.ulMaxHeight = 1088;
         decodeCreateInfo.ulNumDecodeSurfaces = 8;
         decodeCreateInfo.ulNumOutputSurfaces = 2;
+        decodeCreateInfo.display_area.left=pFormat->display_area.left;
+        decodeCreateInfo.display_area.top=pFormat->display_area.top;
+        decodeCreateInfo.display_area.right=pFormat->display_area.right;
+        decodeCreateInfo.display_area.bottom=pFormat->display_area.bottom;
         decodeCreateInfo.ChromaFormat = pFormat->chroma_format;
         decodeCreateInfo.OutputFormat = cudaVideoSurfaceFormat_NV12;
         decodeCreateInfo.bitDepthMinus8 = pFormat->bit_depth_luma_minus8;
@@ -71,7 +93,7 @@ static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicPara
     return 1;
 }
 
-int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo) 
+int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
     image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
@@ -96,7 +118,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     return 1;
 }
 
-simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame)) 
+simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame))
 {
     check_cuda_inited();
     simple_decoder_t *dec = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
@@ -104,6 +126,8 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     memset(dec, 0, sizeof(simple_decoder_t));
     dec->frame_callback=frame_callback;
     dec->context = context;
+    dec->target_width=0;
+    dec->target_height=0;
     dec->out_width=1280;
     dec->out_height=720;
     //CHECK_CUDA_CALL(cuStreamCreate(&dec->stream, CU_STREAM_DEFAULT));
@@ -122,9 +146,9 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     return dec;
 }
 
-void simple_decoder_destroy(simple_decoder_t *dec) 
+void simple_decoder_destroy(simple_decoder_t *dec)
 {
-    if (dec) 
+    if (dec)
     {
         //CHECK_CUDA_CALL(cuStreamDestroy(dec->stream));
         CHECK_CUDA_CALL(cuvidDestroyVideoParser(dec->videoParser));
@@ -141,4 +165,3 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     CHECK_CUDA_CALL(cuvidParseVideoData(dec->videoParser, &packet));
 }
 #endif //(UBONCSTUFF_PLATFORM == 0)
-
