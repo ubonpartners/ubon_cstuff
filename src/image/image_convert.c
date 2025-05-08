@@ -132,7 +132,12 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t f
 {
     image_t *dest=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dest) return 0;
-    Npp8u *pDst[3];
+
+    cuda_convertRGB24toYUV420(src->rgb, src->stride_rgb,
+        dest->y, dest->u, dest->v, dest->stride_y, dest->stride_uv,
+        dest->width, dest->height, dest->stream);
+
+    /*Npp8u *pDst[3];
 
     NppiSize oSizeROI = {src->width, src->height};
     int nDstYStep = dest->stride_y;    // Y channel step
@@ -148,6 +153,7 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t f
     NppStreamContext nppStreamCtx=get_nppStreamCtx();
     nppStreamCtx.hStream=dest->stream;
     CHECK_NPPcall(nppiRGBToYUV420_8u_C3P3R_Ctx(src->rgb, src->stride_rgb, pDst, aDstStep, oSizeROI, nppStreamCtx));
+    */
     return dest;
 }
 
@@ -267,6 +273,16 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
     }
 }
 
+static image_t *image_convert_rgb24_planar_fp_device(image_t *src, image_format_t format)
+{
+    image_t *dst = create_image(src->width, src->height, format);
+    assert(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
+    image_add_dependency(dst, src);
+    cuda_convert_rgb24_to_planar_fp32(src->rgb, (float*)dst->rgb,
+                        src->width, src->height, src->stride_rgb, dst->stream);
+    return dst;
+}
+
 static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
 {
     image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
@@ -284,14 +300,6 @@ static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
     return dst;
 }
 
-static image_t *image_convert_via_intermediate(image_t *img, image_format_t intermediate, image_format_t format)
-{
-    image_t *temp=image_convert(img, intermediate);
-    image_t *ret=image_convert(temp, format);
-    destroy_image(temp);
-    return ret;
-}
-
 typedef struct image_conversion_method
 {
     image_format_t src;
@@ -306,7 +314,7 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_NV12_DEVICE, image_convert_yuv420_to_nv12_device, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_YUV420_HOST, IMAGE_FORMAT_YUV420_DEVICE, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_YUV420_HOST, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_RGB24_HOST, IMAGE_FORMAT_RGB24_DEVICE, image_convert_rgb24_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB24_HOST, IMAGE_FORMAT_RGB24_DEVICE, image_convert_rgb24_device_host, IMAGE_FORMAT_NONE, 30},
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB24_HOST, image_convert_rgb24_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_YUV420_HOST, IMAGE_FORMAT_RGB24_HOST, image_convert_yuv420_to_rgb24_host, IMAGE_FORMAT_NONE, 200},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_yuv420_to_rgb24_device, IMAGE_FORMAT_NONE, 100},
@@ -314,6 +322,7 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_yuv420_device_planar_rgb_fp16, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_yuv420_device_planar_rgb_fp32, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb24_planar_fp_device, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},

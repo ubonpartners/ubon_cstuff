@@ -54,9 +54,38 @@ static image_t *image_scale_half(image_t *src)
     return inter;
 }
 
+static image_t *image_scale_nv12_device(image_t *src, int width, int height)
+{
+    image_t *dst=create_image(width, height, src->format);
+    if (!dst) return 0;
+    image_add_dependency(dst, src); // don't run this until 'src' is ready
+
+    ResizeNv12(dst->y, dst->stride_y, dst->width, dst->height,
+        src->y, src->stride_y, src->width, src->height,
+        0, &dst->stream);
+
+       /* NppiSize srcSize = {src->width, src->height};
+        NppiRect srcROI = {0, 0, src->width, src->height};
+        NppiRect dstROI = {0, 0, dst->width, dst->height};
+
+        NppStreamContext nppStreamCtx=get_nppStreamCtx();
+        nppStreamCtx.hStream=dst->stream;
+
+        // Create scaling context for Y plane
+        NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;//NPPI_INTER_LANCZOS;
+        NppiSize dstSize = {dst->width, dst->height};
+
+        // Y plane scaling
+        CHECK_NPPcall(nppiResize_8u_C1R_Ctx(src->y, src->stride_y, srcSize, srcROI,
+                                             dst->y, dst->stride_y, dstSize, dstROI,
+                                             interpolationMode, nppStreamCtx));*/
+
+    return dst;
+}
+
 static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
 {
-    /*if (src->format==IMAGE_FORMAT_YUV420_DEVICE && src->width>=2*width && src->height>=2*height)
+    if (src->format==IMAGE_FORMAT_YUV420_DEVICE && src->width>=2*width && src->height>=2*height)
     {
         if (((src->width&3)==0) && ((src->height&3)==0))
         {
@@ -65,7 +94,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
             destroy_image(inter);
             return ret;
         }
-    }*/
+    }
 
     image_t *dst=create_image(width, height, src->format);
     if (!dst) return 0;
@@ -108,6 +137,28 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
     return dst;
 }
 
+static image_t *image_scale_rgb24_device(image_t *src, int width, int height)
+{
+    image_t *dst=create_image(width, height, src->format);
+    if (!dst) return 0;
+    image_add_dependency(dst, src); // don't run this until 'src' is ready
+
+    NppiSize srcSize = {src->width, src->height};
+    NppiRect srcROI = {0, 0, src->width, src->height};
+    NppiRect dstROI = {0, 0, dst->width, dst->height};
+
+    NppStreamContext nppStreamCtx=get_nppStreamCtx();
+    nppStreamCtx.hStream=dst->stream;
+
+    NppiInterpolationMode interpolationMode = NPPI_INTER_LINEAR;
+    NppiSize dstSize = {dst->width, dst->height};
+
+    CHECK_NPPcall(nppiResize_8u_C3R_Ctx(src->rgb, src->stride_rgb, srcSize, srcROI,
+        dst->rgb, dst->stride_rgb, dstSize, dstROI, interpolationMode, nppStreamCtx));
+
+    return dst;
+}
+
 static image_t *image_scale_by_intermediate(image_t *img, int width, int height, image_format_t inter)
 {
     assert(img->format!=inter);
@@ -134,9 +185,11 @@ image_t *image_scale(image_t *img, int width, int height)
         case IMAGE_FORMAT_YUV420_DEVICE:
             return image_scale_yuv420_device(img,width,height);
         case IMAGE_FORMAT_NV12_DEVICE:
-            return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
+            return image_scale_nv12_device(img,width,height);
+        case IMAGE_FORMAT_RGB24_DEVICE:
+            return image_scale_rgb24_device(img,width,height);
         case IMAGE_FORMAT_RGB24_HOST:
-            return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_YUV420_DEVICE);
+            return image_scale_by_intermediate(img,width,height,IMAGE_FORMAT_RGB24_DEVICE);
         default:
         ;
     }

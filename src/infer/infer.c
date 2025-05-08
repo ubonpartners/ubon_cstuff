@@ -42,7 +42,7 @@ struct infer
     int detection_attribute_size;
     const char *input_tensor_name;
     const char *output_tensor_name;
-}; 
+};
 
 class Logger : public nvinfer1::ILogger
 {
@@ -73,7 +73,7 @@ static void create_exec_context(infer_t *inf)
 static void infer_build(const char *onnx_filename, const char *out_filename)
 {
     const char *tc_filename="trt_timing_cache.dat";
-    
+
     auto builder = nvinfer1::createInferBuilder(trt_Logger);
     assert(builder!=0);
 
@@ -91,18 +91,18 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
 
     // Check if the timing cache file exists
     std::unique_ptr<nvinfer1::ITimingCache> timingCache;
-    if (std::filesystem::exists(tc_filename)) 
+    if (std::filesystem::exists(tc_filename))
     {
         // Load the existing timing cache from file
         std::ifstream cacheFile(tc_filename, std::ios::binary);
-        if (cacheFile) 
+        if (cacheFile)
         {
             std::vector<char> buffer(std::istreambuf_iterator<char>(cacheFile), {});
             timingCache.reset(config->createTimingCache(buffer.data(), buffer.size()));
             cacheFile.close();
         }
-    } 
-    else 
+    }
+    else
     {
         // Create a new timing cache if the file does not exist
         timingCache.reset(config->createTimingCache(nullptr, 0));
@@ -113,13 +113,13 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     auto parsed = parser->parseFromFile(onnx_filename, static_cast<int>(nvinfer1::ILogger::Severity::kWARNING));
     assert(parsed!=0);
 
-    for (int i = 0; i < network->getNbInputs(); ++i) 
+    for (int i = 0; i < network->getNbInputs(); ++i)
     {
         ITensor* inputTensor = network->getInput(i);
         inputTensor->setType(DataType::kHALF);
         assert(inputTensor->getType()==DataType::kHALF);
         Dims inputDims = inputTensor->getDimensions();
-        for (int j = 0; j < inputDims.nbDims; ++j) 
+        for (int j = 0; j < inputDims.nbDims; ++j)
         {
             log_debug("Input (%s) %d : %d\n",inputTensor->getName(), i, (int)inputDims.d[j]);
         }
@@ -146,13 +146,13 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     }
 
     // Save the updated timing cache to file if the build was successful
-    if (out) 
+    if (out)
     {
         const nvinfer1::ITimingCache* updatedTimingCache = config->getTimingCache();
-        if (updatedTimingCache) 
+        if (updatedTimingCache)
         {
             std::ofstream cacheFile(tc_filename, std::ios::binary);
-            if (cacheFile) 
+            if (cacheFile)
             {
                 nvinfer1::IHostMemory *serializedCache = updatedTimingCache->serialize();
                 cacheFile.write((const char *)serializedCache->data(), serializedCache->size());
@@ -168,7 +168,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     memset(inf, 0, sizeof(infer_t));
 
     inf->nms_thr=0.45;
-    inf->det_thr=0.5;
+    inf->det_thr=0.25;
     inf->num_classes=5;
     inf->max_detections=200;
 
@@ -270,9 +270,51 @@ void infer_destroy(infer_t *inf)
 }
 
 
+#define IMAGE_WIDTH 640
+#define IMAGE_HEIGHT 384
+#define CHANNELS 3
+#define IMAGE_SIZE_BYTES (IMAGE_WIDTH * IMAGE_HEIGHT * CHANNELS * sizeof(float))
+
+int load_planar_rgb_to_gpu(const char* filename, void* device_ptr) {
+    cudaError_t err = cudaDeviceSynchronize();
+    FILE* f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Failed to open file: %s\n", filename);
+        return -1;
+    }
+
+    // Allocate host buffer
+    float* host_buffer = (float*)malloc(IMAGE_SIZE_BYTES);
+    if (!host_buffer) {
+        fprintf(stderr, "Failed to allocate host buffer\n");
+        fclose(f);
+        return -1;
+    }
+
+    // Read the file
+    size_t read_bytes = fread(host_buffer, 1, IMAGE_SIZE_BYTES, f);
+    fclose(f);
+    if (read_bytes != IMAGE_SIZE_BYTES) {
+        fprintf(stderr, "Unexpected file size: got %zu, expected %zu\n",
+                read_bytes, (size_t)IMAGE_SIZE_BYTES);
+        free(host_buffer);
+        return -1;
+    }
+
+    // Copy to GPU memory
+    cudaMemcpy(device_ptr, host_buffer, IMAGE_SIZE_BYTES, cudaMemcpyHostToDevice);
+    free(host_buffer);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed: %s\n", cudaGetErrorString(err));
+        return -1;
+    }
+
+    return 0; // success
+}
+
 detections_t *infer(infer_t *inf, image_t *img)
 {
-    image_t *img_device=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *img_device=image_reference(img); // let scaling happen in previous format
 
     // determine a vaguely sensible size for inference
 
@@ -297,7 +339,6 @@ detections_t *infer(infer_t *inf, image_t *img)
 
     image_t *image_scaled=image_scale(img_device, scale_w, scale_h);
     assert(image_scaled!=0);
-
     image_t *image_input=image_convert(image_scaled, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     assert(image_input!=0);
 
@@ -329,11 +370,11 @@ detections_t *infer(infer_t *inf, image_t *img)
     cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
     cuStreamSynchronize(inf->stream);
 
-    detections_t *dets=create_detections(inf->max_detections);
+    detections_t *dets=create_detections(inf->max_detections*10); // fixme
 
     float *p=(float *)inf->output_mem_host;
     float probsum=0;
-    
+
     int num_classes=inf->num_classes;
     for(int i=0;i<rows;i++)
     {
@@ -347,11 +388,12 @@ detections_t *infer(infer_t *inf, image_t *img)
                 max_prob=prob;
                 best_cl=j;
             }
-        } 
-        probsum+=max_prob; 
+        }
+        probsum+=max_prob;
         if (max_prob>inf->det_thr)
         {
             detection_t *det=detection_add_end(dets);
+            assert(det!=0);
             if (det)
             {
                 float cx=p[0*rows+i];
@@ -367,7 +409,7 @@ detections_t *infer(infer_t *inf, image_t *img)
                 det->cl=best_cl;
                 det->conf=max_prob;
             }
-        } 
+        }
     }
 
     detections_nms_inplace(dets, inf->nms_thr);
