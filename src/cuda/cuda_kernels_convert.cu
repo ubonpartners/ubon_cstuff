@@ -10,6 +10,10 @@ static __device__ inline float clamp(float x) {
     return x < 0 ? 0 : (x > 1 ? 1 : x);
 }
 
+static __device__ uint8_t clamp_u8(float val) {
+    return static_cast<uint8_t>(fminf(fmaxf(val+0.5f, 0.0f), 255.0f));
+}
+
 // CUDA Kernel to convert YUV (8-bit unsigned int, BT.709) to RGB (float16)
 static __global__ void yuvToRgbKernel_fp16(const unsigned char* y_plane, const unsigned char* u_plane, const unsigned char* v_plane,
                                __half* r_plane, __half* g_plane, __half* b_plane,
@@ -115,65 +119,117 @@ void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_pl
 
 }
 
-static __device__ uint8_t clamp_u8(float val) {
-    return static_cast<uint8_t>(fminf(fmaxf(val, 0.0f), 255.0f));
-}
+// fixed bilinear weights for offsets ±0.25
+__constant__ float w00 = 0.5625f;  // (1-0.25)*(1-0.25)
+__constant__ float w10 = 0.1875f;  // 0.25*(1-0.25)
+__constant__ float w01 = 0.1875f;  // (1-0.25)*0.25
+__constant__ float w11 = 0.0625f;  // 0.25*0.25
 
-static __global__ void yuv420_to_rgb24_kernel(
+// One thread per UV sample → process a 2×2 block of Y
+static __global__ void yuv420_to_rgb24_unroll2x2(
     const uint8_t* __restrict__ y_plane,
     const uint8_t* __restrict__ u_plane,
     const uint8_t* __restrict__ v_plane,
     uint8_t* __restrict__ rgb_out,
-    int width,
-    int height,
-    int y_stride,
-    int uv_stride,
-    int rgb_stride)  // number of bytes per row in output
+    int width, int height,
+    int y_stride, int uv_stride, int rgb_stride)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    // UV coordinates
+    int ux = blockIdx.x * blockDim.x + threadIdx.x;
+    int uy = blockIdx.y * blockDim.y + threadIdx.y;
+    int halfW = width  / 2;
+    int halfH = height / 2;
+    if (ux >= halfW || uy >= halfH) return;
 
-    if (x >= width || y >= height)
-        return;
+    // clamp neighbor indices
+    int nx = min(ux + 1, halfW - 1);
+    int ny = min(uy + 1, halfH - 1);
 
-    // Get YUV values
-    int y_index = y * y_stride + x;
-    int uv_index = (y / 2) * uv_stride + (x / 2);
+    // fetch the 4 raw U/V values
+    int p00 = uy * uv_stride + ux;
+    int p10 = uy * uv_stride + nx;
+    int p01 = ny * uv_stride + ux;
+    int p11 = ny * uv_stride + nx;
 
-    float yf = static_cast<float>(y_plane[y_index]);
-    float uf = static_cast<float>(u_plane[uv_index]) - 128.0f;
-    float vf = static_cast<float>(v_plane[uv_index]) - 128.0f;
+    float u00 = float(u_plane[p00]) - 128.0f;
+    float u10 = float(u_plane[p10]) - 128.0f;
+    float u01 = float(u_plane[p01]) - 128.0f;
+    float u11 = float(u_plane[p11]) - 128.0f;
 
-    // BT.709 limited-range conversion
-    float c = yf - 16.0f;
+    float v00 = float(v_plane[p00]) - 128.0f;
+    float v10 = float(v_plane[p10]) - 128.0f;
+    float v01 = float(v_plane[p01]) - 128.0f;
+    float v11 = float(v_plane[p11]) - 128.0f;
 
-    float r = 1.164f * c + 1.793f * vf;
-    float g = 1.164f * c - 0.213f * uf - 0.533f * vf;
-    float b = 1.164f * c + 2.112f * uf;
+    // precompute the four interpolated U/V for the 2×2 luma block
+    float u00p = w00*u00 + w10*u10 + w01*u01 + w11*u11;
+    float u10p = w10*u00 + w00*u10 + w11*u01 + w01*u11;
+    float u01p = w01*u00 + w11*u10 + w00*u01 + w10*u11;
+    float u11p = w11*u00 + w01*u10 + w10*u01 + w00*u11;
 
-    uint8_t R = clamp_u8(r);
-    uint8_t G = clamp_u8(g);
-    uint8_t B = clamp_u8(b);
+    float v00p = w00*v00 + w10*v10 + w01*v01 + w11*v11;
+    float v10p = w10*v00 + w00*v10 + w11*v01 + w01*v11;
+    float v01p = w01*v00 + w11*v10 + w00*v01 + w10*v11;
+    float v11p = w11*v00 + w01*v10 + w10*v01 + w00*v11;
 
-    // Write packed RGB output
-    int rgb_index = y * rgb_stride + x * 3;
-    rgb_out[rgb_index + 0] = R;
-    rgb_out[rgb_index + 1] = G;
-    rgb_out[rgb_index + 2] = B;
+    // Y block origin
+    int x0 = ux * 2;
+    int y0 = uy * 2;
+
+    // load the four Y samples
+    int idxY00 = y0     * y_stride + x0;
+    int idxY01 = idxY00 + 1;
+    int idxY10 = (y0+1) * y_stride + x0;
+    int idxY11 = idxY10 + 1;
+
+    float c00 = float(y_plane[idxY00]) - 16.0f;
+    float c01 = float(y_plane[idxY01]) - 16.0f;
+    float c10 = float(y_plane[idxY10]) - 16.0f;
+    float c11 = float(y_plane[idxY11]) - 16.0f;
+
+    // convert & pack helper
+    auto conv = [&](float c, float up, float vp){
+        float rf = 1.164f * c + 1.793f * vp;
+        float gf = 1.164f * c - 0.213f * up  - 0.533f * vp;
+        float bf = 1.164f * c + 2.112f * up;
+        return make_uchar3(clamp_u8(rf), clamp_u8(gf), clamp_u8(bf));
+    };
+
+    uchar3 rgb00 = conv(c00, u00p, v00p);
+    uchar3 rgb01 = conv(c01, u10p, v10p);
+    uchar3 rgb10 = conv(c10, u01p, v01p);
+    uchar3 rgb11 = conv(c11, u11p, v11p);
+
+    // write out
+    int outRow0 = y0     * rgb_stride + x0*3;
+    int outRow1 = (y0+1) * rgb_stride + x0*3;
+
+    uint8_t* ptr00 = rgb_out + outRow0;
+    uint8_t* ptr01 = ptr00 + 3;
+    uint8_t* ptr10 = rgb_out + outRow1;
+    uint8_t* ptr11 = ptr10 + 3;
+
+    ptr00[0]=rgb00.x; ptr00[1]=rgb00.y; ptr00[2]=rgb00.z;
+    ptr01[0]=rgb01.x; ptr01[1]=rgb01.y; ptr01[2]=rgb01.z;
+    ptr10[0]=rgb10.x; ptr10[1]=rgb10.y; ptr10[2]=rgb10.z;
+    ptr11[0]=rgb11.x; ptr11[1]=rgb11.y; ptr11[2]=rgb11.z;
 }
 
-void cuda_convertYUVtoRGB24(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
+void cuda_convertYUVtoRGB24(
+    const uint8_t *d_y, const uint8_t *d_u, const uint8_t *d_v,
     int y_stride, int uv_stride,
-    uint8_t *dest, int dest_stride,
-    int width, int height, cudaStream_t stream)
+    uint8_t *d_rgb, int rgb_stride,
+    int width, int height,
+    cudaStream_t stream)
 {
-    dim3 blockDim(16, 16);
-    dim3 gridDim((width + 15) / 16, (height + 15) / 16);
+    dim3 block(16,16);
+    dim3 grid((width/2  + block.x-1)/block.x,
+              (height/2 + block.y-1)/block.y);
 
-    yuv420_to_rgb24_kernel<<<gridDim, blockDim>>>(
-        d_y_plane, d_u_plane, d_v_plane, dest,
+    yuv420_to_rgb24_unroll2x2<<<grid,block,0,stream>>>(
+        d_y, d_u, d_v, d_rgb,
         width, height,
-        y_stride, uv_stride, dest_stride);
+        y_stride, uv_stride, rgb_stride);
 }
 
 static __global__ void rgb24_to_yuv420_kernel(
