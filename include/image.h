@@ -5,8 +5,8 @@ typedef struct image image_t;
 
 typedef enum image_format {
   IMAGE_FORMAT_NONE=0,
-  IMAGE_FORMAT_YUV420_HOST,
-  IMAGE_FORMAT_YUV420_DEVICE,
+  IMAGE_FORMAT_YUV420_HOST,             // Currently assumed BT.709 limited range
+  IMAGE_FORMAT_YUV420_DEVICE,           // Currently assumed BT.709 limited range
   IMAGE_FORMAT_NV12_DEVICE,
   IMAGE_FORMAT_RGB24_HOST,
   IMAGE_FORMAT_RGB24_DEVICE,
@@ -14,8 +14,8 @@ typedef enum image_format {
   IMAGE_FORMAT_RGB_PLANAR_FP16_HOST,
   IMAGE_FORMAT_RGB_PLANAR_FP32_HOST,
   IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE,
-  IMAGE_FORMAT_MONO_HOST,
-  IMAGE_FORMAT_MONO_DEVICE,
+  IMAGE_FORMAT_MONO_HOST,               // YUV420 but Y-plane only
+  IMAGE_FORMAT_MONO_DEVICE,             // YUV420 but Y-plane only
 } image_format_t;
 
 #define NUM_IMAGE_FORMATS 12
@@ -58,7 +58,7 @@ struct image
 
 // call before using any image functions
 // does things like creates a table for doing format conversion
-void image_init(); 
+void image_init();
 const char *image_format_name(image_format_t format);
 
 // surfaces are reference counted and immutable, this allows long chains of dependent
@@ -68,7 +68,7 @@ const char *image_format_name(image_format_t format);
 // create image: allocate a new surface and it's video memory
 image_t *create_image(int width, int height, image_format_t fmt);
 // create_image_no_surface_memory: create an empty shell surface with
-// no underlying video memory. This is useful in cases where different 
+// no underlying video memory. This is useful in cases where different
 // surfaces share underlying memory - e.g. if one is a crop of another
 image_t *create_image_no_surface_memory(int width, int height, image_format_t fmt);
 // destroy image reduces the ref count by one but the surface will remain
@@ -97,7 +97,7 @@ image_t *image_blur(image_t *img);
 image_t *image_mad_4x4(image_t *a, image_t *b);
 // image blend: product a new surface by copying a sub-rectange of src2 over src
 // the sub-rectange is defined by sx,dy,w,h in src2 and is copied to position dx,dy
-image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy); 
+image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy);
 // derive a new image from a crop of an existing one. Note this doesn't actually do
 // any operations just uses reference counting and pointer manipulations so is 'free'
 image_t *image_crop(image_t *img, int x, int y, int w, int h);
