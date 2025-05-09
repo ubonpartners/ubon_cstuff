@@ -61,7 +61,8 @@
  }
 
  template <typename YuvUnitx2>
- static void Resize(unsigned char *dpDst, unsigned char* dpDstUV, int nDstPitch, int nDstWidth, int nDstHeight, unsigned char *dpSrc, int nSrcPitch, int nSrcWidth, int nSrcHeight, cudaStream_t *pstream) {
+ static void Resize(unsigned char *dpDst,
+    unsigned char* dpDstUV, int nDstPitch, int nDstWidth, int nDstHeight, unsigned char *dpSrc, int nSrcPitch, int nSrcWidth, int nSrcHeight, cudaStream_t *pstream) {
      cudaResourceDesc resDesc = {};
      resDesc.resType = cudaResourceTypePitch2D;
      resDesc.res.pitch2D.devPtr = dpSrc;

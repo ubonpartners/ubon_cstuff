@@ -47,8 +47,8 @@ struct nvof
     nvof_results_t results;
 };
 
-static void create_nvof_buffer(nvof_t *v, int width, int height, 
-                               NV_OF_BUFFER_USAGE usage, 
+static void create_nvof_buffer(nvof_t *v, int width, int height,
+                               NV_OF_BUFFER_USAGE usage,
                                NV_OF_BUFFER_FORMAT fmt,
                                NvOFGPUBufferHandle *handle)
 {
@@ -131,7 +131,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
         w=((h*img_in->width)/img_in->height) & (~3);
     }
     assert(w<= v->max_width && h<= v->max_height);
-    
+
     nvof_set_size(v, w, h);
 
     image_t *scaled=image_scale(img_in, v->width, v->height);
@@ -197,7 +197,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
         copyP2.WidthInBytes = v->outW;
         copyP2.Height = v->outH;
         CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP2, v->nvof_stream));
-        
+
         cuStreamSynchronize(v->nvof_stream); // annoying
     }
     else
@@ -206,7 +206,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
         memset(v->flowBufHost, 0, 4*v->outW*v->outH); // optical flow not run, return zero vectors
         cuStreamSynchronize(v->nvof_stream);
     }
-    
+
     v->count++;
 
     // switch input and reference buffers
@@ -226,7 +226,7 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     return &v->results;
 }
 
-nvof_t *nvof_create(void *context, int max_width, int max_height) 
+nvof_t *nvof_create(void *context, int max_width, int max_height)
 {
     check_cuda_inited();
     std::call_once(initFlag, init_nvof);
@@ -244,9 +244,9 @@ nvof_t *nvof_create(void *context, int max_width, int max_height)
     return n;
 }
 
-void nvof_destroy(nvof_t *n) 
+void nvof_destroy(nvof_t *n)
 {
-    if (n) 
+    if (n)
     {
         destroy_cuda_stream(n->nvof_stream);
         destroy_nvof_buffer(n, &n->inputFrame);
@@ -260,4 +260,3 @@ void nvof_destroy(nvof_t *n)
     }
 }
 #endif //(UBONCSTUFF_PLATFORM == 0)
-

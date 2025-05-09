@@ -133,27 +133,12 @@ static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t f
     image_t *dest=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dest) return 0;
 
+    image_add_dependency(dest, src);
+
     cuda_convertRGB24toYUV420(src->rgb, src->stride_rgb,
         dest->y, dest->u, dest->v, dest->stride_y, dest->stride_uv,
         dest->width, dest->height, dest->stream);
 
-    /*Npp8u *pDst[3];
-
-    NppiSize oSizeROI = {src->width, src->height};
-    int nDstYStep = dest->stride_y;    // Y channel step
-    int nDstUVStep = dest->stride_uv; // U and V channel step
-    int aDstStep[3]={nDstYStep,nDstUVStep,nDstUVStep};
-
-    pDst[0] = dest->y;
-    pDst[1] = dest->u;
-    pDst[2] = dest->v;
-
-    // Conversion using NPP function
-    image_add_dependency(dest, src); // don't run this until 'src' is ready
-    NppStreamContext nppStreamCtx=get_nppStreamCtx();
-    nppStreamCtx.hStream=dest->stream;
-    CHECK_NPPcall(nppiRGBToYUV420_8u_C3P3R_Ctx(src->rgb, src->stride_rgb, pDst, aDstStep, oSizeROI, nppStreamCtx));
-    */
     return dest;
 }
 
