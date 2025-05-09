@@ -231,6 +231,15 @@ static image_t *image_convert_planar_fp16_rgb24_device(image_t *img, image_forma
     return ret;
 }
 
+static image_t *image_convert_planar_fp32_rgb24_device(image_t *img, image_format_t format)
+{
+    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
+    if (!ret) return 0;
+    image_add_dependency(ret, img);
+    cuda_convert_fp32_planar_to_RGB24(img->rgb, ret->rgb, ret->stride_rgb, img->width, img->height, ret->stream);
+    return ret;
+}
+
 static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
 {
     // what we do here is not actually any work - we just create a new shell surface
@@ -258,12 +267,22 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
     }
 }
 
-static image_t *image_convert_rgb24_planar_fp_device(image_t *src, image_format_t format)
+static image_t *image_convert_rgb24_planar_fp32_device(image_t *src, image_format_t format)
 {
     image_t *dst = create_image(src->width, src->height, format);
     assert(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     image_add_dependency(dst, src);
     cuda_convert_rgb24_to_planar_fp32(src->rgb, (float*)dst->rgb,
+                        src->width, src->height, src->stride_rgb, dst->stream);
+    return dst;
+}
+
+static image_t *image_convert_rgb24_planar_fp16_device(image_t *src, image_format_t format)
+{
+    image_t *dst = create_image(src->width, src->height, format);
+    assert(format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
+    image_add_dependency(dst, src);
+    cuda_convert_rgb24_to_planar_fp16(src->rgb, (void*)dst->rgb,
                         src->width, src->height, src->stride_rgb, dst->stream);
     return dst;
 }
@@ -307,11 +326,13 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_yuv420_device_planar_rgb_fp16, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_yuv420_device_planar_rgb_fp32, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb24_planar_fp_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb24_planar_fp32_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_rgb24_planar_fp16_device, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_planar_fp16_rgb24_device, IMAGE_FORMAT_NONE, 110},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_planar_fp32_rgb24_device, IMAGE_FORMAT_NONE, 110},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_mono, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_mono_yuv420, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_MONO_HOST, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
@@ -368,7 +389,7 @@ void image_conversion_init()
 
 image_t *image_convert(image_t *img, image_format_t format)
 {
-    //log_debug("convert %s->%s",image_format_name(img->format),image_format_name(format));
+    //log_debug("convert %s->%s\n",image_format_name(img->format),image_format_name(format));
 
     if (format==img->format) return image_reference(img);
 

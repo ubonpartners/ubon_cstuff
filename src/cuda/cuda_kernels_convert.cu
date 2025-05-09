@@ -362,6 +362,30 @@ void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, i
     fp16_planar_to_RGB24_kernel<<<grid, block, 0, stream>>>((const __half*)src, (unsigned char *)dest, dest_stride, width, height);
 }
 
+static __global__ void fp32_planar_to_RGB24_kernel(const float *src, unsigned char *dest, int dest_stride, int width, int height)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height)
+    {
+        float r=src[x+y*width+width*height*0];
+        float g=src[x+y*width+width*height*1];
+        float b=src[x+y*width+width*height*2];
+
+        dest[x*3+dest_stride*y+0]=(unsigned char)(r*255);
+        dest[x*3+dest_stride*y+1]=(unsigned char)(g*255);
+        dest[x*3+dest_stride*y+2]=(unsigned char)(b*255);
+    }
+}
+
+void cuda_convert_fp32_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream)
+{
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+    fp32_planar_to_RGB24_kernel<<<grid, block, 0, stream>>>((const float*)src, (unsigned char *)dest, dest_stride, width, height);
+}
+
 static __global__ void interleave_uv_kernel(
     const uint8_t* __restrict__ u,
     const uint8_t* __restrict__ v,
@@ -447,6 +471,49 @@ void cuda_convert_rgb24_to_planar_fp32(
 
     rgb24_to_planar_fp32_kernel_stride_single_dest<<<grid, block, 0, stream>>>(
         d_rgb24, d_planar, width, height, stride
+    );
+}
+
+static __global__ void rgb24_to_planar_fp16_kernel_stride_single_dest(
+    const uint8_t* __restrict__ rgb24,
+    __half * __restrict__ dst,  // [R|G|B] planar FP32 interleaved in one buffer
+    int width,
+    int height,
+    int stride  // input row stride in bytes
+) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= width || y >= height) return;
+
+    int idx = y * width + x;                 // index into each float plane
+    int rgb_idx = y * stride + x * 3;    // index into packed uint8 RGB24
+
+    float r = rgb24[rgb_idx    ] / 255.0f;
+    float g = rgb24[rgb_idx + 1] / 255.0f;
+    float b = rgb24[rgb_idx + 2] / 255.0f;
+
+    int plane_size = width * height;
+    dst[idx] = __float2half(r);
+    dst[idx + plane_size] = __float2half(g);
+    dst[idx + 2 * plane_size] = __float2half(b);
+}
+
+void cuda_convert_rgb24_to_planar_fp16(
+    const uint8_t* d_rgb24,  // input packed RGB24
+    void* d_planar,         // output [R | G | B] FP16 buffer
+    int width,
+    int height,
+    int stride,               // input stride in pixels (not bytes)
+    cudaStream_t stream
+)
+{
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x,
+              (height + block.y - 1) / block.y);
+
+    rgb24_to_planar_fp16_kernel_stride_single_dest<<<grid, block, 0, stream>>>(
+        d_rgb24, (__half *)d_planar, width, height, stride
     );
 }
 

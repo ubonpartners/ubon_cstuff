@@ -27,8 +27,16 @@ void cuda_convert_rgb24_to_planar_fp32(
                     int height,
                     int stride,               // input stride in pixels (not bytes)
                     cudaStream_t stream);
+void cuda_convert_rgb24_to_planar_fp16(
+                    const uint8_t* d_rgb24,  // input packed RGB24
+                    void* d_planar,         // output [R | G | B] FP16 buffer
+                    int width,
+                    int height,
+                    int stride,               // input stride in pixels (not bytes)
+                    cudaStream_t stream);
 void cuda_half_to_float(void * d_input, void* h_output, int size);
 void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
+void cuda_convert_fp32_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
 void cuda_downsample_2x2(const uint8_t* d_src, int src_stride, uint8_t* d_dst, int dst_stride, int width, int height, cudaStream_t stream);
 void cuda_interleave_uv(const uint8_t* d_u, const uint8_t* d_v,
 int src_stride_uv,
