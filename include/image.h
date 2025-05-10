@@ -86,6 +86,8 @@ void clear_image(image_t *img);
 // scale image to new size
 image_t *image_scale(image_t *img, int width, int height);
 // convert image to different format
+// any format to any other should work although some are not direct
+// and work via an intermediate format
 image_t *image_convert(image_t *img, image_format_t format);
 // generate a 32 bit value from a hash of the surface's pixel contents
 // this is very useful for checking for reproducibility bugs
@@ -98,8 +100,10 @@ image_t *image_mad_4x4(image_t *a, image_t *b);
 // image blend: product a new surface by copying a sub-rectange of src2 over src
 // the sub-rectange is defined by sx,dy,w,h in src2 and is copied to position dx,dy
 image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy);
-// derive a new image from a crop of an existing one. Note this doesn't actually do
+// derive a new image from a crop of an existing one. Note in some cases this doesn't actually do
 // any operations just uses reference counting and pointer manipulations so is 'free'
 image_t *image_crop(image_t *img, int x, int y, int w, int h);
+// pad an image by adding extra pixels to the edges, using the specified RGB colour
+image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint32_t RGB);
 
 #endif

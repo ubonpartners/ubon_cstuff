@@ -35,7 +35,7 @@ uint32_t hash_plane(uint8_t *p, int w, int h, int stride, bool device, cudaStrea
     uint32_t hashes[h];
     if (device==false)
     {
-        CHECK_CUDART_CALL(cudaStreamSynchronize(stream));  
+        CHECK_CUDART_CALL(cudaStreamSynchronize(stream));
         hash_2d(p, w, h, stride, hashes);
     }
     else
@@ -84,9 +84,9 @@ uint32_t image_hash(image_t *img)
     return ret;
 }
 
-image_t *image_blur(image_t *img) 
+image_t *image_blur(image_t *img)
 {
-    if (!img || (img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE)) 
+    if (!img || (img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE))
     {
         return NULL;
     }
@@ -130,7 +130,7 @@ image_t *image_blur(image_t *img)
     return dst;
 }
 
-image_t *image_mad_4x4(image_t *a, image_t *b) 
+image_t *image_mad_4x4(image_t *a, image_t *b)
 {
     if (!a || !b) return NULL;
     if (a->width != b->width || a->height != b->height)
@@ -166,12 +166,12 @@ image_t *image_mad_4x4(image_t *a, image_t *b)
     return out;
 }
 
-image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy) 
+image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, int dx, int dy)
 {
     if (!src) return 0;
     if (!src2) return image_reference(src);
 
-    if ((src->format != IMAGE_FORMAT_YUV420_DEVICE && src->format != IMAGE_FORMAT_MONO_DEVICE)) 
+    if ((src->format != IMAGE_FORMAT_YUV420_DEVICE && src->format != IMAGE_FORMAT_MONO_DEVICE))
     {
         image_t *inter=image_convert(src, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_blend(inter, src2, sx, sy, w, h, dx, dy);
@@ -191,7 +191,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
     w=std::max(0, std::min(std::min(w, src2->width-sx), src->width-dx));
     h=std::max(0, std::min(std::min(h, src2->height-sy), src->height-dy));
     if (w==0 || h==0) return image_reference(src);
-    
+
     // Create a copy of src to modify and return
     image_t *out = create_image(src->width, src->height, src->format);
     image_add_dependency(out, src);
@@ -253,7 +253,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
 image_t *image_crop(image_t *img, int x, int y, int w, int h)
 {
     if (!img) return 0;
-    if ((img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE)) 
+    if ((img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE))
     {
         image_t *inter=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_crop(inter, x, y, w, h);
@@ -266,7 +266,7 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
 
     if (w==0 || h==0) return 0;
 
-    // what we do here is not actually any work - we just create a new shell surface 
+    // what we do here is not actually any work - we just create a new shell surface
     // that points to the Y data of the original surface, and hold on to a reference
     // for that surface.
     image_t *cropped=create_image_no_surface_memory(w, h, img->format);
@@ -281,4 +281,60 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
     }
     image_add_dependency(cropped, img);
     return cropped;
+}
+
+image_t *image_pad_rgb24_device(image_t *img, int left, int top, int right, int bottom, uint32_t RGB)
+{
+    int new_width = img->width + left + right;
+    int new_height = img->height + top + bottom;
+
+    image_t *dst = create_image(new_width, new_height, img->format);
+    if (!dst) return 0;
+    image_add_dependency(dst, img); // Wait until img is ready
+
+    // Fill destination with RGB color
+    Npp8u rgb_color[3] = {
+        (Npp8u)((RGB >> 16) & 0xFF),
+        (Npp8u)((RGB >> 8) & 0xFF),
+        (Npp8u)(RGB & 0xFF)
+    };
+
+    NppStreamContext nppStreamCtx = get_nppStreamCtx();
+    nppStreamCtx.hStream = dst->stream;
+
+    typedef struct {int x, y, width, height;} PadRect;
+
+    PadRect pad_rects[4] = {
+        { 0, 0, dst->width, top },                                // Top
+        { 0, dst->height - bottom, dst->width, bottom },          // Bottom
+        { 0, top, left, img->height },                            // Left
+        { dst->width - right, top, right, img->height }           // Right
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        PadRect *r = &pad_rects[i];
+        if (r->width > 0 && r->height > 0) {
+            NppiSize roiSize = { r->width, r->height };
+            Npp8u *ptr = dst->rgb + r->y * dst->stride_rgb + r->x * 3;
+            CHECK_NPPcall(nppiSet_8u_C3R_Ctx(rgb_color, ptr, dst->stride_rgb, roiSize, nppStreamCtx));
+        }
+    }
+
+    // Copy src into padded location in dst
+    NppiSize srcSize = { img->width, img->height };
+    Npp8u *dstOffsetPtr = dst->rgb + top * dst->stride_rgb + left * 3;
+
+    CHECK_NPPcall(nppiCopy_8u_C3R_Ctx(
+        img->rgb, img->stride_rgb,
+        dstOffsetPtr, dst->stride_rgb,
+        srcSize, nppStreamCtx));
+
+    return dst;
+}
+
+image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint32_t RGB)
+{
+    if (img->format != IMAGE_FORMAT_RGB24_DEVICE)
+        return image_pad_rgb24_device(img, left, top, right, bottom, RGB);
+    assert(0); // todo: fixeme; not implemented
 }

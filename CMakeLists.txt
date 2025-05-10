@@ -56,7 +56,7 @@ if(DEFINED ENV{JETSON_SOC})
     set(ARCH_LIBS
         -lSDL2 -ljpeg -lopenh264 -lyuv
         -lcuda -lcudart -lnvv4l2
-        -lnppc -lnppisu -lnppig -lnppicc -lnppif
+        -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
         -lnvvpi -lnvinfer -lnvonnxparser -lnvinfer_plugin
         -L/usr/lib/aarch64-linux-gnu
@@ -71,7 +71,7 @@ else()
         -L/usr/local/cuda/lib64
         -lnvinfer -lcudart -lcublas -lnvonnxparser
         -lopenh264 -lcuda -lnvcuvid -lyuv
-        -lnppc -lnppisu -lnppig -lnppicc -lnppif -lSDL2 -ljpeg
+        -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei -lSDL2 -ljpeg
         -lnvvpi
         -lnvidia-opticalflow
     )
