@@ -8,7 +8,7 @@
 #include <cassert>
 #include "image.h"
 
-struct my_error_mgr 
+struct my_error_mgr
 {
     struct jpeg_error_mgr pub;
     jmp_buf setjmp_buffer;
@@ -16,7 +16,7 @@ struct my_error_mgr
 
 typedef struct my_error_mgr *my_error_ptr;
 
-void my_error_exit(j_common_ptr cinfo) 
+void my_error_exit(j_common_ptr cinfo)
 {
     my_error_ptr myerr = (my_error_ptr) cinfo->err;
     longjmp(myerr->setjmp_buffer, 1);
@@ -31,7 +31,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size)
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = my_error_exit;
 
-    if (setjmp(jerr.setjmp_buffer)) 
+    if (setjmp(jerr.setjmp_buffer))
     {
         jpeg_destroy_decompress(&cinfo);
         return 0;
@@ -45,7 +45,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size)
     int row_stride = cinfo.output_width * cinfo.output_components;
     image_t *img=create_image(cinfo.output_width, cinfo.output_height, IMAGE_FORMAT_RGB24_HOST);
 
-    while (cinfo.output_scanline < cinfo.output_height) 
+    while (cinfo.output_scanline < cinfo.output_height)
     {
         unsigned char *buffer_array[1];
         buffer_array[0] = img->rgb + cinfo.output_scanline * img->stride_rgb;
@@ -207,15 +207,15 @@ void save_jpeg(const char *filename, image_t *img)
         save_jpeg_rgb24(filename, img, 90);
     else if (img->format==IMAGE_FORMAT_YUV420_HOST)
         save_jpeg_yuv420(filename, img, 90);
-    else if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
-        inter=IMAGE_FORMAT_RGB24_HOST;
-    else if (img->format==IMAGE_FORMAT_YUV420_DEVICE)
+    else if ( (img->format==IMAGE_FORMAT_YUV420_DEVICE)
+            ||(img->format==IMAGE_FORMAT_NV12_DEVICE)
+            ||(img->format==IMAGE_FORMAT_MONO_DEVICE))
         inter=IMAGE_FORMAT_YUV420_HOST;
     else
     {
-        assert(0);
+        inter=IMAGE_FORMAT_RGB24_HOST;
     }
-    
+
     image_t *temp=image_convert(img, inter);
     save_jpeg(filename, temp);
     destroy_image(temp);

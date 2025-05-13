@@ -78,7 +78,7 @@ image_t *image_reference(image_t *img);
 // block & wait for all outstanding generating 'img' to be completed
 void image_sync(image_t *img);
 // mark that the generation of surface 'img' depends on the pixels
-// of surface 'depends_on' so the operations shouls be asynchronously
+// of surface 'depends_on' so the operations should be asynchronously
 // queued to run after
 void image_add_dependency(image_t *img, image_t *depends_on);
 // clear image - only used for debug, should ever need to clear an image

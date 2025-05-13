@@ -16,7 +16,7 @@ if(DEFINED ENV{JETSON_SOC})
 else()
     set(ARCH_LIBS
         pthread cuda cudart cublas nvinfer nvonnxparser openh264
-        nvcuvid nppc nppisu nppig nppicc nppif jpeg SDL2 yuv
+        nvcuvid nppc nppisu nppig nppicc nppif nppidei jpeg SDL2 yuv
         nvidia-opticalflow yaml-cpp # etc
     )
 endif()
