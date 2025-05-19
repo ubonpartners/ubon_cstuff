@@ -5,7 +5,7 @@ if(DEFINED ENV{JETSON_SOC})
     set(ARCH_LIBS
         pthread SDL2 jpeg openh264 yuv
         cuda cudart nvv4l2
-        nppc nppisu nppig nppicc nppif
+        nppc nppisu nppig nppicc nppif nppidei
         nvbufsurface nvbufsurftransform
         nvvpi nvinfer nvonnxparser nvinfer_plugin
         -L/usr/lib/aarch64-linux-gnu
