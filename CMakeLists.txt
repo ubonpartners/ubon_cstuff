@@ -17,6 +17,15 @@ execute_process(
     OUTPUT_VARIABLE PYBIND11_CMAKE_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+
+# Run git describe and write to a header file
+execute_process(
+    COMMAND git describe --dirty
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE UBON_CSTUFF_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 list(APPEND CMAKE_PREFIX_PATH "${PYBIND11_CMAKE_DIR}")
 message(STATUS "PYBIND11_CMAKE_DIR: ${PYBIND11_CMAKE_DIR}")
 
@@ -29,6 +38,16 @@ set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 
 set(CMAKE_CXX_FLAGS "-O2 -g")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -x c++")  # treat .c files as C++
+
+# Path to the generated header
+set(VERSION_HEADER ${CMAKE_BINARY_DIR}/ubon_cstuff_version.h)
+
+# Write the version string to the header file
+set(GUARD_NAME "_UBON_CSTUFF_VERSION_H_")
+file(WRITE "${VERSION_HEADER}" "#ifndef ${GUARD_NAME}\n")
+file(APPEND "${VERSION_HEADER}" "#define ${GUARD_NAME}\n")
+file(APPEND "${VERSION_HEADER}" "#define UBON_CSTUFF_VERSION \"${UBON_CSTUFF_VERSION}\"\n")
+file(APPEND "${VERSION_HEADER}" "#endif /* ${GUARD_NAME} */\n")
 
 find_package(yaml-cpp REQUIRED)
 
@@ -79,6 +98,8 @@ endif()
 
 include_directories(${PROJECT_INCLUDE_DIRS})
 
+# Include the binary dir to access the generated header
+include_directories(${CMAKE_BINARY_DIR})
 
 # Gather sources
 file(GLOB SRC_FILES

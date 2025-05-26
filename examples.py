@@ -23,7 +23,9 @@ def argument_parser():
         help="Tensor RT Model to use <model.trt file>", default=None, type=str)
     parser.print_help()
     args = parser.parse_args()
+    version = upyc.get_version()
     print(f"args = {args}\n")
+    print(f"version = {version}\n")
     # validate all given files do exist.
     exist = True
     for k, v in vars(args).items():
