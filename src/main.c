@@ -10,6 +10,7 @@
 #include "jpeg.h"
 #include "dataset.h"
 #include "nvof.h"
+#include "misc.h"
 #include "c_tests.h"
 
 static infer_t *inf=0;
@@ -32,6 +33,7 @@ static void frame_callback(void *context, image_t *img)
 
 int main(int argc, char *argv[]) 
 {
+    printf("ubon_cstuff version = %s\n", ubon_cstuff_get_version());
     init_cuda_stuff();
     image_init();
 

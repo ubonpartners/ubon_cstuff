@@ -14,6 +14,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "display.h"
 #include "nvof.h"
 #include "log.h"
+#include "misc.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -277,7 +278,7 @@ class c_infer {
             };
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
-    //std::cout << "ubon_pycstuff bindings loaded" << std::endl;
+    //std::cout << "ubon_pycstuff bindings loaded for version" << ubon_cstuff_get_version() << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
         .value("NONE", IMAGE_FORMAT_NONE)
         .value("YUV420_DEVICE", IMAGE_FORMAT_YUV420_DEVICE)
@@ -341,6 +342,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             py::arg("level"),
             "Set the logging level. "
             "`level`: 0 (TRACE) to 5 (FATAL).");
+
+    m.doc() = "ubon_cstuff python module";
+    m.def("get_version", ubon_cstuff_get_version, "Returns the git version of the library");
 
     log_set_level(LOG_WARN);        
     init_cuda_stuff();
