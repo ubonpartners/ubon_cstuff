@@ -86,6 +86,9 @@ if(DEFINED ENV{JETSON_SOC})
 else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=0")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=0")
+    list(APPEND PROJECT_INCLUDE_DIRS
+        /usr/local/cuda/include
+    )
     set(ARCH_LIBS
         -L/usr/local/cuda/lib64
         -lnvinfer -lcudart -lcublas -lnvonnxparser
