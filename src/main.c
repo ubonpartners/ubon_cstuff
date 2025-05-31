@@ -31,7 +31,7 @@ static void frame_callback(void *context, image_t *img)
     destroy_detections(dets);
 }
 
-int main(int argc, char *argv[]) 
+int main(int argc, char *argv[])
 {
     printf("ubon_cstuff version = %s\n", ubon_cstuff_get_version());
     init_cuda_stuff();
@@ -63,17 +63,17 @@ int main(int argc, char *argv[])
     if (argc>1)
     {
         FILE *input = fopen(argv[1], "rb");
-        if (!input) 
+        if (!input)
         {
             printf("Failed to open input file %s", argv[1]);
             return -1;
         }
 
-        simple_decoder_t *decoder = simple_decoder_create(0, frame_callback);
+        simple_decoder_t *decoder = simple_decoder_create(0, frame_callback, SIMPLE_DECODER_CODEC_H264);
 
         uint8_t buffer[4096];
         size_t bytes_read;
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0) 
+        while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0)
         {
             simple_decoder_decode(decoder, buffer, bytes_read);
         }
@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
     else
     {
         webcam_t *w=webcam_create("/dev/video0", 1280, 720);
-        
+
         while(1)
         {
             image_t *i=webcam_capture(w);
@@ -97,6 +97,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    
+
     return 0;
 }

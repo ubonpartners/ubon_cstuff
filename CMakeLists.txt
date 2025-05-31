@@ -92,7 +92,7 @@ else()
     set(ARCH_LIBS
         -L/usr/local/cuda/lib64
         -lnvinfer -lcudart -lcublas -lnvonnxparser
-        -lopenh264 -lcuda -lnvcuvid -lyuv
+        -lopenh264 -lcuda -lnvcuvid -lyuv -lpcap
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei -lSDL2 -ljpeg
         -lnvvpi
         -lnvidia-opticalflow
@@ -114,6 +114,7 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/log/*.c
     ${CMAKE_SOURCE_DIR}/src/misc/*.c
     ${CMAKE_SOURCE_DIR}/src/nvof/*.c
+    ${CMAKE_SOURCE_DIR}/src/rtp/*.c
     ${CMAKE_SOURCE_DIR}/src/vpi/*.c
 )
 
@@ -130,20 +131,25 @@ foreach(source_file ${CUDA_FILES})
     set_source_files_properties(${source_file} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
 
-set(MAIN_FILE ${CMAKE_SOURCE_DIR}/src/main.c)
+set(APP_MAIN_FILES
+    ${CMAKE_SOURCE_DIR}/src/main.c
+    ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
+)
 
 add_library(uboncstufflib STATIC ${SRC_FILES} ${CUDA_FILES})
 set_target_properties(uboncstufflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Build the main executable from main + static lib
-add_executable(uboncstuff ${MAIN_FILE})
-
-target_link_libraries(uboncstuff
-    uboncstufflib
-    yaml-cpp
-    ${COMMON_LIBS}
-    ${ARCH_LIBS}
-)
+# Helper macro to build each app
+foreach(app_src ${APP_MAIN_FILES})
+    get_filename_component(app_name ${app_src} NAME_WE)
+    add_executable(${app_name} ${app_src})
+    target_link_libraries(${app_name}
+        uboncstufflib
+        yaml-cpp
+        ${COMMON_LIBS}
+        ${ARCH_LIBS}
+    )
+endforeach()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11 REQUIRED)

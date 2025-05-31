@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define MAX_FRAME_SIZE (2 * 1024 * 1024) // 2MB max per frame
 
@@ -161,54 +162,44 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
             }
         }
         else {
-            // H.265 FU:
-            //   – payload[0] is FU indicator; payload[1] is FU header
-            //   – The original two-byte NAL header must be reconstructed from FU indicator/header.
-            //     (F | Type(6) | layerId(6) | TID(3)) is split across these two bytes.
-            //   – When start==true, reconstruct full two-byte NAL header.
-            //
-            // Reconstructing H.265 NAL Header:
-            //   * FU Indicator (first byte):
-            //       F = bit7 of payload[0]
-            //       Type = bits 1..6 of payload[0]
-            //       LayerId = bits 0..5 of payload[1] >> 6  (upper 2 bits of payload[1])
-            //       TID = bits 0..2 of payload[1]
-            //
-            //   * FU Header (second byte):
-            //       S = bit7, E = bit6, RU = bit5..bit0 is original NAL unit type (6 bits)
-            //   * The “original” NAL unit’s first two bytes must be rebuilt as:
-            //       byte0 = (payload[0] & 0x81) | ((payload[1] & 0x3F) << 1)
-            //       byte1 = (payload[1] & 0x01) | (payload[0] & 0x7E) >> 1 ???
-            //
-            //   For simplicity, we will only reconstruct using the commonly‐used syntax:
-            uint8_t fu_header      = payload[1];
-            uint8_t nal_unit_type  = fu_header & 0x3F;    // bottom 6 bits
-            uint8_t reconstructed0 = (payload[0] & 0x81) | (nal_unit_type << 1);
-            // The second byte (nuh_layer_id + nuh_temporal_id_plus1) is carried in payload[0..1] as well.
-            // Often we can simply copy payload[0] & 0x7E (the nuh_layer_id + TID bits)
-            // combined with (payload[1] >> 6) & 0x03 for those two bits. In many implementations, nuh_layer_id=0 and TID=1,
-            // so the simplest fallback is to copy payload[0] & 0x7E | (payload[1] & 0x01).
-            uint8_t reconstructed1 = (payload[0] & 0x7E) | (payload[1] & 0x01);
+            /* H.265 FU pathway */
+            /* 1) payload[0] = FU_IND; payload[1] = FU_HDR; payload[2] = original H[1]. */
+            uint8_t fu_ind      = payload[0];
+            uint8_t fu_hdr      = payload[1];
+            uint8_t original_H1 = payload[2];
+
+            start = (fu_hdr & 0x80) != 0;
+            end   = (fu_hdr & 0x40) != 0;
+
+            /* The bottom 6 bits of FU_HDR are the original nal_unit_type */
+            uint8_t orig_type = fu_hdr & 0x3F;
+
+            /* Reconstruct the first header byte: keep F & layer_id_msb, put orig_type<<1 */
+            uint8_t reconstructed0 = (fu_ind & 0x81) | (orig_type << 1);
+
+            /* Reconstruct the second header byte exactly as it was in the original NALU */
+            uint8_t reconstructed1 = original_H1;
 
             if (start) {
-                // Write start code + reconstructed two‐byte header + remainder
+                // Write start code + the 2‐byte reconstructed NAL header
                 append_start_code(a);
-                a->frame_buffer[a->frame_len] = reconstructed0;
+                a->frame_buffer[a->frame_len]     = reconstructed0;
                 a->frame_buffer[a->frame_len + 1] = reconstructed1;
                 classify_nal(a, reconstructed0);
                 a->frame_len += 2;
 
+                // Copy remainder of this packet’s payload (i.e. from payload[3..] onward)
                 memcpy(a->frame_buffer + a->frame_len,
-                       payload + 2,
-                       len - 2);
-                a->frame_len += (len - 2);
+                       payload + 3,
+                       len - 3);
+                a->frame_len += (len - 3);
             }
             else {
-                // Continuation: just copy payload[2..]
+                // Continuation fragment: copy from payload[3..]
                 memcpy(a->frame_buffer + a->frame_len,
-                       payload + 2,
-                       len - 2);
-                a->frame_len += (len - 2);
+                       payload + 3,
+                       len - 3);
+                a->frame_len += (len - 3);
             }
         }
     }
@@ -253,4 +244,24 @@ void h26x_assembler_reset(h26x_assembler_t *a) {
     a->in_frame     = false;
     a->is_complete  = true;
     memset(&a->nal_stats, 0, sizeof(a->nal_stats));
+}
+
+void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc) {
+    if (!desc) return;
+
+    printf("=== H26X Frame Summary ===\n");
+    printf("RTP Timestamp   : %u (90kHz)\n", (uint32_t)desc->extended_rtp_timestamp);
+    printf("AnnexB Size     : %d bytes\n", desc->annexb_length);
+    printf("SSRC            : 0x%08X\n", desc->ssrc);
+    printf("Complete Frame? : %s\n", desc->is_complete ? "Yes" : "No");
+
+    printf("\nNAL Breakdown:\n");
+    printf("  IDR / Keyframe NALs : %u\n", desc->nal_stats.idr_count);
+    printf("  Non-IDR VCL NALs    : %u\n", desc->nal_stats.non_idr_count);
+    printf("  SEI Units           : %u\n", desc->nal_stats.sei_count);
+    printf("  SPS Units           : %u\n", desc->nal_stats.sps_count);
+    printf("  PPS Units           : %u\n", desc->nal_stats.pps_count);
+    printf("  VPS Units (H.265)   : %u\n", desc->nal_stats.vps_count);
+    printf("  Other NAL Types     : %u\n", desc->nal_stats.other_count);
+    printf("=========================\n");
 }

@@ -55,11 +55,11 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
             dec->out_height=dec->target_height;
         }
 
-        printf("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d\n",
+        printf("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d\n",
             dec->coded_width,dec->coded_height,
             pFormat->display_area.left,pFormat->display_area.top,
             pFormat->display_area.right,pFormat->display_area.bottom,
-            dec->out_width,dec->out_height);
+            dec->out_width,dec->out_height, (int)pFormat->codec);
 
         CUVIDDECODECREATEINFO decodeCreateInfo = {0};
         decodeCreateInfo.CodecType = pFormat->codec;
@@ -118,7 +118,9 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     return 1;
 }
 
-simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame))
+simple_decoder_t *simple_decoder_create(void *context,
+                                        void (*frame_callback)(void *context, image_t *decoded_frame),
+                                        simple_decoder_codec_t codec)
 {
     check_cuda_inited();
     simple_decoder_t *dec = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
@@ -133,7 +135,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     //CHECK_CUDA_CALL(cuStreamCreate(&dec->stream, CU_STREAM_DEFAULT));
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
-    videoParserParams.CodecType = cudaVideoCodec_H264; // Change to cudaVideoCodec_HEVC for H.265
+    videoParserParams.CodecType = (codec==SIMPLE_DECODER_CODEC_H264) ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC;
     videoParserParams.ulMaxNumDecodeSurfaces = 8;//
     videoParserParams.ulClockRate = 1000;
     videoParserParams.ulErrorThreshold = 100;

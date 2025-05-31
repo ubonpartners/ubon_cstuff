@@ -33,14 +33,14 @@ static void openh264_trace_cb (void *ctx, int level, const char *string)
 }
 
 
-simple_decoder_t * __attribute__((weak)) simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame)) 
+simple_decoder_t * __attribute__((weak)) simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame), simple_decoder_codec_t codec)
 {
     simple_decoder_t *dec = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
     if (dec==0) return 0;
 
     ISVCDecoder *pSvcDecoder;
     SDecodingParam sDecParam = {0};
-    
+
     WelsCreateDecoder(&dec->decoder);
     sDecParam.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
 
@@ -63,14 +63,14 @@ simple_decoder_t * __attribute__((weak)) simple_decoder_create(void *context, vo
     dec->bitstream_buffer_size=512*1024;
     dec->bitstream_buffer=(uint8_t *)malloc(dec->bitstream_buffer_size);
     dec->bitstream_buffer_fullness=0;
-    
+
 
     return dec;
 }
 
-void __attribute__((weak)) simple_decoder_destroy(simple_decoder_t *dec) 
+void __attribute__((weak)) simple_decoder_destroy(simple_decoder_t *dec)
 {
-    if (dec) 
+    if (dec)
     {
         dec->decoder->Uninitialize();
         free(dec->bitstream_buffer);
@@ -79,11 +79,11 @@ void __attribute__((weak)) simple_decoder_destroy(simple_decoder_t *dec)
     }
 }
 
-int find_next_start_code(uint8_t* stream, int start, int size) 
+int find_next_start_code(uint8_t* stream, int start, int size)
 {
-    for (int i = start; i < size - 3; i++) 
+    for (int i = start; i < size - 3; i++)
     {
-        if (stream[i] == 0x00 && stream[i+1] == 0x00 && stream[i+2] == 0x01) 
+        if (stream[i] == 0x00 && stream[i+1] == 0x00 && stream[i+2] == 0x01)
         {
             return i;
         }
@@ -91,17 +91,17 @@ int find_next_start_code(uint8_t* stream, int start, int size)
     return -1;
 }
 
-static void simple_decoder_decode_one_nalu(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size) 
+static void simple_decoder_decode_one_nalu(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size)
 {
     uint8_t *data[3] = {0};
     memset(&dec->bufInfo, 0, sizeof(SBufferInfo));
     DECODING_STATE state = dec->decoder->DecodeFrame2(bitstream_data, data_size, data, &dec->bufInfo);
-    if (state == dsErrorFree && dec->bufInfo.iBufferStatus == 1) 
+    if (state == dsErrorFree && dec->bufInfo.iBufferStatus == 1)
     {
         // Perform bilinear scaling
         int src_width = dec->bufInfo.UsrData.sSystemBuffer.iWidth;
         int src_height = dec->bufInfo.UsrData.sSystemBuffer.iHeight;
-        
+
         image_t *img=create_image_no_surface_memory(src_width, src_height, IMAGE_FORMAT_YUV420_HOST);
 
         img->y=data[0];
@@ -123,7 +123,7 @@ void __attribute__((weak)) simple_decoder_decode(simple_decoder_t *dec, uint8_t 
     assert(data_size+dec->bitstream_buffer_fullness<=dec->bitstream_buffer_size);
     memcpy(dec->bitstream_buffer+dec->bitstream_buffer_fullness, bitstream_data, data_size);
     dec->bitstream_buffer_fullness+=data_size;
-    
+
 
     while(1)
     {

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <arpa/inet.h> // ntohs, ntohl
 
 #define MAX_REORDER_BUFFER 64
@@ -67,9 +68,10 @@ void rtp_receiver_set_payload_type(rtp_receiver_t *r, uint8_t pt) {
 }
 
 rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
-    rtp_receiver_t *r = calloc(1, sizeof(rtp_receiver_t));
+    rtp_receiver_t *r = (rtp_receiver_t *)calloc(1, sizeof(rtp_receiver_t));
     r->context = context;
     r->cb = cb;
+    r->first_packet = true;
     return r;
 }
 

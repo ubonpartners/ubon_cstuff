@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "rtp_receiver.h"
 
 // -----------------------------------------------------------------------------
 // Supported codec IDs
@@ -48,20 +49,6 @@ typedef void (*h26x_frame_callback_fn)(void *context,
                                        const h26x_frame_descriptor_t *desc);
 
 // -----------------------------------------------------------------------------
-// Minimal RTP‐packet descriptor needed by the assembler.  In most real‐world
-// use, you’d already have a full RTP struct; this is just the subset we need.
-// -----------------------------------------------------------------------------
-typedef struct {
-    uint8_t    *data;                    // Pointer to start of full RTP packet (including header)
-    int         payload_offset;          // Offset (in bytes) from data[0] to the first payload byte
-    int         payload_length;          // Number of payload bytes (not counting header)
-    uint32_t    timestamp;               // 32‐bit RTP timestamp
-    uint64_t    extended_timestamp_90khz; // User’s 90kHz “absolute” timestamp for the first packet
-    bool        marker;                  // Marker bit (last packet of a frame)
-    uint32_t    ssrc;                    // SSRC of this packet
-} rtp_packet_t;
-
-// -----------------------------------------------------------------------------
 // Opaque assembler context
 // -----------------------------------------------------------------------------
 typedef struct h26x_assembler h26x_assembler_t;
@@ -94,5 +81,8 @@ void h26x_assembler_reset(h26x_assembler_t *a);
 // -----------------------------------------------------------------------------
 void h26x_assembler_process_rtp(h26x_assembler_t       *a,
                                 const rtp_packet_t     *pkt);
+
+
+void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc);
 
 #endif // H26X_ASSEMBLER_H

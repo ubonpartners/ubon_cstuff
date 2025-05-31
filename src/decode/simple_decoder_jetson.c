@@ -17,7 +17,7 @@ struct simple_decoder
     void *context;
 };
 
-simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame))
+simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame), simple_decoder_codec_t codec)
 {
     simple_decoder_t *dec = NULL;
 
@@ -43,4 +43,3 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     return;
 }
 #endif //(UBONCSTUFF_PLATFORM == 1)
-

@@ -21,15 +21,15 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 class c_image {
     public:
         image_t* img;
-    
+
         c_image(int width, int height, image_format_t fmt) {
             img = create_image(width, height, fmt);
         }
-    
+
         ~c_image() {
             destroy_image(img);
         }
-    
+
         c_image(image_t* ptr) {
             img = ptr;
         }
@@ -45,27 +45,27 @@ class c_image {
         std::string format_name() const {
             return image_format_name(img->format);
         }
-    
+
         static std::shared_ptr<c_image> from_numpy(py::array_t<uint8_t> input_rgb) {
             auto buf = input_rgb.unchecked<3>();
             int height = buf.shape(0);
             int width = buf.shape(1);
-    
+
             image_t* img = create_image(width, height, IMAGE_FORMAT_RGB24_HOST);
-    
+
             for (int y = 0; y < height; ++y)
                 for (int x = 0; x < width; ++x)
                     for (int c = 0; c < 3; ++c)
                         img->rgb[3 * x + c + img->stride_rgb * y] = buf(y, x, c);
-    
+
             return std::make_shared<c_image>(img);
         }
-    
+
         std::shared_ptr<c_image> scale(int w, int h) {
             image_t* scaled = image_scale(img, w, h);
             return std::make_shared<c_image>(scaled);
         }
-    
+
         std::shared_ptr<c_image> convert(image_format_t fmt) {
             image_t* converted = image_convert(img, fmt);
             return std::make_shared<c_image>(converted);
@@ -90,10 +90,10 @@ class c_image {
 
         std::shared_ptr<c_image> mad_4x4(std::shared_ptr<c_image> other) {
             image_t* img_other = other->raw();
-            image_t* mad_img=image_mad_4x4(img, img_other); 
+            image_t* mad_img=image_mad_4x4(img, img_other);
             return std::make_shared<c_image>(mad_img);
         }
-   
+
         std::shared_ptr<c_image> crop(int x, int y, int w, int h) {
             image_t* cropped = image_crop(img, x, y, w, h);
             return std::make_shared<c_image>(cropped);
@@ -115,13 +115,13 @@ class c_image {
                 image_sync(tmp);
                 auto result = py::array_t<uint8_t>({tmp->height, tmp->width});
                 auto buf = result.mutable_unchecked<2>();
-        
+
                 for (int y = 0; y < tmp->height; ++y)
                     for (int x = 0; x < tmp->width; ++x)
                         buf(y, x) = tmp->y[x + tmp->stride_y * y];
-        
+
                 destroy_image(tmp);
-                return result;    
+                return result;
             }
             else
             {
@@ -129,43 +129,43 @@ class c_image {
                 image_sync(tmp);
                 auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
                 auto buf = result.mutable_unchecked<3>();
-        
+
                 for (int y = 0; y < tmp->height; ++y)
                     for (int x = 0; x < tmp->width; ++x)
                         for (int c = 0; c < 3; ++c)
                             buf(y, x, c) = tmp->rgb[3 * x + c + tmp->stride_rgb * y];
-        
+
                 destroy_image(tmp);
                 return result;
             }
         }
-    
+
         image_t* raw() { return img; }
     };
 
 class c_infer {
     public:
         infer_t* inf;
-    
+
         c_infer(const std::string& trt_file, const std::string& yaml_file) {
             inf = infer_create(trt_file.c_str(), yaml_file.c_str());
             if (!inf) {
                 throw std::runtime_error("Failed to create infer_t");
             }
         }
-    
+
         ~c_infer() {
             if (inf) infer_destroy(inf);
         }
-    
+
         py::list run(std::shared_ptr<c_image> image_obj) {
             image_t* img = image_obj->raw();
             detections_t* dets = infer(inf, img);
-    
+
             py::list results;
             for (int i = 0; i < dets->num_detections; ++i) {
                 detection_t* det = &dets->det[i];
-    
+
                 py::dict item;
                 item["cls"] = det->cl;
                 item["conf"] = det->conf;
@@ -177,11 +177,11 @@ class c_infer {
                 item["box"] = box;
                 results.append(item);
             }
-    
+
             destroy_detections(dets);
             return results;
         }
-    
+
         infer_t* raw() { return inf; }
     };
 
@@ -189,41 +189,41 @@ class c_infer {
         public:
             simple_decoder_t* dec;
             std::vector<std::shared_ptr<c_image>> current_output;
-        
+
             c_decoder() {
                 // Create the decoder, register our static callback, pass `this` as context
-                dec = simple_decoder_create(this, &c_decoder::on_frame_static);
+                dec = simple_decoder_create(this, &c_decoder::on_frame_static, SIMPLE_DECODER_CODEC_H264);
                 if (!dec) {
                     throw std::runtime_error("Failed to create decoder");
                 }
             }
-        
+
             ~c_decoder() {
                 if (dec) simple_decoder_destroy(dec);
             }
-        
+
             py::list decode(py::bytes bitstream) {
                 current_output.clear();
-        
+
                 char* buffer;
                 ssize_t length;
                 PyBytes_AsStringAndSize(bitstream.ptr(), &buffer, &length);
-        
+
                 simple_decoder_decode(dec, reinterpret_cast<uint8_t*>(buffer), static_cast<int>(length));
-        
+
                 py::list result;
                 for (const auto& img : current_output) {
                     result.append(img);
                 }
                 return result;
             }
-        
+
         private:
             static void on_frame_static(void* context, image_t* decoded_frame) {
                 auto* self = static_cast<c_decoder*>(context);
                 self->on_frame(decoded_frame);
             }
-        
+
             void on_frame(image_t* img) {
                 // Reference the frame so we manage its lifetime cleanly
                 current_output.emplace_back(std::make_shared<c_image>(image_reference(img)));
@@ -233,34 +233,34 @@ class c_infer {
         class c_nvof {
             public:
                 nvof_t* of;
-            
+
                 c_nvof(int width, int height) {
                     of = nvof_create(this, width, height);
                     if (!of) {
                         throw std::runtime_error("Failed to create nvof_t");
                     }
                 }
-            
+
                 ~c_nvof() {
                     if (of) {
                         nvof_destroy(of);
                     }
                 }
-            
+
                 std::tuple<py::array_t<uint8_t>, py::array_t<float>> run(std::shared_ptr<c_image> img) {
                     image_t* raw = img->raw();
                     nvof_results_t* result = nvof_execute(of, raw);
-            
+
                     if (!result || !result->costs || !result->flow) {
                         throw std::runtime_error("nvof_execute failed or returned null results");
                     }
-            
+
                     int h = result->grid_h;
                     int w = result->grid_w;
-            
-                    // Wrap costs as uint8 NumPy array 
+
+                    // Wrap costs as uint8 NumPy array
                     auto costs = py::array_t<uint8_t>({h, w}, result->costs);
-            
+
                     // Wrap flow as (h, w, 2) float NumPy array
                     auto flow = py::array_t<float, py::array::c_style>({h, w, 2});
 
@@ -272,7 +272,7 @@ class c_infer {
                             flow_buf(y, x, 1) = result->flow[idx].flowy/(4*32.0*h);
                         }
                     }
-            
+
                     return std::make_tuple(costs, flow);
                 }
             };
@@ -346,7 +346,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     m.doc() = "ubon_cstuff python module";
     m.def("get_version", ubon_cstuff_get_version, "Returns the git version of the library");
 
-    log_set_level(LOG_WARN);        
+    log_set_level(LOG_WARN);
     init_cuda_stuff();
     image_init();
 }
