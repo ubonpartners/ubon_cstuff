@@ -14,12 +14,21 @@
 
 #define MAX_SDP_SIZE 4096
 
+#define MAX_REORDER 4
+
 typedef struct pcap_play_context
 {
     rtp_receiver_t *rtp_receiver;
     h26x_assembler_t *h26x_assembler;
     simple_decoder_t *decoder;
     const char *write_debug_annexb_file;
+
+    int reorder_percent;
+    int drop_percent;
+
+    uint8_t reordered_packets[MAX_REORDER][2048];
+    int reordered_packet_lengths[MAX_REORDER];
+    int num_reordered;
 } pcap_play_context_t;
 
 static void decoder_frame_callback(void *context, image_t *img)
@@ -51,6 +60,31 @@ static void rtp_receiver_callback(void *context, const rtp_packet_t *packet)
 static void rtp_callback(void *context, uint8_t *rtp_packet, size_t packet_length, double capture_time)
 {
     pcap_play_context_t *c=(pcap_play_context_t *)context;
+
+    bool drop=(rand()&1023)<(10*c->drop_percent);
+    if (drop) return;
+
+    bool reorder=((rand()&1023)<(10*c->reorder_percent))
+                ||((c->num_reordered>0) && ((rand()&1024)<512));
+
+    if ((c->num_reordered<MAX_REORDER) && reorder)
+    {
+        memcpy(&c->reordered_packets[c->num_reordered][0], rtp_packet, packet_length);
+        c->reordered_packet_lengths[c->num_reordered]=(int)packet_length;
+        c->num_reordered++;
+        return;
+    }
+
+
+    if (c->num_reordered>0)
+    {
+        for(int i=c->num_reordered-1;i>=0;i=i-1)
+        {
+            rtp_receiver_add_packet(c->rtp_receiver, c->reordered_packets[i], c->reordered_packet_lengths[i]);
+        }
+        c->num_reordered=0;
+    }
+
     rtp_receiver_add_packet(c->rtp_receiver, rtp_packet, (int)packet_length);
 }
 
@@ -58,12 +92,18 @@ int main(int argc, char *argv[]) {
     init_cuda_stuff();
     image_init();
 
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <file.pcap>\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <file.pcap> <reorder_percent> <drop_percent>\n", argv[0]);
         return 1;
     }
 
     const char *filename = argv[1];
+
+    int drop_percent=0;
+    int reorder_percent=0;
+
+    if (argc>=3) reorder_percent=atoi(argv[2]);
+    if (argc>=4) drop_percent=atoi(argv[3]);
 
     pcap_play_context_t pc={0};
 
@@ -81,6 +121,10 @@ int main(int argc, char *argv[]) {
     else
         printf("Using H264\n");
 
+    printf("Reorder %d%% Drop %d%%\n",reorder_percent, drop_percent);
+
+    pc.reorder_percent=reorder_percent;
+    pc.drop_percent=drop_percent;
     pc.rtp_receiver=rtp_receiver_create((void *)&pc, rtp_receiver_callback);
     pc.h26x_assembler=h26x_assembler_create(is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
     pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
