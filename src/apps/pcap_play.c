@@ -9,12 +9,13 @@
 #include "rtp_receiver.h"
 #include "h26x_assembler.h"
 #include "simple_decoder.h"
+#include "pcap_decoder.h"
 #include "display.h"
 #include "cuda_stuff.h"
 
 #define MAX_SDP_SIZE 4096
 
-#define MAX_REORDER 4
+#define MAX_REORDER 16
 
 typedef struct pcap_play_context
 {
@@ -39,7 +40,7 @@ static void decoder_frame_callback(void *context, image_t *img)
 static void h26x_assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     pcap_play_context_t *c=(pcap_play_context_t *)context;
-    //h26x_print_frame_summary(desc);
+    h26x_print_frame_summary(desc);
     simple_decoder_decode(c->decoder, desc->annexb_data, desc->annexb_length);
 
     if (c->write_debug_annexb_file!=0)
@@ -99,6 +100,18 @@ int main(int argc, char *argv[]) {
 
     const char *filename = argv[1];
 
+    if (0)
+    {
+        pcap_decoder_t *dec=pcap_decoder_create(argv[1]);
+        while(1)
+        {
+            image_t *i=pcap_decoder_get_frame(dec);
+            if (i==0) exit(0);
+            display_image("video",i);
+            destroy_image(i);
+        }
+    }
+
     int drop_percent=0;
     int reorder_percent=0;
 
@@ -129,5 +142,11 @@ int main(int argc, char *argv[]) {
     pc.h26x_assembler=h26x_assembler_create(is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
     pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
     parse_pcap_rtp(filename, (void *)&pc, rtp_callback);
+
+
+    rtp_stats_t rtp_stats;
+    rtp_receiver_fill_stats(pc.rtp_receiver, &rtp_stats);
+    print_rtp_stats(&rtp_stats);
+
     return 0;
 }

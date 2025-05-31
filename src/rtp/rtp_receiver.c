@@ -65,6 +65,10 @@ struct rtp_receiver {
     // The last sequence number we handed off to the user
     uint16_t last_sequence;
 
+    // count packets that have totally wrong sequence number
+    // if too many in a row, reset
+    uint32_t sequential_packets_outside_window;
+
     // Stats, including new field for late arrivals
     rtp_stats_t stats;
 };
@@ -75,7 +79,7 @@ struct rtp_receiver {
  *   If result > 0, a is “ahead” of b. If < 0, a is behind b. If = 0, equal.
  */
 static inline int seq_num_diff(uint16_t a, uint16_t b) {
-    return (int)((uint16_t)(a - b));
+    return (int16_t)(a - b);
 }
 
 /*
@@ -243,15 +247,23 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
     // 4) If we have already output at least one packet, check for “late” or “duplicate”
     if (!r->first_packet) {
         int diff = seq_num_diff(seq, r->last_sequence);
-        if (diff <= 0) {
-            // seq <= last_sequence
-            if (diff == 0) {
-                // exact duplicate of last‐output slot
-                r->stats.packets_duplicated++;
-            } else {
-                // truly late (we've already skipped it)
-                r->stats.packets_late++;
+        if ((diff<-MAX_REORDER_BUFFER) || (diff>MAX_REORDER_BUFFER))
+        {
+            // this is bad :(
+            r->stats.packets_outside_window++;
+            r->sequential_packets_outside_window++;
+
+            if (r->sequential_packets_outside_window>4)
+            {
+                r->last_sequence=(seq-1)&65535;
+                r->stats.resets++;
             }
+        }
+        else
+            r->sequential_packets_outside_window=0;
+
+        if (diff < 0) {
+            r->stats.packets_late++;
             return;
         }
     }
@@ -264,7 +276,8 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         // If this slot already holds exactly the same seq, it's a duplicate
         if (slot->valid && slot->seq == seq) {
             r->stats.packets_duplicated++;
-            return;
+            //return;
+            // we'll take this copy *shrug*
         }
 
         // Otherwise, copy data in
@@ -337,44 +350,32 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             // Scan up to MAX_REORDER_BUFFER slots “ahead.” If we count ≥ max_delay_packets
             // valid packets whose sequence is strictly > next_seq, then we skip “next_seq.”
             for (int offset = 1; offset < MAX_REORDER_BUFFER; offset++) {
-                uint16_t future_seq = next_seq + (uint16_t)offset;
+                int future_seq = (next_seq + offset)&65535;
                 int idx2 = reorder_index(future_seq);
                 rtp_packet_slot_t *s2 = &r->buffer[idx2];
-                if (s2->valid) {
+                if (s2->valid && future_seq==s2->seq) {
                     // Only count packets that are truly ahead of next_seq
-                    if (seq_num_diff(s2->seq, next_seq) > 0) {
-                        lookahead_count++;
-                        if ((uint32_t)lookahead_count >= r->max_delay_packets) {
-                            skip_missing = true;
-                            break;
-                        }
+                    lookahead_count++;
+                    if ((uint32_t)lookahead_count >= r->max_delay_packets) {
+                        skip_missing = true;
+                        break;
+                    }
+                    int32_t delta32 = (int32_t)(s2->timestamp32 - r->last_timestamp32);
+                    if ((int64_t)delta32 > (int64_t)(90 * r->max_delay_ms)) {
+                        skip_missing = true;
+                        printf("timestamp\n");
+                        break;
                     }
                 }
             }
         }
 
-        // B) Timestamp condition:
-        //    Has *any* buffered packet’s RTP timestamp advanced more than (90 * max_delay_ms)
-        //    beyond our “last output” RTP timestamp?  If yes, skip next_seq.
-        if (!skip_missing && r->max_delay_ms > 0) {
-            // Our last‐output’s 32‐bit timestamp is r->last_timestamp32.
-            // If there is any slot s such that (int32_t)(s->timestamp32 − r->last_timestamp32) > 90 * max_delay_ms,
-            // then we need to skip next_seq.
-            for (int i = 0; i < MAX_REORDER_BUFFER; i++) {
-                rtp_packet_slot_t *s = &r->buffer[i];
-                if (!s->valid) continue;
-                int32_t delta32 = (int32_t)(s->timestamp32 - r->last_timestamp32);
-                if ((int64_t)delta32 > (int64_t)(90 * r->max_delay_ms)) {
-                    skip_missing = true;
-                    break;
-                }
-            }
-        }
-
         if (skip_missing) {
+            //printf("Skip to %d (missing %d)\n",next_seq,r->stats.packets_missing);
             // We skip “next_seq” even though it was never received.
             // Simply advance last_sequence by 1, do NOT call callback, and loop again.
             r->last_sequence = next_seq;
+            r->stats.packets_missing+=1;
             // Note: do NOT touch r->last_timestamp32 or r->last_extended_timestamp_90khz
             // because we haven’t output an actual packet.  Future packets will compute
             // their extended timestamp as (ts − last_timestamp32).
@@ -384,4 +385,17 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         // No skip condition met, and no actual packet to output → we stop for now.
         break;
     }
+}
+
+void print_rtp_stats(const rtp_stats_t *stats) {
+    printf("RTP Stats:\n");
+    printf("  Received:           %u\n", stats->packets_received);
+    printf("  Missing:            %u\n", stats->packets_missing);
+    printf("  Duplicated:         %u\n", stats->packets_duplicated);
+    printf("  Discarded (corrupt):%u\n", stats->packets_discarded_corrupt);
+    printf("  Discarded (SSRC):   %u\n", stats->packets_discarded_wrong_ssrc);
+    printf("  Discarded (PT):     %u\n", stats->packets_discarded_wrong_pt);
+    printf("  Late arrivals:      %u\n", stats->packets_late);
+    printf("  Outside window:     %u\n", stats->packets_outside_window);
+    printf("  Resets:             %u\n", stats->resets);
 }

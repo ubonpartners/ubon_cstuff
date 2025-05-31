@@ -17,6 +17,7 @@ struct h26x_assembler {
     uint8_t                *frame_buffer;
     int                     frame_len;
 
+    uint16_t                last_sequence_number;
     uint32_t                last_timestamp;
     uint64_t                last_extended_ts;
     bool                    in_frame;
@@ -111,10 +112,14 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
         a->last_timestamp   = pkt->timestamp;
         a->last_extended_ts = pkt->extended_timestamp_90khz;
         a->is_complete      = true;
+        a->last_sequence_number=(pkt->sequence_number-1)&65535;
     }
 
     if (len < 1)
         return;
+
+    a->is_complete&=(pkt->sequence_number==((a->last_sequence_number+1)&65535));
+    a->last_sequence_number=pkt->sequence_number;
 
     // Extract "nal unit type" from the very first byte of the RTP payload
     uint8_t nal_type = 0;

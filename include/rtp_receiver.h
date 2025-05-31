@@ -26,11 +26,14 @@ typedef void (*rtp_packet_callback_fn)(void *context, const rtp_packet_t *pkt);
 
 typedef struct rtp_stats {
     uint32_t packets_received;
+    uint32_t packets_missing;
     uint32_t packets_duplicated;
     uint32_t packets_discarded_corrupt;
     uint32_t packets_discarded_wrong_ssrc;
     uint32_t packets_discarded_wrong_pt;
     uint32_t packets_late;      // number of packets that arrived “after” we skipped them
+    uint32_t packets_outside_window;
+    uint32_t resets;            // if seq is more than the reorder window out, triggers a reset
 } rtp_stats_t;
 
 typedef struct rtp_receiver rtp_receiver_t;
@@ -77,5 +80,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length);
  * At any time, you can query statistics about what happened.
  */
 void rtp_receiver_fill_stats(rtp_receiver_t *r, rtp_stats_t *stats);
+
+void print_rtp_stats(const rtp_stats_t *stats);
 
 #endif // RTP_RECEIVER_H
