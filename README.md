@@ -22,15 +22,19 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - Additional operations like crop, blend, hash, gaussian blur, mean absolute difference
 - write surface to JPEG, or display on screen
 
+### Network/framing
+- RTP packet receiver supporting re-ordering, ssrc/pt validation filtering
+- SRTP decryption support
+- Re-assembly of video packets into complete H264/H265 frames
+- PCAP file parsing support for test apps
+
 ### Video Decoding
 - Platforms Supported
   - Desktop x86_64 with Nvidia card => UBONCSTUFF_PLATFORM=0
   - Integrated Nvidia Orin Nano  => UBONCSTUFF_PLATFORM=1
-
-### Video Decoding
 - Hardware and software decoder support:
   - OpenH264 (software)
-  - NVDEC (NVIDIA GPU-accelerated decode)
+  - NVDEC (NVIDIA GPU-accelerated decode) H264/H265
 
 ### Optical Flow
 - Support for:
