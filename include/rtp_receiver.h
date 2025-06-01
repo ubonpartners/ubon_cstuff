@@ -1,4 +1,5 @@
 // rtp_receiver.h
+
 #ifndef RTP_RECEIVER_H
 #define RTP_RECEIVER_H
 
@@ -64,7 +65,7 @@ void rtp_receiver_set_payload_type(rtp_receiver_t *r, uint8_t pt);
  *   max_delay_packets:  number of packets “ahead” that accumulate before we skip a missing one
  *   max_delay_ms:       how many milliseconds (RTP timestamp domain) before we skip
  *
- * Both defaults to zero (disabled) unless you set them explicitly.
+ * Both default to zero (disabled) unless you set them explicitly.
  */
 void rtp_receiver_set_max_delay(rtp_receiver_t *r,
                                 uint32_t max_delay_packets,
@@ -95,5 +96,51 @@ void print_rtp_stats(const rtp_stats_t *stats);
  * Returns 0 on success, or -1 on failure.
  */
 int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_len);
+
+
+/**************************************************************************************************
+ * New‐in‐this‐version: SDP parsing & UDP‐receive loop
+ **************************************************************************************************/
+
+/*
+ * Parse a minimal SDP (Session Description Protocol) string and configure:
+ *   - payload type filter (from the "m=... <port> RTP/AVP <fmt>" line)
+ *   - SRTP key, if an "a=crypto:… inline:<base64key>" attribute is present
+ *
+ * Example SDP snippet:
+ *   v=0
+ *   o=- 0 0 IN IP4 127.0.0.1
+ *   s=Example
+ *   c=IN IP4 0.0.0.0
+ *   t=0 0
+ *   m=audio 5004 RTP/AVP 96
+ *   a=rtpmap:96 opus/48000/2
+ *   a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkw  // base64-encoded key
+ *
+ * On success, returns 0.  On failure (e.g. malformed base64, no "m=" line), returns -1.
+ *
+ * After calling this, the receiver’s payload type is set automatically.  If an SRTP
+ * inline key is found and successfully base64-decoded, SRTP is enabled under the hood.
+ */
+int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str);
+
+/*
+ * Start a background UDP‐receive thread on 'local_ip':'port'.  Every incoming UDP datagram
+ * is immediately pushed into rtp_receiver_add_packet(...).  Returns 0 on success, or -1 on error.
+ *
+ * The caller can later stop it by calling rtp_receiver_stop_receive(r).
+ *
+ * NOTE: you must link with -lpthread for this to compile.
+ */
+int rtp_receiver_start_receive(rtp_receiver_t *r,
+                               const char     *local_ip,
+                               uint16_t        port);
+
+/*
+ * Stop the background UDP receiver (if running).  After this returns, no further
+ * rtp_receiver_add_packet calls will happen.  If the thread was blocked in recvfrom(),
+ * it will be unblocked and joined.
+ */
+void rtp_receiver_stop_receive(rtp_receiver_t *r);
 
 #endif // RTP_RECEIVER_H
