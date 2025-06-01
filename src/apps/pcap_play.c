@@ -40,7 +40,7 @@ static void decoder_frame_callback(void *context, image_t *img)
 static void h26x_assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     pcap_play_context_t *c=(pcap_play_context_t *)context;
-    h26x_print_frame_summary(desc);
+    //h26x_print_frame_summary(desc);
     simple_decoder_decode(c->decoder, desc->annexb_data, desc->annexb_length);
 
     if (c->write_debug_annexb_file!=0)
@@ -145,8 +145,11 @@ int main(int argc, char *argv[]) {
 
 
     rtp_stats_t rtp_stats;
+    h26x_nal_stats_t nal_stats;
     rtp_receiver_fill_stats(pc.rtp_receiver, &rtp_stats);
+    h26x_assembler_fill_stats(pc.h26x_assembler, &nal_stats);
     print_rtp_stats(&rtp_stats);
+    print_nal_stats(&nal_stats);
 
     return 0;
 }

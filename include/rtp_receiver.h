@@ -33,6 +33,8 @@ typedef struct rtp_stats {
     uint32_t packets_discarded_corrupt;
     uint32_t packets_discarded_wrong_ssrc;
     uint32_t packets_discarded_wrong_pt;
+    uint32_t packets_discarded_decrypt_fail;
+    uint32_t packets_decrypt_ok;
     uint32_t packets_late;      // number of packets that arrived “after” we skipped them
     uint32_t packets_outside_window;
     uint32_t resets;            // if seq is more than the reorder window out, triggers a reset
@@ -122,7 +124,16 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
  * After calling this, the receiver’s payload type is set automatically.  If an SRTP
  * inline key is found and successfully base64-decoded, SRTP is enabled under the hood.
  */
-int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str);
+typedef struct set_sdp
+{
+    bool valid;
+    bool encryption_enabled;
+    bool is_h264;
+    bool is_h265;
+    int port;
+} set_sdp_t;
+
+int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp);
 
 /*
  * Start a background UDP‐receive thread on 'local_ip':'port'.  Every incoming UDP datagram

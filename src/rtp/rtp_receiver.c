@@ -1,7 +1,7 @@
 // rtp_receiver.c
 
 #include "rtp_receiver.h"
-
+#include "sdp_parser.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -280,7 +280,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         int unprotect_len = length;
         srtp_err_status_t serr = srtp_unprotect(r->srtp_session, data, &unprotect_len);
         if (serr != srtp_err_status_ok) {
-            r->stats.packets_discarded_corrupt++;
+            r->stats.packets_discarded_decrypt_fail++;
             return;
         }
         length = unprotect_len;
@@ -289,6 +289,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             r->stats.packets_discarded_corrupt++;
             return;
         }
+        r->stats.packets_decrypt_ok++;
     }
 
     // 2) Quick validity checks on RTP header
@@ -488,57 +489,14 @@ void print_rtp_stats(const rtp_stats_t *stats) {
     printf("  Received:             %u\n", stats->packets_received);
     printf("  Missing:              %u\n", stats->packets_missing);
     printf("  Duplicated:           %u\n", stats->packets_duplicated);
+    printf("  Decrypt fail:         %u\n", stats->packets_discarded_decrypt_fail);
+    printf("  Decrypt OK:           %u\n", stats->packets_decrypt_ok);
     printf("  Discarded (corrupt):  %u\n", stats->packets_discarded_corrupt);
     printf("  Discarded (SSRC):     %u\n", stats->packets_discarded_wrong_ssrc);
     printf("  Discarded (PT):       %u\n", stats->packets_discarded_wrong_pt);
     printf("  Late arrivals:        %u\n", stats->packets_late);
     printf("  Outside window:       %u\n", stats->packets_outside_window);
     printf("  Resets:               %u\n", stats->resets);
-}
-
-/**************************************************************************************************
- * Below: new code for:
- *   1) base64 decode helper (for SRTP inline keys)
- *   2) minimal SDP parsing (port, payload, inline key)
- *   3) UDP receive thread: start / stop
- **************************************************************************************************/
-
-// -----------------------------------------------------------------------------------------------
-// Simple Base64 decoder (ignores non-base64 chars, supports '=' padding).
-// Returns decoded length in *out_len, or -1 on invalid input.
-// You must provide an output buffer at least (strlen(in) * 3 / 4).
-// -----------------------------------------------------------------------------------------------
-static int b64_char_value(char c) {
-    if ('A' <= c && c <= 'Z') return c - 'A';
-    if ('a' <= c && c <= 'z') return c - 'a' + 26;
-    if ('0' <= c && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-static int base64_decode(const char *in, uint8_t *out, size_t *out_len) {
-    size_t len = strlen(in);
-    int accum = 0, bits = 0;
-    size_t idx = 0;
-    for (size_t i = 0; i < len; i++) {
-        int v = b64_char_value(in[i]);
-        if (v < 0) {
-            if (in[i] == '=')
-                break; // padding; we’ll handle below
-            else
-                continue; // skip whitespace or CRLF
-        }
-        accum = (accum << 6) | v;
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out[idx++] = (uint8_t)((accum >> bits) & 0xFF);
-        }
-    }
-    // Handle any final '=' padding (we simply trust the result)
-    *out_len = idx;
-    return 0;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -550,94 +508,60 @@ static int base64_decode(const char *in, uint8_t *out, size_t *out_len) {
 //    - if an inline key is found, calls rtp_receiver_enable_srtp(r, decoded_key, key_len)
 //    - leaves socket binding / thread startup up to caller
 // -----------------------------------------------------------------------------------------------
-int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str) {
+
+int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp) {
+    memset(sdp, 0, sizeof(set_sdp_t));
+
     if (!r || !sdp_str) return -1;
 
-    // Make a modifiable copy of SDP string, splitting into lines
-    char *copy = strdup(sdp_str);
-    if (!copy) return -1;
-
-    char *line = NULL;
-    char *rest = copy;
-    int         chosen_payload = -1;
-    bool        found_m_line = false;
-    int         udp_port = -1;
-    char        inline_key_b64[256] = {0};
-    bool        got_inline = false;
-
-    while ((line = strtok_r(rest, "\r\n", &rest))) {
-        if (strncmp(line, "m=", 2) == 0) {
-            // Format: m=<media> <port> <proto> <fmt list>
-            // Example: m=audio 5004 RTP/AVP 96
-            char media[16], proto[32];
-            int  fmt = -1;
-            int  port = -1;
-            int  scanned = sscanf(line + 2, "%15s %d %31s %d", media, &port, proto, &fmt);
-            if (scanned >= 4) {
-                chosen_payload = fmt;
-                udp_port       = port;
-                found_m_line   = true;
-            }
-        }
-        else if (strncmp(line, "a=crypto:", 9) == 0) {
-            // Format: a=crypto:<tag> <crypto-suite> <keyparams> <lifetime> <mki>
-            // We only care about <keyparams> if it starts with "inline:"
-            // Example: a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkw
-            char *token = line + 9;
-            // find "inline:" substring
-            char *p = strstr(token, "inline:");
-            if (p) {
-                p += strlen("inline:");
-                // copy until space or end
-                size_t i = 0;
-                while (*p && *p != ' ' && i + 1 < sizeof(inline_key_b64)) {
-                    inline_key_b64[i++] = *p++;
-                }
-                inline_key_b64[i] = '\0';
-                got_inline = true;
-            }
-        }
-    }
-
-    free(copy);
-
-    if (!found_m_line || chosen_payload < 0) {
+    parsed_sdp_t *parsed = parse_sdp(sdp_str);
+    if (!parsed || parsed->videoStreams.empty()) {
+        log_error("No video stream found");
+        parsed_sdp_destroy(parsed);
         return -1;
     }
 
-    // 1) Set payload type
-    rtp_receiver_set_payload_type(r, (uint8_t)chosen_payload);
+    const RtpParameters &stream = parsed->videoStreams[0];
 
-    // 2) If we found an inline key, base64-decode it and enable SRTP
-    if (got_inline) {
-        size_t       decoded_len = 0;
-        uint8_t     *decoded_key = (uint8_t *)malloc(strlen(inline_key_b64) * 3 / 4 + 1);
-        if (!decoded_key) return -1;
-
-        if (base64_decode(inline_key_b64, decoded_key, &decoded_len) != 0) {
-            free(decoded_key);
-            log_error("Failed to base64 decode crypto key");
-            return -1;
-        }
-        if ((int)decoded_len < 1) {
-            free(decoded_key);
-            log_error("Bad crypto key");
-            return -1;
-        }
-        // Try enabling SRTP with the decoded key
-        if (rtp_receiver_enable_srtp(r, decoded_key, decoded_len) != 0) {
-            free(decoded_key);
-            log_error("Failed to enable SRTP from SDP (keylen %d)",decoded_len);
-            return -1;
-        }
-        free(decoded_key);
+    if (stream.payloadType < 0 || stream.port <= 0) {
+        parsed_sdp_destroy(parsed);
+        log_error("Payload type or port error");
+        return -1;
     }
 
-    // We parsed port, but we do NOT bind automatically here.  The caller should
-    // call rtp_receiver_start_receive( r, local_ip, udp_port ) if desired.
+    // Set payload type
+    rtp_receiver_set_payload_type(r, static_cast<uint8_t>(stream.payloadType));
 
-    return udp_port >= 0 ? udp_port : 0;
+    // If we have at least one crypto key, try to enable SRTP
+    if (!stream.cryptoInfos.empty()) {
+        const auto &ci = stream.cryptoInfos[0];
+        const std::string &decoded = ci.keyParams;
+
+        if (decoded.empty()) {
+            log_error("Crypto key is empty after base64 decoding");
+            parsed_sdp_destroy(parsed);
+            return -1;
+        }
+
+        if (rtp_receiver_enable_srtp(r,
+                                      reinterpret_cast<const uint8_t *>(decoded.data()),
+                                      static_cast<int>(decoded.size())) != 0) {
+            log_error("Failed to enable SRTP from SDP (keylen %zu)", decoded.size());
+            parsed_sdp_destroy(parsed);
+            sdp->encryption_enabled=true;
+            return -1;
+        }
+    }
+
+    sdp->valid=true;
+    sdp->port=stream.port;
+    sdp->is_h264=(stream.codec == "H264");
+    sdp->is_h265=(stream.codec == "H265");
+
+    parsed_sdp_destroy(parsed);
+    return 0;
 }
+
 
 // -----------------------------------------------------------------------------------------------
 // UDP receive‐thread function.  Blocks on recvfrom(), pushes each packet into rtp_receiver_add_packet().

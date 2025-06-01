@@ -24,6 +24,7 @@ struct h26x_assembler {
     bool                    is_complete;
 
     h26x_nal_stats_t        nal_stats;
+    h26x_nal_stats_t        cum_nal_stats;
 };
 
 /*
@@ -48,6 +49,16 @@ static inline void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
 
     // Reset for next frame
     a->frame_len     = 0;
+
+    a->cum_nal_stats.idr_count+=a->nal_stats.idr_count;
+    a->cum_nal_stats.sei_count+=a->nal_stats.sei_count;
+    a->cum_nal_stats.sps_count+=a->nal_stats.sps_count;
+    a->cum_nal_stats.pps_count+=a->nal_stats.pps_count;
+    a->cum_nal_stats.vps_count+=a->nal_stats.vps_count;
+    a->cum_nal_stats.non_idr_count+=a->nal_stats.non_idr_count;
+    a->cum_nal_stats.other_count+=a->nal_stats.other_count;
+    a->cum_nal_stats.depacketization_errors+=a->nal_stats.depacketization_errors;
+
     memset(&a->nal_stats, 0, sizeof(a->nal_stats));
     a->in_frame      = false;
     a->is_complete   = true;
@@ -216,50 +227,105 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
     // H.265: (exactly as your original code)—
     //   FU (type 49) and single‐NALU cases unchanged:
     // ───────────────────────────────────────────────────────────────────────────────
+    else if (a->codec == H26X_CODEC_H265 && nal_type == 48) {
+        // In H.265, the NAL header is 2 bytes. So payload[0..1] is the AP header:
+        //   [ F | nal_unit_type=48 | layer_id(6) | TID(3) ]  <-- 2 bytes total
+        // After those 2 header bytes, we have: [16-bit size][NALU1][16-bit size][NALU2]…
+
+        int offset = 2; // skip the 2-byte AP header
+        while (offset + 2 <= len) {
+            // Read 16-bit big-endian NALU size
+            uint16_t nalu_size = (uint16_t)((payload[offset] << 8) | payload[offset + 1]);
+            offset += 2;
+
+            // If size is zero or exceeds remaining payload, it’s malformed
+            if (nalu_size == 0 || offset + nalu_size > len) {
+                a->nal_stats.depacketization_errors++;
+                return;
+            }
+
+            // Check buffer space: need 4 bytes for Annex‐B start code + nalu_size bytes
+            if (a->frame_len + 4 + nalu_size >= MAX_FRAME_SIZE) {
+                a->nal_stats.depacketization_errors++;
+                return;
+            }
+
+            // Append start code + raw NALU
+            append_start_code(a);
+            classify_nal(a, payload[offset]); // first byte of that NALU
+            memcpy(a->frame_buffer + a->frame_len,
+                payload + offset,
+                nalu_size);
+            a->frame_len += nalu_size;
+            offset += nalu_size;
+        }
+
+        // If we didn’t exactly consume all bytes, mark error
+        if (offset != len) {
+            a->nal_stats.depacketization_errors++;
+            return;
+        }
+    }
     else if (a->codec == H26X_CODEC_H265 && nal_type == 49) {
-        // H.265 FU:
-        //   payload[0]=FU_IND, payload[1]=FU_HDR, payload[2]=original H265 header byte
         if (len < 3) {
             a->nal_stats.depacketization_errors++;
             return;
         }
-        uint8_t fu_ind      = payload[0];
-        uint8_t fu_hdr      = payload[1];
-        uint8_t original_H1 = payload[2];
+
+        // --- 3-byte pdu header breakdown ---
+        uint8_t payload_hdr0 = payload[0]; // F (1) | 49 (6) | layer_id_msb (1)
+        uint8_t payload_hdr1 = payload[1]; // layer_id_lsb (5) | tid_plus1 (3)
+        uint8_t fu_hdr      = payload[2]; // S | E | R | orig_nal_type (6 bits)
 
         bool start = (fu_hdr & 0x80) != 0;
-        bool end   = (fu_hdr & 0x40) != 0;
-        uint8_t orig_type = fu_hdr & 0x3F;
-
-        // Reconstruct first two header bytes of original NAL:
-        uint8_t reconstructed0 = (fu_ind & 0x81) | (orig_type << 1);
-        uint8_t reconstructed1 = original_H1;
+        bool end   = (fu_hdr & 0x40) != 0;  // not used here except for debugging
+        uint8_t orig_nal_type = (fu_hdr & 0x3F);
 
         if (start) {
-            int needed = 4 /*start code*/ + 2 /*header*/ + (len - 3);
+            // Reconstruct the first two bytes of the original NuH:
+            //  • Rebuilt NuH[0] = (F<<7) | (orig_nal_type<<1) | (layer_id_msb<<0)
+            uint8_t reconstructed0 =
+                  (payload_hdr0 & 0x80)        // keep the F bit
+                | (orig_nal_type << 1)          // put orig_nal_type into bits [6:1]
+                | (payload_hdr0 & 0x01);        // keep layer_id_MSB (bit 0)
+
+            // Rebuilt NuH[1] = (layer_id_lsb << 3) | tid_plus1
+            // But note: payload_hdr1 already is exactly that bit-pattern:
+            //    payload_hdr1 = (layer_id_lsb<<3) | (tid_plus1),
+            // so we can just copy it directly.
+            uint8_t reconstructed1 = payload_hdr1;
+
+            // Check buffer space: 4 (start code) + 2 (reconstructed NuH) + (len−3) (RBSP)
+            int needed = 4 + 2 + (len - 3);
             if (a->frame_len + needed >= MAX_FRAME_SIZE) {
                 a->nal_stats.depacketization_errors++;
                 return;
             }
-            append_start_code(a);
-            a->frame_buffer[a->frame_len]     = reconstructed0;
-            a->frame_buffer[a->frame_len + 1] = reconstructed1;
-            classify_nal(a, reconstructed0);
-            a->frame_len += 2;
 
-            memcpy(a->frame_buffer + a->frame_len, payload + 3, (size_t)(len - 3));
+            append_start_code(a);
+            a->frame_buffer[a->frame_len++] = reconstructed0;
+            a->frame_buffer[a->frame_len++] = reconstructed1;
+            classify_nal(a, reconstructed0);
+
+            // Copy the RBSP payload (everything after the 3-byte FU header)
+            memcpy(a->frame_buffer + a->frame_len,
+                   payload + 3,
+                   (size_t)(len - 3));
             a->frame_len += (len - 3);
         }
         else {
-            int needed = (len - 3);
-            if (a->frame_len + needed >= MAX_FRAME_SIZE) {
+            // Middle or end fragment: just copy RBSP (payload[3..])
+            int rbsp_len = len - 3;
+            if (rbsp_len < 0 || a->frame_len + rbsp_len >= MAX_FRAME_SIZE) {
                 a->nal_stats.depacketization_errors++;
                 return;
             }
-            memcpy(a->frame_buffer + a->frame_len, payload + 3, (size_t)(len - 3));
-            a->frame_len += (len - 3);
+            memcpy(a->frame_buffer + a->frame_len,
+                   payload + 3,
+                   (size_t)rbsp_len);
+            a->frame_len += rbsp_len;
         }
-        // Again, wait for marker bit to signal end of frame
+        // (We still wait for the marker bit to emit Frame; do NOT emit here.)
     }
     else if (a->codec == H26X_CODEC_H265) {
         // Non-FU H.265 single NAL:
@@ -324,6 +390,29 @@ void h26x_assembler_destroy(h26x_assembler_t *a) {
     }
 }
 
+static void print_nal_stats_struct(const h26x_nal_stats_t *stats)
+{
+    printf("Depacketization Errors: %u\n", stats->depacketization_errors);
+    printf("  IDR / Keyframe NALs : %u\n", stats->idr_count);
+    printf("  Non-IDR VCL NALs    : %u\n", stats->non_idr_count);
+    printf("  SEI Units           : %u\n", stats->sei_count);
+    printf("  SPS Units           : %u\n", stats->sps_count);
+    printf("  PPS Units           : %u\n", stats->pps_count);
+    printf("  VPS Units (H.265)   : %u\n", stats->vps_count);
+    printf("  Other NAL Types     : %u\n", stats->other_count);
+}
+
+void h26x_assembler_fill_stats(h26x_assembler_t *a, h26x_nal_stats_t *stats)
+{
+    memcpy(stats, &a->cum_nal_stats, sizeof(h26x_nal_stats_t));
+}
+
+void print_nal_stats(const h26x_nal_stats_t *stats)
+{
+    printf("h26x assembler stats:\n");
+    print_nal_stats_struct(stats);
+}
+
 /*
  * Print a summary of frame descriptor (for debugging).
  */
@@ -335,15 +424,6 @@ void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc) {
     printf("AnnexB Size     : %d bytes\n", desc->annexb_length);
     printf("SSRC            : 0x%08X\n", desc->ssrc);
     printf("Complete Frame? : %s\n", desc->is_complete ? "Yes" : "No");
-    printf("Depacketization Errors: %u\n", desc->nal_stats.depacketization_errors);
-
-    printf("\nNAL Breakdown:\n");
-    printf("  IDR / Keyframe NALs : %u\n", desc->nal_stats.idr_count);
-    printf("  Non-IDR VCL NALs    : %u\n", desc->nal_stats.non_idr_count);
-    printf("  SEI Units           : %u\n", desc->nal_stats.sei_count);
-    printf("  SPS Units           : %u\n", desc->nal_stats.sps_count);
-    printf("  PPS Units           : %u\n", desc->nal_stats.pps_count);
-    printf("  VPS Units (H.265)   : %u\n", desc->nal_stats.vps_count);
-    printf("  Other NAL Types     : %u\n", desc->nal_stats.other_count);
+    print_nal_stats_struct(&desc->nal_stats);
     printf("=========================\n");
 }

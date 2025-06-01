@@ -86,4 +86,7 @@ void h26x_assembler_process_rtp(h26x_assembler_t       *a,
 
 void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc);
 
+void h26x_assembler_fill_stats(h26x_assembler_t *a, h26x_nal_stats_t *stats);
+void print_nal_stats(const h26x_nal_stats_t *stats);
+
 #endif // H26X_ASSEMBLER_H

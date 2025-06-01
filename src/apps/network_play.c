@@ -10,6 +10,7 @@
 #include "h26x_assembler.h"
 #include "simple_decoder.h"
 #include "pcap_decoder.h"
+#include "sdp_parser.h"
 #include "display.h"
 #include "cuda_stuff.h"
 #include <unistd.h>
@@ -74,32 +75,43 @@ int main(int argc, char *argv[]) {
     ffmpeg -re -stream_loop -1 -i /mldata/video/bc2.264   -vcodec libx264 -preset veryfast -tune zerolatency   -g 30 -keyint_min 30 -bf 0 -profile:v baseline -pix_fmt yuv420p   -x264-params repeat_headers=1   -f rtp -payload_type 96   -srtp_out_suite AES_CM_128_HMAC_SHA1_80   -srtp_out_params MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkw   srtp://127.0.0.1:5004?pkt_size=1200
     */
 
-    const char *sdp =
+    const char *sdp_str =
     "m=video 5004 RTP/AVP 96\r\n"
-    "a=rtpmap:96 H264/90000\r\n"
+    "a=rtpmap:96 H265/90000\r\n"
     "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkw\r\n";
-    bool is_h265=false;
+
+    //parsed_sdp_t *sdp=parse_sdp(sdp_str);
+    //print_parsed_sdp(sdp);
+
+    set_sdp_t set_sdp;
     pc.rtp_receiver=rtp_receiver_create((void *)&pc, rtp_receiver_callback);
-    pc.h26x_assembler=h26x_assembler_create(is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
-    pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
+    int ret=rtp_receiver_set_sdp(pc.rtp_receiver, sdp_str, &set_sdp);
+
+    if (ret!=0) {
+        log_fatal("Failed to parse SDP %d\n",ret);
+    }
+
+    pc.h26x_assembler=h26x_assembler_create(set_sdp.is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
+    pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, set_sdp.is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
     //pc.write_debug_annexb_file="out.264";
 
-    int port_from_sdp = rtp_receiver_set_sdp(pc.rtp_receiver, sdp);
-    if (port_from_sdp < 0) {
-        log_fatal("Failed to parse SDP\n");
-    }
-
-    if (rtp_receiver_start_receive(pc.rtp_receiver, "0.0.0.0", (uint16_t)port_from_sdp) != 0)
+    if (rtp_receiver_start_receive(pc.rtp_receiver, "0.0.0.0", (uint16_t)set_sdp.port) != 0)
     {
-        log_fatal("Failed to bind UDP socket on port %d\n", port_from_sdp);
+        log_fatal("Failed to bind UDP socket on port %d\n", set_sdp.port);
     }
 
+    int cnt=0;
     while(1)
     {
-        usleep(1000000);
+        usleep(2000000);
         rtp_stats_t rtp_stats;
+        h26x_nal_stats_t nal_stats;
         rtp_receiver_fill_stats(pc.rtp_receiver, &rtp_stats);
+        h26x_assembler_fill_stats(pc.h26x_assembler, &nal_stats);
         print_rtp_stats(&rtp_stats);
+        print_nal_stats(&nal_stats);
+        cnt++;
+        //if (cnt>=10) exit(0);
     }
 
     return 0;
