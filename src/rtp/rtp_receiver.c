@@ -11,7 +11,7 @@
 #include <unistd.h>        // for close()
 #include <pthread.h>       // for pthread_create(), pthread_join()
 #include <errno.h>
-
+#include "log.h"
 #include <srtp2/srtp.h>    // libsrtp2 main header
 
 // Maximum size of our circular reorder buffer (power‐of‐two is easiest but 32 works).
@@ -157,6 +157,7 @@ rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
     if (!r) return NULL;
 
     // One-time libsrtp initialization
+    log_info("SRTP init");
     srtp_init();
 
     r->context      = context;
@@ -241,6 +242,7 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
 
     srtp_policy_t policy;
     srtp_err_status_t err;
+    memset(&policy, 0, sizeof(srtp_policy_t));
 
     // Use the common crypto policy: AES_CM_128_HMAC_SHA1_80
     srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtp);
@@ -254,6 +256,7 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
 
     err = srtp_create(&r->srtp_session, &policy);
     if (err != srtp_err_status_ok) {
+        log_error("srtp_create failed error %d",(int)err);
         return -1;
     }
     r->srtp_enabled = true;
@@ -613,15 +616,18 @@ int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str) {
 
         if (base64_decode(inline_key_b64, decoded_key, &decoded_len) != 0) {
             free(decoded_key);
+            log_error("Failed to base64 decode crypto key");
             return -1;
         }
         if ((int)decoded_len < 1) {
             free(decoded_key);
+            log_error("Bad crypto key");
             return -1;
         }
         // Try enabling SRTP with the decoded key
         if (rtp_receiver_enable_srtp(r, decoded_key, decoded_len) != 0) {
             free(decoded_key);
+            log_error("Failed to enable SRTP from SDP (keylen %d)",decoded_len);
             return -1;
         }
         free(decoded_key);

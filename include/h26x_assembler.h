@@ -26,6 +26,7 @@ typedef struct {
     uint32_t vps_count;       // (H.265 only) VPS units
     uint32_t non_idr_count;   // All other “normal” VCL NALs
     uint32_t other_count;     // Any NALs not counted above
+    uint32_t depacketization_errors;  // count of malformed‐RTP or buffer‐overflow cases
 } h26x_nal_stats_t;
 
 // -----------------------------------------------------------------------------

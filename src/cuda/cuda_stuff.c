@@ -27,7 +27,7 @@ typedef struct cuda_stuff_context {
     bool force_sync;
     pthread_mutex_t lock;       // Mutex to protect concurrent access.
     uint32_t event_ct;          // Event counter for circular buffer indexing.
-    uint32_t event_not_ready;   
+    uint32_t event_not_ready;
     cudaEvent_t events[NUM_EVENTS]; // Pre-created CUDA events.
 } cuda_stuff_context_t;
 
@@ -40,7 +40,7 @@ static std::once_flag initFlag;
 
 // the intended model is that each object e.g. videosurface, has it's own
 // cudaStream_t, that stream is used to generate that object's contents. You
-// can use cuda_stream_add_dependency to add dependencies on the source 
+// can use cuda_stream_add_dependency to add dependencies on the source
 // objects used
 
 // for example suppose we have surfaceA and surfaceB
@@ -60,7 +60,7 @@ static std::once_flag initFlag;
 //
 // Purpose:
 //   Establishes a dependency between two CUDA streams. The future work
-//   on 'stream' will wait until all previously issued work on 
+//   on 'stream' will wait until all previously issued work on
 //   'stream_depends_on' (tracked by an event) is complete.
 //
 // Process:
@@ -95,11 +95,11 @@ static void do_cuda_init()
     // Set the CUDA device
     int device=0;
     CHECK_CUDART_CALL(cudaSetDevice(device));
-    
+
     // Retrieve device properties to populate the NPP stream context.
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);
-    
+
     // Zero out context and set device attributes.
     memset(&nppStreamCtx, 0, sizeof(nppStreamCtx));
     nppStreamCtx.hStream = 0; // Using default stream; consider cudaStreamCreate() if needed.
@@ -175,3 +175,43 @@ void destroy_cuda_stream(cudaStream_t stream)
     CHECK_CUDART_CALL(cudaStreamDestroy(stream));
 }
 
+void cuda_thread_init()
+{
+    // Ensure global init
+    init_cuda_stuff();
+
+    // Check if a CUDA context is already current
+    CUcontext ctx = nullptr;
+    CUresult res = cuCtxGetCurrent(&ctx);
+    if (res == CUDA_SUCCESS && ctx != nullptr) {
+        // Context is already active on this thread — nothing more needed
+        return;
+    }
+
+    // Bind device and force context creation
+    int device = 0;
+    cudaError_t err = cudaSetDevice(device);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cuda_thread_init: cudaSetDevice(%d) failed: %s\n",
+                device, cudaGetErrorString(err));
+        abort();
+    }
+
+    // Force creation of primary context on this thread
+    err = cudaFree(0);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cuda_thread_init: cudaFree(0) failed: %s\n",
+                cudaGetErrorString(err));
+        abort();
+    }
+
+    // Optional: sanity check
+    res = cuCtxGetCurrent(&ctx);
+    if (res != CUDA_SUCCESS || ctx == nullptr) {
+        fprintf(stderr, "cuda_thread_init: cuCtxGetCurrent failed: %d\n", res);
+        abort();
+    }
+
+    log_debug("CUDA context initialized on thread %lu (context: %p)",
+              (unsigned long)pthread_self(), (void*)ctx);
+}

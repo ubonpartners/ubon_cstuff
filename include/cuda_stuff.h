@@ -34,5 +34,5 @@ CUcontext get_CUcontext();
 cudaStream_t create_cuda_stream();
 void destroy_cuda_stream(cudaStream_t s);
 void cuda_set_sync_mode(bool force_sync, bool force_default_stream);
-
+void cuda_thread_init();
 #endif
