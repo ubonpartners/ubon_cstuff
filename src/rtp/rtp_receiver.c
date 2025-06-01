@@ -1,11 +1,11 @@
-// rtp_receiver.c
 #include "rtp_receiver.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <arpa/inet.h>  // for ntohs, ntohl
+#include <arpa/inet.h>     // for ntohs, ntohl
+#include <srtp2/srtp.h>    // libsrtp2 main header
 
 // Maximum size of our circular reorder buffer (power‐of‐two is easiest but 32 works).
 #define MAX_REORDER_BUFFER   32
@@ -37,6 +37,7 @@ typedef struct rtp_packet_slot {
  *   - “last output” state (last_sequence, last timestamps)
  *   - newly‐added: max_delay_packets, max_delay_ms
  *   - stats (including packets_late)
+ *   - SRTP state (session handle, enabled flag)
  */
 struct rtp_receiver {
     void *context;
@@ -71,6 +72,10 @@ struct rtp_receiver {
 
     // Stats, including new field for late arrivals
     rtp_stats_t stats;
+
+    // --- SRTP fields ---
+    srtp_t   srtp_session;
+    bool     srtp_enabled;
 };
 
 /*
@@ -131,45 +136,64 @@ void rtp_receiver_set_max_delay(rtp_receiver_t *r,
 
 /*
  * Create a new receiver.  Zero‐initialize everything (buffer slots, stats, etc.).
+ * Also calls srtp_init() so that any subsequent SRTP session creation will succeed.
  */
 rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
     rtp_receiver_t *r = (rtp_receiver_t *)calloc(1, sizeof(rtp_receiver_t));
     if (!r) return NULL;
+
+    // One-time libsrtp initialization
+    srtp_init();
+
     r->context      = context;
     r->cb           = cb;
     r->first_packet = true;
+
     // Defaults: no payload_type set, no SSRC, timeouts = 0
-    r->payload_type_set = false;
-    r->ssrc_valid       = false;
+    r->payload_type_set     = false;
+    r->ssrc_valid           = false;
     r->candidate_ssrc_count = 0;
-    r->max_delay_packets = 4;
-    r->max_delay_ms      = 100;
-    r->last_sequence     = 0;  // will be set upon first packet
+    r->max_delay_packets    = 4;
+    r->max_delay_ms         = 100;
+    r->last_sequence        = 0;  // will be set upon first packet
     memset(&r->stats, 0, sizeof(rtp_stats_t));
+
+    // By default, SRTP is disabled
+    r->srtp_enabled = false;
+    r->srtp_session = NULL;
+
     // Buffer slots already zeroed by calloc (buffer[].valid == false)
     return r;
 }
 
 /*
  * Reset to “no packets seen.”  Clears buffer, stats, SSRC, etc.
+ * Does NOT tear down SRTP; you can continue using the same SRTP session.
  */
 void rtp_receiver_reset(rtp_receiver_t *r) {
     memset(r->buffer, 0, sizeof(r->buffer));
     memset(&r->stats, 0, sizeof(rtp_stats_t));
-    r->first_packet       = true;
-    r->ssrc_valid         = false;
-    r->candidate_ssrc_count = 0;
-    r->payload_type_set   = false;
-    r->last_sequence      = 0;
+    r->first_packet            = true;
+    r->ssrc_valid              = false;
+    r->candidate_ssrc_count    = 0;
+    r->payload_type_set        = false;
+    r->last_sequence           = 0;
     r->last_extended_timestamp_90khz = 0;
-    r->last_timestamp32   = 0;
+    r->last_timestamp32        = 0;
+    r->sequential_packets_outside_window = 0;
     // timeouts stay as they were (since presumably user set them)
 }
 
 /*
  * Destroy/free the receiver.
+ * If SRTP was enabled, deallocate the SRTP session.
  */
 void rtp_receiver_destroy(rtp_receiver_t *r) {
+    if (!r) return;
+
+    if (r->srtp_enabled && r->srtp_session != NULL) {
+        srtp_dealloc(r->srtp_session);
+    }
     free(r);
 }
 
@@ -181,25 +205,73 @@ void rtp_receiver_fill_stats(rtp_receiver_t *r, rtp_stats_t *stats) {
 }
 
 /*
+ * Enable SRTP on an existing receiver.  'key' must point to the SRTP master key bytes,
+ * and 'key_len' its length.  Returns 0 on success, or -1 on failure.
+ *
+ * Example: for AES_CM_128_HMAC_SHA1_80, use a 30‐byte key (16‐byte AES key + 14‐byte salt).
+ */
+int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_len) {
+    if (!r || !key) return -1;
+
+    srtp_policy_t policy;
+    srtp_err_status_t err;
+
+    // Use the common crypto policy: AES_CM_128_HMAC_SHA1_80
+    srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtp);
+    srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtcp);
+
+    // Accept any inbound SSRC
+    policy.ssrc.type  = ssrc_any_inbound;
+    policy.ssrc.value = 0;
+    policy.key        = (uint8_t *)key;
+    policy.next       = NULL;
+
+    err = srtp_create(&r->srtp_session, &policy);
+    if (err != srtp_err_status_ok) {
+        return -1;
+    }
+    r->srtp_enabled = true;
+    return 0;
+}
+
+/*
  * This is the main function.  We parse the RTP header, check SSRC/PT if needed,
  * insert into the circular buffer, then try flushing all in‐order packets.
  *
  * We also check, at the very top, for “late” packets (seq ≤ last_sequence).  Those
  * are either duplicates or true late arrivals (we have already skipped their slot).
+ *
+ * With SRTP enabled, we first call srtp_unprotect() to decrypt & authenticate.
  */
 void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
-    // 1) Quick validity checks
+    // If SRTP is enabled, decrypt/authenticate first.
+    if (r->srtp_enabled) {
+        int unprotect_len = length;
+        srtp_err_status_t serr = srtp_unprotect(r->srtp_session, data, &unprotect_len);
+        if (serr != srtp_err_status_ok) {
+            r->stats.packets_discarded_corrupt++;
+            return;
+        }
+        length = unprotect_len;
+        if (length < RTP_HEADER_MIN_SIZE) {
+            // Too small even after stripping auth tag
+            r->stats.packets_discarded_corrupt++;
+            return;
+        }
+    }
+
+    // 1) Quick validity checks on RTP header
     if (length < RTP_HEADER_MIN_SIZE || (data[0] >> 6) != RTP_VERSION) {
         r->stats.packets_discarded_corrupt++;
         return;
     }
-    uint8_t cc   = data[0] & 0x0F;
-    bool    ext  = !!(data[0] & 0x10);
-    uint8_t pt   = data[1] & 0x7F;
-    bool    marker = !!(data[1] & 0x80);
-    uint16_t seq = ntohs(*(uint16_t *)(data + 2));
-    uint32_t ts32= ntohl(*(uint32_t *)(data + 4));
-    uint32_t ssrc= ntohl(*(uint32_t *)(data + 8));
+    uint8_t  cc      = data[0] & 0x0F;
+    bool     ext     = !!(data[0] & 0x10);
+    uint8_t  pt      = data[1] & 0x7F;
+    bool     marker  = !!(data[1] & 0x80);
+    uint16_t seq     = ntohs(*(uint16_t *)(data + 2));
+    uint32_t ts32    = ntohl(*(uint32_t *)(data + 4));
+    uint32_t ssrc    = ntohl(*(uint32_t *)(data + 8));
 
     int header_len = RTP_HEADER_MIN_SIZE + cc * 4;
     if (ext) {
@@ -247,20 +319,17 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
     // 4) If we have already output at least one packet, check for “late” or “duplicate”
     if (!r->first_packet) {
         int diff = seq_num_diff(seq, r->last_sequence);
-        if ((diff<-MAX_REORDER_BUFFER) || (diff>MAX_REORDER_BUFFER))
-        {
+        if ((diff < -MAX_REORDER_BUFFER) || (diff > MAX_REORDER_BUFFER)) {
             // this is bad :(
             r->stats.packets_outside_window++;
             r->sequential_packets_outside_window++;
-
-            if (r->sequential_packets_outside_window>4)
-            {
-                r->last_sequence=(seq-1)&65535;
+            if (r->sequential_packets_outside_window > 4) {
+                r->last_sequence = (seq - 1) & 0xFFFF;
                 r->stats.resets++;
             }
+        } else {
+            r->sequential_packets_outside_window = 0;
         }
-        else
-            r->sequential_packets_outside_window=0;
 
         if (diff < 0) {
             r->stats.packets_late++;
@@ -276,16 +345,15 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         // If this slot already holds exactly the same seq, it's a duplicate
         if (slot->valid && slot->seq == seq) {
             r->stats.packets_duplicated++;
-            //return;
-            // we'll take this copy *shrug*
+            // we'll take this copy
         }
 
         // Otherwise, copy data in
         memcpy(slot->buffer, data, length);
-        slot->length     = length;
-        slot->valid      = true;
-        slot->seq        = seq;
-        slot->timestamp32= ts32;   // record the raw 32‐bit RTP timestamp
+        slot->length      = length;
+        slot->valid       = true;
+        slot->seq         = seq;
+        slot->timestamp32 = ts32;   // record the raw 32‐bit RTP timestamp
         r->stats.packets_received++;
     }
 
@@ -317,15 +385,15 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
 
             // Build rtp_packet_t and call callback
             rtp_packet_t pkt;
-            pkt.data               = out_data;
-            pkt.total_length       = out_slot->length;
-            pkt.payload_offset     = out_header_len;
-            pkt.payload_length     = out_slot->length - out_header_len;
-            pkt.sequence_number    = next_seq;
-            pkt.timestamp          = out_slot->timestamp32;
+            pkt.data                    = out_data;
+            pkt.total_length            = out_slot->length;
+            pkt.payload_offset          = out_header_len;
+            pkt.payload_length          = out_slot->length - out_header_len;
+            pkt.sequence_number         = next_seq;
+            pkt.timestamp               = out_slot->timestamp32;
             pkt.extended_timestamp_90khz = extend_timestamp(out_slot->timestamp32, r);
-            pkt.ssrc               = r->current_ssrc;
-            pkt.marker             = !!(out_data[1] & 0x80);
+            pkt.ssrc                    = r->current_ssrc;
+            pkt.marker                  = !!(out_data[1] & 0x80);
 
             // Remember this as “last output” so that future timestamp comparisons can use it
             r->last_sequence = next_seq;
@@ -350,10 +418,10 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             // Scan up to MAX_REORDER_BUFFER slots “ahead.” If we count ≥ max_delay_packets
             // valid packets whose sequence is strictly > next_seq, then we skip “next_seq.”
             for (int offset = 1; offset < MAX_REORDER_BUFFER; offset++) {
-                int future_seq = (next_seq + offset)&65535;
+                int future_seq = (next_seq + offset) & 0xFFFF;
                 int idx2 = reorder_index(future_seq);
                 rtp_packet_slot_t *s2 = &r->buffer[idx2];
-                if (s2->valid && future_seq==s2->seq) {
+                if (s2->valid && future_seq == s2->seq) {
                     // Only count packets that are truly ahead of next_seq
                     lookahead_count++;
                     if ((uint32_t)lookahead_count >= r->max_delay_packets) {
@@ -363,7 +431,6 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
                     int32_t delta32 = (int32_t)(s2->timestamp32 - r->last_timestamp32);
                     if ((int64_t)delta32 > (int64_t)(90 * r->max_delay_ms)) {
                         skip_missing = true;
-                        printf("timestamp\n");
                         break;
                     }
                 }
@@ -371,14 +438,10 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         }
 
         if (skip_missing) {
-            //printf("Skip to %d (missing %d)\n",next_seq,r->stats.packets_missing);
             // We skip “next_seq” even though it was never received.
-            // Simply advance last_sequence by 1, do NOT call callback, and loop again.
             r->last_sequence = next_seq;
-            r->stats.packets_missing+=1;
+            r->stats.packets_missing += 1;
             // Note: do NOT touch r->last_timestamp32 or r->last_extended_timestamp_90khz
-            // because we haven’t output an actual packet.  Future packets will compute
-            // their extended timestamp as (ts − last_timestamp32).
             continue;
         }
 

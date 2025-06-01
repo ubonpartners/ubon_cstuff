@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /*
  * User supplies a callback of this type to receive each in‐order RTP packet.
@@ -81,6 +82,18 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length);
  */
 void rtp_receiver_fill_stats(rtp_receiver_t *r, rtp_stats_t *stats);
 
+/*
+ * Debug: quickly print the stats
+ */
 void print_rtp_stats(const rtp_stats_t *stats);
+
+/*
+ * --- SRTP SUPPORT ---
+ *
+ * Call this *after* creating the receiver, but *before* feeding packets.
+ * 'key' is the SRTP master key (e.g. 30 bytes for AES_CM_128_HMAC_SHA1_80).
+ * Returns 0 on success, or -1 on failure.
+ */
+int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_len);
 
 #endif // RTP_RECEIVER_H

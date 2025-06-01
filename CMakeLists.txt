@@ -73,7 +73,7 @@ if(DEFINED ENV{JETSON_SOC})
         /usr/local/cuda/include
     )
     set(ARCH_LIBS
-        -lSDL2 -ljpeg -lopenh264 -lyuv
+        -lSDL2 -ljpeg -lopenh264 -lyuv -lpcap -lsrtp2
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
@@ -92,7 +92,7 @@ else()
     set(ARCH_LIBS
         -L/usr/local/cuda/lib64
         -lnvinfer -lcudart -lcublas -lnvonnxparser
-        -lopenh264 -lcuda -lnvcuvid -lyuv -lpcap
+        -lopenh264 -lcuda -lnvcuvid -lyuv -lpcap -lsrtp2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei -lSDL2 -ljpeg
         -lnvvpi
         -lnvidia-opticalflow
