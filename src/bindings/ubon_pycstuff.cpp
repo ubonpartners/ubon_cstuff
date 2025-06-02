@@ -149,6 +149,34 @@ public:
 };
 
 class c_infer {
+private:
+    py::list convert_detections_batch(image_t** imgs, int num) {
+        std::vector<detections_t*> dets(num, nullptr);
+        infer_batch(inf, imgs, dets.data(), num);
+
+        py::list all_results;
+        for (int i = 0; i < num; ++i) {
+            py::list results;
+            if (dets[i]) {
+                for (int j = 0; j < dets[i]->num_detections; ++j) {
+                    detection_t* det = &dets[i]->det[j];
+                    py::dict item;
+                    item["cls"] = det->cl;
+                    item["conf"] = det->conf;
+                    py::list box;
+                    box.append(det->x0);
+                    box.append(det->y0);
+                    box.append(det->x1);
+                    box.append(det->y1);
+                    item["box"] = box;
+                    results.append(item);
+                }
+                destroy_detections(dets[i]);
+            }
+            all_results.append(results);
+        }
+        return all_results;
+    }
 public:
     infer_t* inf;
 
@@ -165,26 +193,18 @@ public:
 
     py::list run(std::shared_ptr<c_image> image_obj) {
         image_t* img = image_obj->raw();
-        detections_t* dets = infer(inf, img);
+        image_t* img_arr[1] = { img };
+        py::list result = convert_detections_batch(img_arr, 1);
+        return result[0].cast<py::list>();  // return the first (and only) result
+    }
 
-        py::list results;
-        for (int i = 0; i < dets->num_detections; ++i) {
-            detection_t* det = &dets->det[i];
-
-            py::dict item;
-            item["cls"] = det->cl;
-            item["conf"] = det->conf;
-            py::list box;
-            box.append(det->x0);
-            box.append(det->y0);
-            box.append(det->x1);
-            box.append(det->y1);
-            item["box"] = box;
-            results.append(item);
+    py::list run_batch(const std::vector<std::shared_ptr<c_image>>& images) {
+        int num = static_cast<int>(images.size());
+        std::vector<image_t*> img_ptrs(num);
+        for (int i = 0; i < num; ++i) {
+            img_ptrs[i] = images[i]->raw();
         }
-
-        destroy_detections(dets);
-        return results;
+        return convert_detections_batch(img_ptrs.data(), num);
     }
 
     infer_t* raw() { return inf; }
@@ -351,7 +371,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
 
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
-        .def("run", &c_infer::run, "Run inference on a c_image");
+        .def("run", &c_infer::run, "Run inference on a c_image")
+        .def("run_batch", &c_infer::run_batch, py::arg("images"), "Run batched inference on a list of c_image");
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())

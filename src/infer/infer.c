@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <cassert>
 #include <algorithm>
 #include <cassert>
 #include <memory>
@@ -269,47 +270,19 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
-
-#define IMAGE_WIDTH 640
-#define IMAGE_HEIGHT 384
-#define CHANNELS 3
-#define IMAGE_SIZE_BYTES (IMAGE_WIDTH * IMAGE_HEIGHT * CHANNELS * sizeof(float))
-
-int load_planar_rgb_to_gpu(const char* filename, void* device_ptr) {
-    cudaError_t err = cudaDeviceSynchronize();
-    FILE* f = fopen(filename, "rb");
-    if (!f) {
-        fprintf(stderr, "Failed to open file: %s\n", filename);
-        return -1;
+void infer_batch(infer_t *inf, image_t **img, detections_t **dets, int num)
+{
+    int max_batch=inf->max_batch;
+    if (num>max_batch)
+    {
+        for(int i=0;i<num;i+=max_batch) infer_batch(inf, img+i, dets+i, std::min(num-i, max_batch));
+        return;
     }
 
-    // Allocate host buffer
-    float* host_buffer = (float*)malloc(IMAGE_SIZE_BYTES);
-    if (!host_buffer) {
-        fprintf(stderr, "Failed to allocate host buffer\n");
-        fclose(f);
-        return -1;
+    for(int i=0;i<num;i++)
+    {
+        dets[i]=infer(inf, img[i]);
     }
-
-    // Read the file
-    size_t read_bytes = fread(host_buffer, 1, IMAGE_SIZE_BYTES, f);
-    fclose(f);
-    if (read_bytes != IMAGE_SIZE_BYTES) {
-        fprintf(stderr, "Unexpected file size: got %zu, expected %zu\n",
-                read_bytes, (size_t)IMAGE_SIZE_BYTES);
-        free(host_buffer);
-        return -1;
-    }
-
-    // Copy to GPU memory
-    cudaMemcpy(device_ptr, host_buffer, IMAGE_SIZE_BYTES, cudaMemcpyHostToDevice);
-    free(host_buffer);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed: %s\n", cudaGetErrorString(err));
-        return -1;
-    }
-
-    return 0; // success
 }
 
 detections_t *infer(infer_t *inf, image_t *img)
