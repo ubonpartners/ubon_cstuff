@@ -9,6 +9,7 @@
 #include "cuda_kernels.h"
 #include "misc.h"
 #include <mutex>
+#include <math.h>
 
 #define CHECK_NPPcall(call) \
     do { \
@@ -253,7 +254,9 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
 image_t *image_crop(image_t *img, int x, int y, int w, int h)
 {
     if (!img) return 0;
-    if ((img->format != IMAGE_FORMAT_YUV420_DEVICE && img->format != IMAGE_FORMAT_MONO_DEVICE))
+    if (   img->format != IMAGE_FORMAT_YUV420_DEVICE
+        && img->format != IMAGE_FORMAT_MONO_DEVICE
+        && img->format != IMAGE_FORMAT_RGB24_DEVICE)
     {
         image_t *inter=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_crop(inter, x, y, w, h);
@@ -271,27 +274,62 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
     // for that surface.
     image_t *cropped=create_image_no_surface_memory(w, h, img->format);
     cropped->referenced_surface=image_reference(img);
-    cropped->y=img->y+x+y*img->stride_y;
-    cropped->stride_y=img->stride_y;
-    if (cropped->format==IMAGE_FORMAT_YUV420_DEVICE)
-    {
-        cropped->stride_uv=img->stride_uv;
-        cropped->u=img->u+(x>>1)+(y>>1)*cropped->stride_uv;
-        cropped->v=img->u+(x>>1)+(y>>1)*cropped->stride_uv;
-    }
     image_add_dependency(cropped, img);
+
+    if ( (cropped->format==IMAGE_FORMAT_RGB24_DEVICE)
+       ||(cropped->format==IMAGE_FORMAT_RGB24_HOST))
+    {
+        cropped->rgb=img->rgb+x*3+y*img->stride_y;
+        cropped->stride_rgb=img->stride_rgb;
+    }
+    else // MONO_ or YUV420_
+    {
+        cropped->y=img->y+x+y*img->stride_y;
+        cropped->stride_y=img->stride_y;
+        if (  (cropped->format==IMAGE_FORMAT_YUV420_DEVICE)
+            ||(cropped->format==IMAGE_FORMAT_YUV420_HOST))
+        {
+            cropped->stride_uv=img->stride_uv;
+            cropped->u=img->u+(x>>1)+(y>>1)*cropped->stride_uv;
+            cropped->v=img->v+(x>>1)+(y>>1)*cropped->stride_uv;
+        }
+    }
+
     return cropped;
 }
 
+
 image_t *image_crop_roi(image_t *img, roi_t in_roi, roi_t *out_roi)
 {
-    if (in_roi.box[0]==0 && in_roi.box[1]==0 && in_roi.box[2]==1 && in_roi.box[3]==1)
+    if (in_roi.box[0]<=0 && in_roi.box[1]<=0 && in_roi.box[2]>=1 && in_roi.box[3]>=1)
     {
         *out_roi=in_roi;
         return image_reference(img);
     }
-    assert(0);
-    // fix me!
+    int x0=(int)(in_roi.box[0]*img->width);
+    int y0=(int)(in_roi.box[1]*img->height);
+    int x1=(int)(ceilf(in_roi.box[2]*img->width));
+    int y1=(int)(ceilf(in_roi.box[3]*img->height));
+
+    // round to even (making crop bigger)
+    // todo: only do this for chroma downsampled formats
+    x0=std::max(0, x0&(~1));
+    y0=std::max(0, y0&(~1));
+    x1=std::min(img->width, (x1+1)&(~1));
+    y1=std::min(img->height, (y1+1)&(~1));
+
+    int w=std::max(0, x1-x0);
+    int h=std::max(0, y1-y0);
+    w=std::min(w, img->width-x0);
+    h=std::min(h, img->height-y0);
+
+    image_t *ret=image_crop(img, x0, y0, w, h);
+
+    out_roi->box[0]=((float)x0)/img->width;
+    out_roi->box[1]=((float)y0)/img->height;
+    out_roi->box[2]=((float)(x0+w))/img->width;
+    out_roi->box[3]=((float)(y0+h))/img->height;
+    return ret;
 }
 
 image_t *image_pad_rgb24_device(image_t *img, int left, int top, int right, int bottom, uint32_t RGB)
@@ -348,4 +386,65 @@ image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint3
     if (img->format != IMAGE_FORMAT_RGB24_DEVICE)
         return image_pad_rgb24_device(img, left, top, right, bottom, RGB);
     assert(0); // todo: fixeme; not implemented
+}
+
+// image_make_tiled: given N images <= WxH make a single tiled image
+// with all the sub-images together
+// this is commonly used for batch inference
+
+image_t *image_make_tiled(image_format_t fmt, int width, int height, image_t **images, int num)
+{
+    assert(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE || fmt==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
+    int elt_size=(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
+    image_t *inf_image=create_image(width, height*num, fmt); // image big enough to hold "num" planar RGB images
+    for(int i=0;i<num;i++)
+    {
+        image_t *img=images[i];
+        assert(img->width<=width && img->height<=height);
+        assert(img->format==IMAGE_FORMAT_RGB24_DEVICE || img->format==IMAGE_FORMAT_YUV420_DEVICE);
+        image_add_dependency(inf_image, img);
+        if (fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
+        {
+            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
+            {
+                cuda_convert_rgb24_to_planar_fp16(
+                    img->rgb,
+                    inf_image->rgb+i*3*elt_size*width*height,
+                    img->width, img->height,
+                    width, height,
+                    img->stride_rgb,
+                    inf_image->stream);
+            }
+            else
+            {
+                cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv,
+                                inf_image->rgb+i*3*elt_size*width*height,
+                                width*height,
+                                img->width, img->height,
+                                width, height, inf_image->stream);
+            }
+        }
+        else
+        {
+            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
+            {
+                cuda_convert_rgb24_to_planar_fp32(
+                    img->rgb,
+                    (float*)(inf_image->rgb+i*3*elt_size*width*height),
+                    img->width, img->height,
+                    width, height,
+                    img->stride_rgb,
+                    inf_image->stream);
+            }
+            else
+            {
+                cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv,
+                                inf_image->rgb+i*3*elt_size*width*height,
+                                width*height,
+                                img->width, img->height,
+                                width, height, inf_image->stream);
+            }
+        }
+    }
+    return inf_image;
 }

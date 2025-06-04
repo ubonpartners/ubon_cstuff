@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include "display.h"
 
 static int MAX_BATCH=32;
 
@@ -121,10 +122,14 @@ static void *infer_thread_fn(void *arg)
         {
             img_cropped[i]=image_crop_roi(imgs[i], rois[i], &handles[i]->inference_roi);
         }
-        infer_batch(h->infer, imgs, dets_arr, count);
+        //display_image("crop", img_cropped[0]);
+        infer_batch(h->infer, img_cropped, dets_arr, count);
 
-        for (int i = 0; i < count; ++i) detections_unmap_roi(dets_arr[i], handles[i]->inference_roi);
-
+        for (int i = 0; i < count; ++i)
+        {
+            detections_unmap_roi(dets_arr[i], handles[i]->inference_roi);
+            //show_detections(dets_arr[i]);
+        }
         // 5) Signal each job’s result handle, passing back its own detections_t*
         for (int i = 0; i < count; ++i) {
             destroy_image(img_cropped[i]);

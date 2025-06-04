@@ -39,6 +39,7 @@ void detections_nms_inplace(detections_t *detections, float iou_thr);
 void detections_sort_descending_conf(detections_t *detections);
 void detections_scale(detections_t *dets, float sx, float sy);
 void detections_unmap_roi(detections_t *dets, roi_t roi);
+detections_t *detections_join(detections_t *dets1, detections_t *dets2);
 image_t *draw_detections(detections_t *dets, image_t *img);
 void show_detections(detections_t *dets);
 

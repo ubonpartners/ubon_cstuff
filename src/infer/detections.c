@@ -86,33 +86,6 @@ void detections_nms_inplace(detections_t *dets, float iou_thr)
     dets->num_detections=num_out;
 }
 
-static inline float clip_01(float x)
-{
-    return std::min(std::max(x, 0.0f), 1.0f);
-}
-
-void detections_scale(detections_t *dets, float sx, float sy)
-{
-    for(int i=0;i<dets->num_detections;i++)
-    {
-        detection_t *det=&dets->det[i];
-        det->x0=clip_01(det->x0*sx);
-        det->y0=clip_01(det->y0*sy);
-        det->x1=clip_01(det->x1*sx);
-        det->y1=clip_01(det->y1*sy);
-        for(int i=0;i<det->num_face_points;i++)
-        {
-            det->face_points[i].x=clip_01(det->face_points[i].x*sx);
-            det->face_points[i].y=clip_01(det->face_points[i].y*sy);
-        }
-        for(int i=0;i<det->num_pose_points;i++)
-        {
-            det->pose_points[i].x=clip_01(det->pose_points[i].x*sx);
-            det->pose_points[i].y=clip_01(det->pose_points[i].y*sy);
-        }
-    }
-}
-
 static void draw_line(image_t *img, float x0, float y0, float x1, float y1, int clr)
 {
     int steps=(int)(fmaxf(fabsf(x1-x0)*img->width, fabsf(y1-y0)*img->height)+0.999);
@@ -188,7 +161,6 @@ image_t *draw_detections(detections_t *dets, image_t *img)
 
         for(int j=0;j<dets->det[i].num_face_points;j++)
         {
-
             if (dets->det[i].face_points[j].conf>0.5)
             {
                 draw_cross(x, dets->det[i].face_points[j].x, dets->det[i].face_points[j].y, 0.002, 0x00ff00);
@@ -284,12 +256,14 @@ detections_t *load_detections(const char *filename)
     return dets;
 }
 
-void detections_unmap_roi(detections_t *dets, roi_t roi)
+static inline float clip_01(float x)
 {
-    float sx=roi.box[2]-roi.box[0];
-    float sy=roi.box[3]-roi.box[1];
-    float dx=roi.box[0];
-    float dy=roi.box[1];
+    return std::min(std::max(x, 0.0f), 1.0f);
+}
+
+static void detections_scale_add(detections_t *dets, float sx, float sy, float dx, float dy)
+{
+    if (!dets) return;
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=&dets->det[i];
@@ -308,4 +282,27 @@ void detections_unmap_roi(detections_t *dets, roi_t roi)
             det->pose_points[i].y=clip_01(dy+det->pose_points[i].y*sy);
         }
     }
+}
+
+void detections_scale(detections_t *dets, float sx, float sy)
+{
+    detections_scale_add(dets, sx, sy, 0, 0);
+}
+
+void detections_unmap_roi(detections_t *dets, roi_t roi)
+{
+    float sx=roi.box[2]-roi.box[0];
+    float sy=roi.box[3]-roi.box[1];
+    float dx=roi.box[0];
+    float dy=roi.box[1];
+    detections_scale_add(dets, sx, sy, dx, dy);
+}
+
+detections_t *detections_join(detections_t *dets1, detections_t *dets2)
+{
+    detections_t *ret=create_detections(dets1->num_detections+dets2->num_detections);
+    memcpy(ret->det, dets1->det, sizeof(detection_t)*dets1->num_detections);
+    memcpy(ret->det+dets1->num_detections, dets2->det, sizeof(detection_t)*dets2->num_detections);
+    ret->num_detections=dets1->num_detections+dets2->num_detections;
+    return ret;
 }

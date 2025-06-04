@@ -45,6 +45,8 @@ struct infer
     int fn;
     float nms_thr;
     float det_thr;
+    int inf_limit_min_width;
+    int inf_limit_min_height;
     int inf_limit_max_width;
     int inf_limit_max_height;
     int max_detections;
@@ -199,6 +201,8 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->det_thr=0.05;
     inf->inf_limit_max_width=640;
     inf->inf_limit_max_height=640;
+    inf->inf_limit_min_width=128;
+    inf->inf_limit_min_height=128;
     inf->max_detections=200;
     inf->person_class_index=-1;
     inf->face_class_index=-1;
@@ -346,21 +350,6 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
-void infer_batch_old(infer_t *inf, image_t **img, detections_t **dets, int num)
-{
-    int max_batch=inf->max_batch;
-    if (num>max_batch)
-    {
-        for(int i=0;i<num;i+=max_batch) infer_batch(inf, img+i, dets+i, std::min(num-i, max_batch));
-        return;
-    }
-
-    for(int i=0;i<num;i++)
-    {
-        dets[i]=infer(inf, img[i]);
-    }
-}
-
 static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *res_h, bool flexible)
 {
     // starting image w*h we need to determine a size to scale the image to so that it fits in
@@ -489,6 +478,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     int inf_max_w=std::min(inf->inf_limit_max_width, inf->max_w);
     int inf_max_h=std::min(inf->inf_limit_max_height, inf->max_h);
+
     // step 1: determine overall inference size
     int max_w=0;
     int max_h=0;
@@ -502,11 +492,15 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         max_h=std::max(max_h, scale_h);
         debugf("%d) %dx%d->%dx%d\n",i,img->width,img->height,scale_w,scale_h);
     }
+    inf_max_w=std::max(inf->inf_limit_min_width, inf_max_w);
+    inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
     int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
     int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
     debugf("INFER SIZE %dx%d\n",infer_w,infer_h);
 
     // step 2: determined scaled size for each image
+    // the image will be fitted into the inference rect and padded on right
+    // and bottom edges.
     int image_widths[num], image_heights[num];
     image_t *image_scaled_conv[num];
     for(int i=0;i<num;i++)
@@ -519,58 +513,12 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         image_scaled_conv[i]=image_convert(image_scaled, fmt);
         destroy_image(image_scaled);
     }
+
     // step 3: make planar RGB image with all batch images
-    image_format_t fmt=inf->output_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
-    int elt_size=inf->output_is_fp16 ? 2 : 4;
-    image_t *inf_image=create_image(infer_w, infer_h*num, fmt); // image big enough to hold "num" planar RGB images
-    for(int i=0;i<num;i++)
-    {
-        image_t *img=image_scaled_conv[i];
-        image_add_dependency(inf_image, img);
-        if (inf->output_is_fp16)
-        {
-            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
-            {
-                cuda_convert_rgb24_to_planar_fp16(
-                    img->rgb,
-                    inf_image->rgb+i*3*elt_size*infer_w*infer_h,
-                    img->width, img->height,
-                    infer_w, infer_h,
-                    img->stride_rgb,
-                    inf_image->stream);
-            }
-            else
-            {
-                cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv,
-                                inf_image->rgb+i*3*elt_size*infer_w*infer_h,
-                                infer_w*infer_h,
-                                img->width, img->height,
-                                infer_w, infer_h, inf_image->stream);
-            }
-        }
-        else
-        {
-            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
-            {
-                cuda_convert_rgb24_to_planar_fp32(
-                    img->rgb,
-                    (float*)(inf_image->rgb+i*3*elt_size*infer_w*infer_h),
-                    img->width, img->height,
-                    infer_w, infer_h,
-                    img->stride_rgb,
-                    inf_image->stream);
-            }
-            else
-            {
-                cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv,
-                                inf_image->rgb+i*3*elt_size*infer_w*infer_h,
-                                infer_w*infer_h,
-                                img->width, img->height,
-                                infer_w, infer_h, inf_image->stream);
-            }
-        }
-    }
-    //display_image("inf", inf_image);
+
+    image_format_t fmt=inf->input_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
+    image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num);
+
     // step4: run inference
     auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
     assert(true==inf->ec->setInputShape(inf->input_tensor_name, input_dims));
