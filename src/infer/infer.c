@@ -174,15 +174,37 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     }
 }
 
-void infer_print_model_description(infer_t *inf)
+void infer_print_model_description(model_description_t *desc)
 {
-    std::cout << "Model description:\n";
-    for (const auto& name : inf->md.class_names)
-        std::cout << "  class: " << name << "\n";
-    std::cout << "\n";
-    for (const auto& name : inf->md.person_attribute_names)
-        std::cout << "  attr: " << name << "\n";
-    std::cout << "\n";
+    if (!desc) {
+        std::cerr << "Model description is null.\n";
+        return;
+    }
+
+    std::cout << "=== Model Description ===\n";
+
+    std::cout << "Model Output Dimensions: ["
+              << desc->model_output_dims[0] << " x "
+              << desc->model_output_dims[1] << " x "
+              << desc->model_output_dims[2] << "]\n";
+
+    std::cout << "Input Width Range: " << desc->min_w << " - " << desc->max_w << "\n";
+    std::cout << "Input Height Range: " << desc->min_h << " - " << desc->max_h << "\n";
+
+    std::cout << "Keypoints: " << desc->num_keypoints << "\n";
+    std::cout << "Max Batch Size: " << desc->max_batch << "\n";
+    std::cout << "Input Format: " << (desc->input_is_fp16 ? "FP16" : "FP32") << "\n";
+    std::cout << "Output Format: " << (desc->output_is_fp16 ? "FP16" : "FP32") << "\n";
+
+    std::cout << "Classes (" << desc->num_classes << "):\n";
+    for (size_t i = 0; i < desc->class_names.size(); ++i) {
+        std::cout << "  [" << i << "] " << desc->class_names[i] << "\n";
+    }
+
+    std::cout << "Person Attributes (" << desc->num_person_attributes << "):\n";
+    for (size_t i = 0; i < desc->person_attribute_names.size(); ++i) {
+        std::cout << "  [" << i << "] " << desc->person_attribute_names[i] << "\n";
+    }
 }
 
 model_description_t *infer_get_model_description(infer_t *inf)

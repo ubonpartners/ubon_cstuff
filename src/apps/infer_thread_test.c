@@ -37,7 +37,9 @@ static void frame_callback(void *context, image_t *img)
 
     detections_t *all_dets=detections_join(da.dets, db.dets);
     image_t *out_frame=draw_detections(all_dets, img);
-    show_detections(all_dets);
+
+    // uncommend to print detections
+    //show_detections(all_dets);
 
     destroy_detections(all_dets);
     destroy_detections(da.dets);
@@ -61,6 +63,9 @@ int main(int argc, char *argv[])
 
     infer_thread=infer_thread_start("/mldata/weights/trt/yolo11l-dpa-131224.trt",
                                     "/mldata/config/train/train_attr.yaml", &config);
+
+    model_description_t *md=infer_thread_get_model_description(infer_thread);
+    infer_print_model_description(md);
 
     if (argc>1)
     {
