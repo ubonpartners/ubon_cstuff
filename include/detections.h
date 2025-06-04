@@ -1,24 +1,25 @@
 #ifndef __DETECTIONS_H
 #define __DETECTIONS_H
 
+#include <stdint.h>
+
+#define DETECTION_MAX_ATTR  48
+
 typedef struct kp
 {
     float x, y, conf;
 } kp_t;
 
-typedef struct keypoints
-{
-    kp_t face_points[5];
-    kp_t pose_points[17];
-} keypoints_t;
-
 typedef struct detection
 {
     float x0,y0,x1,y1;
     float conf;
+    uint8_t num_face_points, num_pose_points, num_attr;
     unsigned short cl;
     unsigned short index;
-    keypoints_t *kp;
+    kp_t face_points[5];
+    kp_t pose_points[17];
+    float attr[DETECTION_MAX_ATTR];
 } detection_t;
 
 typedef struct detections
@@ -37,8 +38,8 @@ detection_t *detection_add_end(detections_t *detections);
 void detections_nms_inplace(detections_t *detections, float iou_thr);
 void detections_sort_descending_conf(detections_t *detections);
 void detections_scale(detections_t *dets, float sx, float sy);
+void detections_unmap_roi(detections_t *dets, roi_t roi);
 image_t *draw_detections(detections_t *dets, image_t *img);
-void detection_create_keypoints(detection_t *d);
 void show_detections(detections_t *dets);
 
 #endif

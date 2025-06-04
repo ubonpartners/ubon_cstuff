@@ -22,25 +22,31 @@ static __global__ void yuv420_to_planar_rgb_unroll2x2(
     const uint8_t* __restrict__ y_plane,
     const uint8_t* __restrict__ u_plane,
     const uint8_t* __restrict__ v_plane,
-    void* __restrict__ rgb_fp,
-    int width, int height,
+    void* __restrict__ rgb_fp, int plane_offset,
+    int src_width, int src_height,
+    int dst_width, int dst_height,
     int y_stride, int uv_stride,
     bool use_fp16)
 {
     int ux = blockIdx.x * blockDim.x + threadIdx.x;
     int uy = blockIdx.y * blockDim.y + threadIdx.y;
 
-    int halfW = width  / 2;
-    int halfH = height / 2;
-    if (ux >= halfW || uy >= halfH) return;
+    int halfsrcW = src_width  / 2;
+    int halfsrcH = src_height / 2;
+    if (ux >= dst_width/2 || uy >= dst_height/2)
+    {
+        return;
+    }
 
-    int nx = min(ux + 1, halfW - 1);
-    int ny = min(uy + 1, halfH - 1);
+    int ux_src = min(ux, halfsrcW - 1);
+    int uy_src = min(uy, halfsrcH - 1);
+    int nx_src = min(ux + 1, halfsrcW - 1);
+    int ny_src = min(uy + 1, halfsrcH - 1);
 
-    int p00 = uy * uv_stride + ux;
-    int p10 = uy * uv_stride + nx;
-    int p01 = ny * uv_stride + ux;
-    int p11 = ny * uv_stride + nx;
+    int p00 = uy_src * uv_stride + ux_src;
+    int p10 = uy_src * uv_stride + nx_src;
+    int p01 = ny_src * uv_stride + ux_src;
+    int p11 = ny_src * uv_stride + nx_src;
 
     float u00 = float(u_plane[p00]) - 128.0f;
     float u10 = float(u_plane[p10]) - 128.0f;
@@ -64,8 +70,10 @@ static __global__ void yuv420_to_planar_rgb_unroll2x2(
 
     int x0 = ux * 2;
     int y0 = uy * 2;
-    int out_stride = width;
-    int num_pixels = width * height;
+    int x0_src = ux_src * 2;
+    int y0_src = uy_src * 2;
+    int out_stride = dst_width;
+    int num_pixels = plane_offset;
 
     auto process_pixel = [&](int x, int y, float up, float vp, int offset) {
         float c = float(y_plane[y * y_stride + x]) - 16.0f;
@@ -89,44 +97,50 @@ static __global__ void yuv420_to_planar_rgb_unroll2x2(
         }
     };
 
-    process_pixel(x0,     y0,     up00, vp00, y0 * out_stride + x0);
-    process_pixel(x0 + 1, y0,     up10, vp10, y0 * out_stride + x0 + 1);
-    process_pixel(x0,     y0 + 1, up01, vp01, (y0 + 1) * out_stride + x0);
-    process_pixel(x0 + 1, y0 + 1, up11, vp11, (y0 + 1) * out_stride + x0 + 1);
+    process_pixel(x0_src,     y0_src,     up00, vp00, y0 * out_stride + x0);
+    process_pixel(x0_src + 1, y0_src,     up10, vp10, y0 * out_stride + x0 + 1);
+    process_pixel(x0_src,     y0_src + 1, up01, vp01, (y0 + 1) * out_stride + x0);
+    process_pixel(x0_src+ 1,  y0_src + 1, up11, vp11, (y0 + 1) * out_stride + x0 + 1);
 }
 
 
 // Function to launch the CUDA kernel
 void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
-                     uint8_t *dest,
-                     int width, int height, cudaStream_t stream)
+                     uint8_t *dest, int plane_offset,
+                     int src_width, int src_height,
+                     int dst_width, int dst_height,
+                     cudaStream_t stream)
 {
     dim3 block(16, 16);
-    dim3 grid((width/2 + block.x - 1) / block.x,
-              (height/2 + block.y - 1) / block.y);
+    dim3 grid((dst_width/2 + block.x - 1) / block.x,
+              (dst_height/2 + block.y - 1) / block.y);
 
     yuv420_to_planar_rgb_unroll2x2<<<grid, block, 0, stream>>>(
         d_y_plane, d_u_plane, d_v_plane,
-        dest,
-        width, height,
+        dest,plane_offset,
+        src_width, src_height,
+        dst_width, dst_height,
         y_stride, uv_stride,
         true);
 }
 
 void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
-                     uint8_t *dest,
-                     int width, int height, cudaStream_t stream)
+                     uint8_t *dest, int plane_offset,
+                     int src_width, int src_height,
+                     int dst_width, int dst_height,
+                     cudaStream_t stream)
 {
     dim3 block(16, 16);
-    dim3 grid((width/2 + block.x - 1) / block.x,
-              (height/2 + block.y - 1) / block.y);
+    dim3 grid((dst_width/2 + block.x - 1) / block.x,
+              (dst_height/2 + block.y - 1) / block.y);
 
     yuv420_to_planar_rgb_unroll2x2<<<grid, block, 0, stream>>>(
         d_y_plane, d_u_plane, d_v_plane,
-        dest,
-        width, height,
+        dest, plane_offset,
+        src_width, src_height,
+        dst_width, dst_height,
         y_stride, uv_stride,
         false);
 
@@ -434,23 +448,29 @@ void cuda_interleave_uv(
 static __global__ void rgb24_to_planar_fp32_kernel_stride_single_dest(
     const uint8_t* __restrict__ rgb24,
     float* __restrict__ dst,  // [R|G|B] planar FP32 interleaved in one buffer
-    int width,
-    int height,
+    int src_width,
+    int src_height,
+    int dst_width,
+    int dst_height,
     int stride  // input row stride in bytes
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x >= width || y >= height) return;
+    if (x >= dst_width || y >= dst_height) return;
 
-    int idx = y * width + x;                 // index into each float plane
-    int rgb_idx = y * stride + x * 3;    // index into packed uint8 RGB24
+    int sx=x;
+    int sy=y;
+    if (sx>=src_width-1) sx=src_width-1;
+    if (sy>=src_height-1) sy=src_height-1;
+    int idx = y * dst_width + x;             // index into each float plane
+    int rgb_idx = sy * stride + sx * 3;    // index into packed uint8 RGB24
 
     float r = rgb24[rgb_idx    ] / 255.0f;
     float g = rgb24[rgb_idx + 1] / 255.0f;
     float b = rgb24[rgb_idx + 2] / 255.0f;
 
-    int plane_size = width * height;
+    int plane_size = dst_width * dst_height;
     dst[idx] = r;
     dst[idx + plane_size] = g;
     dst[idx + 2 * plane_size] = b;
@@ -459,41 +479,49 @@ static __global__ void rgb24_to_planar_fp32_kernel_stride_single_dest(
 void cuda_convert_rgb24_to_planar_fp32(
     const uint8_t* d_rgb24,  // input packed RGB24
     float* d_planar,         // output [R | G | B] FP32 buffer
-    int width,
-    int height,
+    int src_width,
+    int src_height,
+    int dst_width,
+    int dst_height,
     int stride,               // input stride in pixels (not bytes)
     cudaStream_t stream
 )
 {
     dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x,
-              (height + block.y - 1) / block.y);
+    dim3 grid((dst_width + block.x - 1) / block.x,
+              (dst_height + block.y - 1) / block.y);
 
     rgb24_to_planar_fp32_kernel_stride_single_dest<<<grid, block, 0, stream>>>(
-        d_rgb24, d_planar, width, height, stride
+        d_rgb24, d_planar, src_width, src_height, dst_width, dst_height, stride
     );
 }
 
 static __global__ void rgb24_to_planar_fp16_kernel_stride_single_dest(
     const uint8_t* __restrict__ rgb24,
     __half * __restrict__ dst,  // [R|G|B] planar FP32 interleaved in one buffer
-    int width,
-    int height,
+    int src_width,
+    int src_height,
+    int dst_width,
+    int dst_height,
     int stride  // input row stride in bytes
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x >= width || y >= height) return;
+    if (x >= dst_width || y >= dst_height) return;
 
-    int idx = y * width + x;                 // index into each float plane
-    int rgb_idx = y * stride + x * 3;    // index into packed uint8 RGB24
+    int sx=x;
+    int sy=y;
+    if (sx>=src_width-1) sx=src_width-1;
+    if (sy>=src_height-1) sy=src_height-1;
+    int idx = y * dst_width + x;             // index into each float plane
+    int rgb_idx = sy * stride + sx * 3;    // index into packed uint8 RGB24
 
     float r = rgb24[rgb_idx    ] / 255.0f;
     float g = rgb24[rgb_idx + 1] / 255.0f;
     float b = rgb24[rgb_idx + 2] / 255.0f;
 
-    int plane_size = width * height;
+    int plane_size = dst_width * dst_height;
     dst[idx] = __float2half(r);
     dst[idx + plane_size] = __float2half(g);
     dst[idx + 2 * plane_size] = __float2half(b);
@@ -502,18 +530,20 @@ static __global__ void rgb24_to_planar_fp16_kernel_stride_single_dest(
 void cuda_convert_rgb24_to_planar_fp16(
     const uint8_t* d_rgb24,  // input packed RGB24
     void* d_planar,         // output [R | G | B] FP16 buffer
-    int width,
-    int height,
+    int src_width,
+    int src_height,
+    int dst_width,
+    int dst_height,
     int stride,               // input stride in pixels (not bytes)
     cudaStream_t stream
 )
 {
     dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x,
-              (height + block.y - 1) / block.y);
+    dim3 grid((dst_width + block.x - 1) / block.x,
+              (dst_height + block.y - 1) / block.y);
 
     rgb24_to_planar_fp16_kernel_stride_single_dest<<<grid, block, 0, stream>>>(
-        d_rgb24, (__half *)d_planar, width, height, stride
+        d_rgb24, (__half *)d_planar, src_width, src_height, dst_width, dst_height, stride
     );
 }
 

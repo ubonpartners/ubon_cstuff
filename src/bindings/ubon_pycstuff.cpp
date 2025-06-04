@@ -150,6 +150,23 @@ public:
 
 class c_infer {
 private:
+    py::list convert_points(kp_t *pts, int n)
+    {
+        py::list pt_list;
+        for(int i=0;i<n;i++)
+        {
+            pt_list.append(pts[i].x);
+            pt_list.append(pts[i].y);
+            pt_list.append(pts[i].conf);
+        }
+        return pt_list;
+    }
+    py::list convert_attributes(float *a, int n)
+    {
+        py::list pt_list;
+        for(int i=0;i<n;i++) pt_list.append(a[i]);
+        return pt_list;
+    }
     py::list convert_detections_batch(image_t** imgs, int num) {
         std::vector<detections_t*> dets(num, nullptr);
         infer_batch(inf, imgs, dets.data(), num);
@@ -161,14 +178,17 @@ private:
                 for (int j = 0; j < dets[i]->num_detections; ++j) {
                     detection_t* det = &dets[i]->det[j];
                     py::dict item;
-                    item["cls"] = det->cl;
-                    item["conf"] = det->conf;
+                    item["class"] = det->cl;
+                    item["confidence"] = det->conf;
                     py::list box;
                     box.append(det->x0);
                     box.append(det->y0);
                     box.append(det->x1);
                     box.append(det->y1);
                     item["box"] = box;
+                    if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
+                    if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
+                    if (det->num_attr>0) item["attrs"]=convert_attributes(det->attr, det->num_attr);
                     results.append(item);
                 }
                 destroy_detections(dets[i]);
@@ -205,6 +225,51 @@ public:
             img_ptrs[i] = images[i]->raw();
         }
         return convert_detections_batch(img_ptrs.data(), num);
+    }
+
+    void configure(py::dict cfg_dict) {
+        infer_config_t config{};
+        config.set_det_thr = false;
+        config.set_nms_thr = false;
+
+        if (cfg_dict.contains("det_thr")) {
+            config.det_thr = cfg_dict["det_thr"].cast<float>();
+            config.set_det_thr = true;
+        }
+        if (cfg_dict.contains("nms_thr")) {
+            config.nms_thr = cfg_dict["nms_thr"].cast<float>();
+            config.set_nms_thr = true;
+        }
+
+        infer_configure(inf, &config);
+    }
+
+    py::dict get_model_description() {
+    model_description_t* desc = infer_get_model_description(inf);
+        if (!desc) {
+            throw std::runtime_error("Failed to get model description");
+        }
+
+        py::dict d;
+        d["class_names"] = py::cast(desc->class_names);
+        d["person_attribute_names"] = py::cast(desc->person_attribute_names);
+        d["num_classes"] = desc->num_classes;
+        d["num_person_attributes"] = desc->num_person_attributes;
+        d["num_keypoints"] = desc->num_keypoints;
+        d["max_batch"] = desc->max_batch;
+        d["input_is_fp16"] = desc->input_is_fp16;
+        d["output_is_fp16"] = desc->output_is_fp16;
+        d["min_w"] = desc->min_w;
+        d["max_w"] = desc->max_w;
+        d["min_h"] = desc->min_h;
+        d["max_h"] = desc->max_h;
+        d["model_output_dims" ]=py::make_tuple(
+            desc->model_output_dims[0],
+            desc->model_output_dims[1],
+            desc->model_output_dims[2]
+         );
+        d["engineInfo"]=desc->engineInfo;
+        return d;
     }
 
     infer_t* raw() { return inf; }
@@ -372,7 +437,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
         .def("run", &c_infer::run, "Run inference on a c_image")
-        .def("run_batch", &c_infer::run_batch, py::arg("images"), "Run batched inference on a list of c_image");
+        .def("run_batch", &c_infer::run_batch, py::arg("images"), "Run batched inference on a list of c_image")
+        .def("configure", &c_infer::configure, py::arg("config_dict"), "Configure inference parameters from a dictionary")
+        .def("get_model_description", &c_infer::get_model_description, "Get model description as dictionary");
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())

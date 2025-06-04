@@ -200,7 +200,10 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp16(image_t *img, image_
     image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, ret->stream);
+    cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb,
+                              ret->stride_rgb,
+                              img->width, img->height,
+                              ret->width, ret->height, ret->stream);
     return ret;
 }
 
@@ -209,7 +212,10 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp32(image_t *img, image_
     image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb, img->width, img->height, ret->stream);
+    cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv, ret->rgb,
+                              ret->stride_rgb,
+                              img->width, img->height,
+                              ret->width, ret->height, ret->stream);
     return ret;
 }
 
@@ -273,7 +279,7 @@ static image_t *image_convert_rgb24_planar_fp32_device(image_t *src, image_forma
     assert(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     image_add_dependency(dst, src);
     cuda_convert_rgb24_to_planar_fp32(src->rgb, (float*)dst->rgb,
-                        src->width, src->height, src->stride_rgb, dst->stream);
+                        src->width, src->height, dst->width, dst->height, src->stride_rgb, dst->stream);
     return dst;
 }
 
@@ -283,7 +289,7 @@ static image_t *image_convert_rgb24_planar_fp16_device(image_t *src, image_forma
     assert(format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
     image_add_dependency(dst, src);
     cuda_convert_rgb24_to_planar_fp16(src->rgb, (void*)dst->rgb,
-                        src->width, src->height, src->stride_rgb, dst->stream);
+                        src->width, src->height, dst->width, dst->height, src->stride_rgb, dst->stream);
     return dst;
 }
 

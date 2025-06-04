@@ -130,12 +130,14 @@ static void allocate_image_surfaces(image_t *img)
         {
             allocate_image_device_mem(img, img->width*img->height*3*2);
             img->rgb=(uint8_t *)img->device_mem;
+            img->stride_rgb=img->width*img->height; // in elements
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE:
         {
             allocate_image_device_mem(img, img->width*img->height*3*4);
             img->rgb=(uint8_t *)img->device_mem;
+            img->stride_rgb=img->width*img->height; // in elements
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST:

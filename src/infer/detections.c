@@ -16,31 +16,9 @@ detections_t *create_detections(int max_detections)
     return dets;
 }
 
-void detection_destroy_keypoints(detection_t *d)
-{
-    if (d->kp)
-    {
-        free(d->kp);
-        d->kp=0;
-    }
-}
-
-void detection_create_keypoints(detection_t *d)
-{
-    if (!d) return;
-    if (!d->kp)
-    {
-        d->kp=(keypoints_t *)malloc(sizeof(keypoints_t));
-    }
-}
-
 void destroy_detections(detections_t *detections)
 {
     if (!detections) return;
-    for(int i=0;i<detections->num_detections;i++)
-    {
-        if (detections->det[i].kp!=0) detection_destroy_keypoints(&detections->det[i]);
-    }
     free(detections);
 }
 
@@ -53,8 +31,7 @@ detection_t *detection_add_end(detections_t *detections)
     return det;
 }
 
-
-static int compare_detections(const void *a, const void *b) 
+static int compare_detections(const void *a, const void *b)
 {
     float conf_a = ((detection_t*)a)->conf;
     float conf_b = ((detection_t*)b)->conf;
@@ -109,28 +86,29 @@ void detections_nms_inplace(detections_t *dets, float iou_thr)
     dets->num_detections=num_out;
 }
 
+static inline float clip_01(float x)
+{
+    return std::min(std::max(x, 0.0f), 1.0f);
+}
+
 void detections_scale(detections_t *dets, float sx, float sy)
 {
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=&dets->det[i];
-        det->x0*=sx;
-        det->y0*=sy;
-        det->x1*=sx;
-        det->y1*=sy;
-        keypoints_t *kp=det->kp;
-        if (kp)
+        det->x0=clip_01(det->x0*sx);
+        det->y0=clip_01(det->y0*sy);
+        det->x1=clip_01(det->x1*sx);
+        det->y1=clip_01(det->y1*sy);
+        for(int i=0;i<det->num_face_points;i++)
         {
-            for(int i=0;i<5;i++)
-            {
-                det->kp->face_points[i].x*=sx;
-                det->kp->face_points[i].y*=sy;
-            }
-            for(int i=0;i<17;i++)
-            {
-                det->kp->pose_points[i].x*=sx;
-                det->kp->pose_points[i].y*=sy;
-            }
+            det->face_points[i].x=clip_01(det->face_points[i].x*sx);
+            det->face_points[i].y=clip_01(det->face_points[i].y*sy);
+        }
+        for(int i=0;i<det->num_pose_points;i++)
+        {
+            det->pose_points[i].x=clip_01(det->pose_points[i].x*sx);
+            det->pose_points[i].y=clip_01(det->pose_points[i].y*sy);
         }
     }
 }
@@ -172,19 +150,19 @@ static void draw_cross(image_t *img, float cx, float cy, float w, int clr)
     draw_line(img, cx-w, cy+w, cx+w, cy-w, clr);
 }
 
-static void draw_kp_line(image_t *img, keypoints_t *kp, int a, int b)
+static void draw_kp_line(image_t *img, kp_t *kp, int a, int b)
 {
     float thr=0.2;
-    if ((kp->pose_points[a].conf<thr) || (kp->pose_points[b].conf<thr)) return;
-    draw_line(img, kp->pose_points[a].x, kp->pose_points[a].y, kp->pose_points[b].x, kp->pose_points[b].y, 0x0000ff);
+    if ((kp[a].conf<thr) || (kp[b].conf<thr)) return;
+    draw_line(img, kp[a].x, kp[a].y, kp[b].x, kp[b].y, 0x0000ff);
 }
 
-static void draw_kp_line(image_t *img, keypoints_t *kp, int a, int b, int c)
+static void draw_kp_line(image_t *img, kp_t *kp, int a, int b, int c)
 {
     float thr=0.2;
-    if ((kp->pose_points[a].conf<thr) || (kp->pose_points[b].conf<thr) || (kp->pose_points[c].conf<thr)) return;
-    draw_line(img, kp->pose_points[a].x, kp->pose_points[a].y, 
-                   0.5*(kp->pose_points[b].x+kp->pose_points[c].x), 0.5*(kp->pose_points[b].y+kp->pose_points[c].y), 0x0000ff);
+    if ((kp[a].conf<thr) || (kp[b].conf<thr) || (kp[c].conf<thr)) return;
+    draw_line(img, kp[a].x, kp[a].y,
+                   0.5*(kp[b].x+kp[c].x), 0.5*(kp[b].y+kp[c].y), 0x0000ff);
 }
 
 void show_detections(detections_t *dets)
@@ -192,9 +170,9 @@ void show_detections(detections_t *dets)
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=&dets->det[i];
-        printf("det %2d cls %8s conf %0.3f box[%0.3f,%0.3f,%0.3f,%0.3f]\n",i,
-            (det->cl==0) ? "face" : "person", 
-            det->conf, det->x0, det->y0, det->x1, det->y0);
+        printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f]\n",i,
+            (det->cl==0) ? "face" : "person",
+            det->conf, det->index, det->x0, det->y0, det->x1, det->y0);
     }
 }
 
@@ -207,40 +185,41 @@ image_t *draw_detections(detections_t *dets, image_t *img)
     for(int i=0;i<dets->num_detections;i++)
     {
         draw_detection(&dets->det[i], x);
-        keypoints_t *kp=dets->det[i].kp;
-        if (kp)
+
+        for(int j=0;j<dets->det[i].num_face_points;j++)
         {
-            for(int j=0;j<5;j++)
+
+            if (dets->det[i].face_points[j].conf>0.5)
             {
-                if (kp->face_points[j].conf>0.5)
-                {
-                    draw_cross(x, kp->face_points[j].x, kp->face_points[j].y, 0.002, 0x00ff00);
-                }
+                draw_cross(x, dets->det[i].face_points[j].x, dets->det[i].face_points[j].y, 0.002, 0x00ff00);
             }
-            draw_kp_line(x, kp, 0, 1);
-            draw_kp_line(x, kp, 0, 2);
-            draw_kp_line(x, kp, 0, 5, 6);
-
-            draw_kp_line(x, kp, 1, 3);
-            draw_kp_line(x, kp, 2, 4);
-
-            draw_kp_line(x, kp, 5, 6);
-            draw_kp_line(x, kp, 5, 11);
-            draw_kp_line(x, kp, 6, 12);
-            draw_kp_line(x, kp, 11, 12);
-
-            draw_kp_line(x, kp, 5, 7);
-            draw_kp_line(x, kp, 7, 9);
-
-            draw_kp_line(x, kp, 6, 8);
-            draw_kp_line(x, kp, 8, 10);
-
-            draw_kp_line(x, kp, 11, 13);
-            draw_kp_line(x, kp, 13, 15);
-
-            draw_kp_line(x, kp, 12, 14);
-            draw_kp_line(x, kp, 14, 16);
         }
+
+        kp_t *kp=dets->det[i].pose_points;
+        draw_kp_line(x, kp, 0, 1);
+        draw_kp_line(x, kp, 0, 2);
+        draw_kp_line(x, kp, 0, 5, 6);
+
+        draw_kp_line(x, kp, 1, 3);
+        draw_kp_line(x, kp, 2, 4);
+
+        draw_kp_line(x, kp, 5, 6);
+        draw_kp_line(x, kp, 5, 11);
+        draw_kp_line(x, kp, 6, 12);
+        draw_kp_line(x, kp, 11, 12);
+
+        draw_kp_line(x, kp, 5, 7);
+        draw_kp_line(x, kp, 7, 9);
+
+        draw_kp_line(x, kp, 6, 8);
+        draw_kp_line(x, kp, 8, 10);
+
+        draw_kp_line(x, kp, 11, 13);
+        draw_kp_line(x, kp, 13, 15);
+
+        draw_kp_line(x, kp, 12, 14);
+        draw_kp_line(x, kp, 14, 16);
+
     }
     return x;
 }
@@ -278,24 +257,24 @@ detections_t *load_detections(const char *filename)
                 d->cl=(int)v[0];
                 if ((n==20)||(n==71))
                 {
-                    detection_create_keypoints(d);
+                    d->num_face_points=5;
                     for(int i=0;i<5;i++)
                     {
-                        d->kp->face_points[i].x=v[5+3*i+0];
-                        d->kp->face_points[i].y=v[5+3*i+1];
-                        d->kp->face_points[i].conf=v[5+3*i+2];
+                        d->face_points[i].x=v[5+3*i+0];
+                        d->face_points[i].y=v[5+3*i+1];
+                        d->face_points[i].conf=v[5+3*i+2];
                     }
                 }
                 if ((n==56)||(n==71))
                 {
                     // 5 + 15 + 51 = 71
                     int start=(n==56) ? 5 : 20;
-                    detection_create_keypoints(d);
+                    d->num_face_points=5;
                     for(int i=0;i<17;i++)
                     {
-                        d->kp->face_points[i].x=v[start+3*i+0];
-                        d->kp->face_points[i].y=v[start+3*i+1];
-                        d->kp->face_points[i].conf=v[start+3*i+2];
+                        d->face_points[i].x=v[start+3*i+0];
+                        d->face_points[i].y=v[start+3*i+1];
+                        d->face_points[i].conf=v[start+3*i+2];
                     }
                 }
             }
@@ -303,4 +282,30 @@ detections_t *load_detections(const char *filename)
     }
     fclose(f);
     return dets;
+}
+
+void detections_unmap_roi(detections_t *dets, roi_t roi)
+{
+    float sx=roi.box[2]-roi.box[0];
+    float sy=roi.box[3]-roi.box[1];
+    float dx=roi.box[0];
+    float dy=roi.box[1];
+    for(int i=0;i<dets->num_detections;i++)
+    {
+        detection_t *det=&dets->det[i];
+        det->x0=clip_01(dx+det->x0*sx);
+        det->y0=clip_01(dy+det->y0*sy);
+        det->x1=clip_01(dx+det->x1*sx);
+        det->y1=clip_01(dy+det->y1*sy);
+        for(int i=0;i<det->num_face_points;i++)
+        {
+            det->face_points[i].x=clip_01(dx+det->face_points[i].x*sx);
+            det->face_points[i].y=clip_01(dy+det->face_points[i].y*sy);
+        }
+        for(int i=0;i<det->num_pose_points;i++)
+        {
+            det->pose_points[i].x=clip_01(dx+det->pose_points[i].x*sx);
+            det->pose_points[i].y=clip_01(dy+det->pose_points[i].y*sy);
+        }
+    }
 }

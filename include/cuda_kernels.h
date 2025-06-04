@@ -5,13 +5,17 @@ extern "C"
 {
 void cuda_convertYUVtoRGB_fp16(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
-                     uint8_t *dest,
-                     int width, int height, cudaStream_t stream);
+                     uint8_t *dest, int plane_offset,
+                     int src_width, int src_height,
+                     int dst_width, int dst_height,
+                     cudaStream_t stream);
 
 void cuda_convertYUVtoRGB_fp32(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                      int y_stride, int uv_stride,
-                     uint8_t *dest,
-                     int width, int height, cudaStream_t stream);
+                     uint8_t *dest, int plane_offset,
+                     int src_width, int src_height,
+                     int dst_width, int dst_height,
+                     cudaStream_t stream);
 void cuda_convertYUVtoRGB24(const uint8_t * d_y_plane, const uint8_t * d_u_plane, const uint8_t * d_v_plane,
                     int y_stride, int uv_stride,
                     uint8_t *dest, int dest_stride,
@@ -23,15 +27,19 @@ void cuda_convertRGB24toYUV420(const uint8_t* d_rgb,int rgb_stride,
 void cuda_convert_rgb24_to_planar_fp32(
                     const uint8_t* d_rgb24,  // input packed RGB24
                     float* d_planar,         // output [R | G | B] FP32 buffer
-                    int width,
-                    int height,
+                    int src_width,
+                    int src_height,
+                    int dst_width,
+                    int dst_height,
                     int stride,               // input stride in pixels (not bytes)
                     cudaStream_t stream);
 void cuda_convert_rgb24_to_planar_fp16(
                     const uint8_t* d_rgb24,  // input packed RGB24
                     void* d_planar,         // output [R | G | B] FP16 buffer
-                    int width,
-                    int height,
+                    int src_width,
+                    int src_height,
+                    int dst_width,
+                    int dst_height,
                     int stride,               // input stride in pixels (not bytes)
                     cudaStream_t stream);
 void cuda_half_to_float(void * d_input, void* h_output, int size);

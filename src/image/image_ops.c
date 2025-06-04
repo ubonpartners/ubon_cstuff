@@ -283,6 +283,17 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
     return cropped;
 }
 
+image_t *image_crop_roi(image_t *img, roi_t in_roi, roi_t *out_roi)
+{
+    if (in_roi.box[0]==0 && in_roi.box[1]==0 && in_roi.box[2]==1 && in_roi.box[3]==1)
+    {
+        *out_roi=in_roi;
+        return image_reference(img);
+    }
+    assert(0);
+    // fix me!
+}
+
 image_t *image_pad_rgb24_device(image_t *img, int left, int top, int right, int bottom, uint32_t RGB)
 {
     int new_width = img->width + left + right;

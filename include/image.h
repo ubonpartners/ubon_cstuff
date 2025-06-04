@@ -57,6 +57,8 @@ struct image
     image_t *referenced_surface;
 };
 
+#include "roi.h"
+
 // call before using any image functions
 // does things like creates a table for doing format conversion
 void image_init();
@@ -104,6 +106,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
 // derive a new image from a crop of an existing one. Note in some cases this doesn't actually do
 // any operations just uses reference counting and pointer manipulations so is 'free'
 image_t *image_crop(image_t *img, int x, int y, int w, int h);
+image_t *image_crop_roi(image_t *img, roi_t in_roi, roi_t *out_roi);
 // pad an image by adding extra pixels to the edges, using the specified RGB colour
 image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint32_t RGB);
 

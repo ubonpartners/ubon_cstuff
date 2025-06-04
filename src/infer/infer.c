@@ -17,11 +17,16 @@
 #include "display.h"
 #include "detections.h"
 #include "cuda_stuff.h"
+#include "cuda_kernels.h"
 #include "log.h"
 #include <yaml-cpp/yaml.h>
 
+#define debugf if (0) printf
+
 using namespace nvinfer1;
 using namespace nvonnxparser;
+
+static const char *default_config="/mldata/config/train/train_yolo_dpa_l.yaml";
 
 struct infer
 {
@@ -31,18 +36,22 @@ struct infer
     CUdeviceptr output_mem;
     cudaStream_t stream;
     void *output_mem_host;
+    int person_class_index, face_class_index;
     int max_batch;
     int min_w, min_h;
     int max_w, max_h;
+    bool input_is_fp16, output_is_fp16;
     int output_size;
     int fn;
     float nms_thr;
     float det_thr;
-    int num_classes;
+    int inf_limit_max_width;
+    int inf_limit_max_height;
     int max_detections;
     int detection_attribute_size;
     const char *input_tensor_name;
     const char *output_tensor_name;
+    model_description_t md;
 };
 
 class Logger : public nvinfer1::ILogger
@@ -163,33 +172,70 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
     }
 }
 
+void infer_print_model_description(infer_t *inf)
+{
+    std::cout << "Model description:\n";
+    for (const auto& name : inf->md.class_names)
+        std::cout << "  class: " << name << "\n";
+    std::cout << "\n";
+    for (const auto& name : inf->md.person_attribute_names)
+        std::cout << "  attr: " << name << "\n";
+    std::cout << "\n";
+}
+
+model_description_t *infer_get_model_description(infer_t *inf)
+{
+    if (!inf) return 0;
+    return &inf->md;
+}
+
+
 infer_t *infer_create(const char *model, const char *yaml_config)
 {
     infer_t *inf=(infer_t *)malloc(sizeof(infer_t));
     memset(inf, 0, sizeof(infer_t));
 
     inf->nms_thr=0.45;
-    inf->det_thr=0.25;
-    inf->num_classes=5;
+    inf->det_thr=0.05;
+    inf->inf_limit_max_width=640;
+    inf->inf_limit_max_height=640;
     inf->max_detections=200;
+    inf->person_class_index=-1;
+    inf->face_class_index=-1;
 
     cudaStreamCreate(&inf->stream);
 
     log_debug("Infer create");
 
-    /*YAML::Node config = YAML::LoadFile(yaml_config);
-    // Access 'kpt_shape'
-    std::vector<int> kpt_shape = config["dataset"]["kpt_shape"].as<std::vector<int>>();
-    std::cout << "kpt_shape: ";
-    for (int v : kpt_shape) std::cout << v << " ";
-    std::cout << "\n";
+    if ((yaml_config!=0) and (strlen(yaml_config)>0))
+    {
+        log_info("infer_create: No config specified; trying default:");
+        yaml_config=default_config;
+    }
 
-    // Access 'names'
+    YAML::Node config = YAML::LoadFile(yaml_config);
     std::vector<std::string> names = config["dataset"]["names"].as<std::vector<std::string>>();
-    std::cout << "names: ";
-    for (const auto& name : names) std::cout << name << " ";
-    std::cout << "\n";*/
+    std::vector<int> kpt_shape = config["dataset"]["kpt_shape"].as<std::vector<int>>();
+    model_description_t md = {};
+    for (const auto& name : names)
+    {
+        if (name.size() >= 7 && name.compare(0, 7, "person_") == 0)
+            md.person_attribute_names.push_back(name);
+        else
+        {
+            if (name.size()==6 && name.compare(0, 6, "person")==0)
+                inf->person_class_index=md.class_names.size();
+            if (name.size()==4 && name.compare(0, 6, "face")==0)
+                inf->face_class_index=md.class_names.size();
+            md.class_names.push_back(name);
 
+        }
+    }
+    md.num_classes=md.class_names.size();
+    md.num_person_attributes=md.person_attribute_names.size();
+    md.num_keypoints=kpt_shape[0];
+
+    inf->md=md;
     //infer_build("/mldata/weights/onnx/yolo11l-dpa-131224.onnx", "/mldata/weights/trt/yolo11l-dpa-131224.trt");
 
     FILE* model_file = fopen(model, "rb");
@@ -215,6 +261,14 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     assert(inf->ec!=0);
     //inf->ec->setOptimizationProfileAsync(0, 0);
 
+    IEngineInspector* inspector = inf->engine->createEngineInspector();
+    if (inspector)
+    {
+        const char* engineInfo = inspector->getEngineInformation(nvinfer1::LayerInformationFormat::kJSON);
+        inf->md.engineInfo=strdup(engineInfo);
+        delete inspector;
+    }
+
     int num_optimization_profiles=inf->engine->getNbOptimizationProfiles();
     assert(num_optimization_profiles==1);
 
@@ -225,22 +279,26 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     {
         const char* name = inf->engine->getIOTensorName(i);
         TensorIOMode iomode=inf->engine->getTensorIOMode(name);
+        nvinfer1::DataType dtype = inf->engine->getTensorDataType(name);
+        assert(dtype==nvinfer1::DataType::kFLOAT || dtype==nvinfer1::DataType::kHALF);
+
         if (iomode==nvinfer1::TensorIOMode::kINPUT)
         {
             assert(num_input==0);
             num_input++;
             inf->input_tensor_name=name;
+            inf->md.input_is_fp16=inf->input_is_fp16=(dtype==nvinfer1::DataType::kHALF);
 
             Dims dims_max=inf->engine->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX);
             Dims dims_min=inf->engine->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMIN);
             assert(dims_max.nbDims==4);
             assert(dims_min.nbDims==4);
             assert(dims_min.d[0]==1); // min batch should be 1!
-            inf->max_batch=dims_max.d[0];
-            inf->max_h=dims_max.d[2];
-            inf->max_w=dims_max.d[3];
-            inf->min_h=dims_min.d[2];
-            inf->min_w=dims_min.d[3];
+            inf->md.max_batch=inf->max_batch=dims_max.d[0];
+            inf->md.max_h=inf->max_h=dims_max.d[2];
+            inf->md.max_w=inf->max_w=dims_max.d[3];
+            inf->md.min_h=inf->min_h=dims_min.d[2];
+            inf->md.min_w=inf->min_w=dims_min.d[3];
             log_debug("TRT model [%dx%d]->[%dx%d]; max batch %d",inf->min_w,inf->min_h,inf->max_w,inf->max_h,inf->max_batch);
         }
         else
@@ -248,11 +306,28 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             assert(num_output==0);
             num_output++;
             inf->output_tensor_name=name;
+            inf->md.output_is_fp16=inf->output_is_fp16=(dtype==nvinfer1::DataType::kHALF);
             Dims outputDims=inf->engine->getTensorShape(inf->output_tensor_name);
-            inf->detection_attribute_size=(int)outputDims.d[1];
+            inf->detection_attribute_size=(int)outputDims.d[1]; // "110"
             log_debug("outputDims %dx%dx%d\n", (int)outputDims.d[0], (int)outputDims.d[1], (int)outputDims.d[2]);
+            inf->md.model_output_dims[0]=(int)outputDims.d[0];
+            inf->md.model_output_dims[1]=(int)outputDims.d[1];
+            inf->md.model_output_dims[2]=(int)outputDims.d[2];
         }
     }
+
+    // verify that the number of outputs per-detection is as we expect based on the config
+    int expected_size=4 // box
+                      +inf->md.num_classes
+                      +inf->md.num_person_attributes
+                      +inf->md.num_keypoints*3;
+    if (expected_size!=inf->detection_attribute_size)
+    {
+        log_fatal("expected tensor size %d (%d classes, %d attr, %d kp), got %d",
+            expected_size,inf->detection_attribute_size,
+            inf->md.num_classes,inf->md.num_person_attributes,inf->md.num_keypoints);
+    }
+
     return inf;
 }
 
@@ -267,10 +342,11 @@ void infer_destroy(infer_t *inf)
     inf->output_mem=0;
     if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
     inf->output_mem_host=0;
+    if (inf->md.engineInfo) free((void*)inf->md.engineInfo);
     free(inf);
 }
 
-void infer_batch(infer_t *inf, image_t **img, detections_t **dets, int num)
+void infer_batch_old(infer_t *inf, image_t **img, detections_t **dets, int num)
 {
     int max_batch=inf->max_batch;
     if (num>max_batch)
@@ -285,39 +361,220 @@ void infer_batch(infer_t *inf, image_t **img, detections_t **dets, int num)
     }
 }
 
-detections_t *infer(infer_t *inf, image_t *img)
+static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *res_h, bool flexible)
 {
-    image_t *img_device=image_reference(img); // let scaling happen in previous format
-
-    // determine a vaguely sensible size for inference
-
-    int scale_w=0;
-    int scale_h=0;
-    if (img->width>=inf->max_w)
+    // starting image w*h we need to determine a size to scale the image to so that it fits in
+    // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
+    int rw=w;
+    int rh=h;
+    if (rw>max_w)
     {
-        scale_w=inf->max_w;
-        scale_h=((scale_w*img->height)/img->width);
+        // scale by max_w/w
+        rh=(rh*max_w)/rw;
+        rw=(rw*max_w)/rw;
     }
-    if (scale_h>inf->max_h)
+    if (rh>max_h)
     {
-        scale_h=inf->max_h;
-        scale_w=((scale_h*img->width)/img->height);
+        // scale by max_h/rh
+        rw=(rw*max_h)/rh;
+        rh=(rh*max_h)/rh;
     }
-    scale_w=std::min(inf->max_w, (scale_w+16)&(~31));
-    scale_h=std::min(inf->max_h, (scale_h+16)&(~31));
-    if (scale_w<inf->min_w) scale_w=inf->min_w;
-    if (scale_h<inf->min_h) scale_h=inf->min_h;
+    rw&=(~1);
+    rh&=(~1); // make sizes even
+    if (flexible)
+    {
+        // allow 10% or so distortion if it makes it fit better
+        int thr_w=(max_w*9)/10;
+        int thr_h=(max_h*9)/10;
+        if (rw>thr_w && w>=max_w) rw=max_w;
+        if (rh>thr_w && h>=max_h) rh=max_h;
+    }
+    assert(rw<=max_w);
+    assert(rh<=max_h);
+    *res_w=rw;
+    *res_h=rh;
+}
 
-    //log_debug(" %dx%d inference at %dx%d",img->width,img->height,scale_w,scale_h);
+static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride, int img_w, int img_h)
+{
+    detections_t *dets=create_detections(inf->max_detections*30); // fixme
+    float probsum=0;
 
-    image_t *image_scaled=image_scale(img_device, scale_w, scale_h);
-    assert(image_scaled!=0);
-    image_t *image_input=image_convert(image_scaled, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
-    assert(image_input!=0);
+    int num_classes=inf->md.num_classes;
+    int num_attributes=inf->md.num_person_attributes;
+    for(int i=0;i<rows;i++)
+    {
+        float max_prob=0;
+        int best_cl=0;
+        for(int j=0;j<num_classes;j++)
+        {
+            float prob=p[(4+j)*row_stride+i];
+            if (prob>max_prob)
+            {
+                max_prob=prob;
+                best_cl=j;
+            }
+        }
+        probsum+=max_prob;
+        if (max_prob>inf->det_thr)
+        {
+            detection_t *det=detection_add_end(dets);
+            assert(det!=0);
+            if (det)
+            {
+                float cx=p[0*row_stride+i];
+                float cy=p[1*row_stride+i];
+                float w=p[2*row_stride+i];
+                float h=p[3*row_stride+i];
 
-    auto input_dims = nvinfer1::Dims4{1, 3, image_input->height, image_input->width};
+                det->x0=cx-w*0.5;
+                det->x1=cx+w*0.5;
+                det->y0=cy-h*0.5;
+                det->y1=cy+h*0.5;
+                det->index=i;
+                det->cl=best_cl;
+                det->conf=max_prob;
+                det->num_face_points=0;
+                det->num_pose_points=0;
+            }
+        }
+    }
+
+    detections_nms_inplace(dets, inf->nms_thr);
+
+    for(int i=0;i<dets->num_detections;i++)
+    {
+        detection_t *d=&dets->det[i];
+        int index=d->index;
+        if (d->cl==inf->face_class_index)
+        {
+            d->num_face_points=5;
+            for(int i=0;i<d->num_face_points;i++)
+            {
+                d->face_points[i].x=p[(4+num_classes+num_attributes+3*i+0)*row_stride+index];
+                d->face_points[i].y=p[(4+num_classes+num_attributes+3*i+1)*row_stride+index];
+                d->face_points[i].conf=p[(4+num_classes+num_attributes+3*i+2)*row_stride+index];
+                //printf("facept %d %d %f %f %f\n",i,index,d->face_points[i].x,d->face_points[i].y,d->face_points[i].conf);
+            }
+        }
+        if (d->cl==inf->person_class_index)
+        {
+            d->num_pose_points=17;
+            for(int i=0;i<d->num_pose_points;i++)
+            {
+                d->pose_points[i].x=p[(4+num_classes+num_attributes+3*(i+5)+0)*row_stride+index];
+                d->pose_points[i].y=p[(4+num_classes+num_attributes+3*(i+5)+1)*row_stride+index];
+                d->pose_points[i].conf=p[(4+num_classes+num_attributes+3*(i+5)+2)*row_stride+index];
+            }
+            d->num_attr=num_attributes;
+            for(int i=0;i<num_attributes;i++)
+            {
+                d->attr[i]=p[(4+num_classes+i)*row_stride+index];
+            }
+        }
+    }
+    detections_scale(dets, 1.0/img_w, 1.0/img_h);
+    return dets;
+}
+
+void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
+{
+    // step 0: split into 'max batch' pieces
+    int max_batch=inf->max_batch;
+    if (num>max_batch)
+    {
+        for(int i=0;i<num;i+=max_batch) infer_batch(inf, img_list+i, dets+i, std::min(num-i, max_batch));
+        return;
+    }
+
+    int inf_max_w=std::min(inf->inf_limit_max_width, inf->max_w);
+    int inf_max_h=std::min(inf->inf_limit_max_height, inf->max_h);
+    // step 1: determine overall inference size
+    int max_w=0;
+    int max_h=0;
+    for(int i=0;i<num;i++)
+    {
+        image_t *img=img_list[i];
+        int scale_w=0;
+        int scale_h=0;
+        scale_to_fit(img->width, img->height, inf_max_w, inf_max_h, &scale_w, &scale_h, false);
+        max_w=std::max(max_w, scale_w);
+        max_h=std::max(max_h, scale_h);
+        debugf("%d) %dx%d->%dx%d\n",i,img->width,img->height,scale_w,scale_h);
+    }
+    int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
+    int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
+    debugf("INFER SIZE %dx%d\n",infer_w,infer_h);
+
+    // step 2: determined scaled size for each image
+    int image_widths[num], image_heights[num];
+    image_t *image_scaled_conv[num];
+    for(int i=0;i<num;i++)
+    {
+        image_t *img=img_list[i];
+        scale_to_fit(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i, true);
+        image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
+        image_format_t fmt=image_scaled->format;
+        if (fmt!=IMAGE_FORMAT_RGB24_DEVICE) fmt=IMAGE_FORMAT_YUV420_DEVICE;
+        image_scaled_conv[i]=image_convert(image_scaled, fmt);
+        destroy_image(image_scaled);
+    }
+    // step 3: make planar RGB image with all batch images
+    image_format_t fmt=inf->output_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
+    int elt_size=inf->output_is_fp16 ? 2 : 4;
+    image_t *inf_image=create_image(infer_w, infer_h*num, fmt); // image big enough to hold "num" planar RGB images
+    for(int i=0;i<num;i++)
+    {
+        image_t *img=image_scaled_conv[i];
+        image_add_dependency(inf_image, img);
+        if (inf->output_is_fp16)
+        {
+            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
+            {
+                cuda_convert_rgb24_to_planar_fp16(
+                    img->rgb,
+                    inf_image->rgb+i*3*elt_size*infer_w*infer_h,
+                    img->width, img->height,
+                    infer_w, infer_h,
+                    img->stride_rgb,
+                    inf_image->stream);
+            }
+            else
+            {
+                cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv,
+                                inf_image->rgb+i*3*elt_size*infer_w*infer_h,
+                                infer_w*infer_h,
+                                img->width, img->height,
+                                infer_w, infer_h, inf_image->stream);
+            }
+        }
+        else
+        {
+            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
+            {
+                cuda_convert_rgb24_to_planar_fp32(
+                    img->rgb,
+                    (float*)(inf_image->rgb+i*3*elt_size*infer_w*infer_h),
+                    img->width, img->height,
+                    infer_w, infer_h,
+                    img->stride_rgb,
+                    inf_image->stream);
+            }
+            else
+            {
+                cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv,
+                                inf_image->rgb+i*3*elt_size*infer_w*infer_h,
+                                infer_w*infer_h,
+                                img->width, img->height,
+                                infer_w, infer_h, inf_image->stream);
+            }
+        }
+    }
+    //display_image("inf", inf_image);
+    // step4: run inference
+    auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
     assert(true==inf->ec->setInputShape(inf->input_tensor_name, input_dims));
-    assert(true==inf->ec->setTensorAddress(inf->input_tensor_name, image_input->rgb));
+    assert(true==inf->ec->setTensorAddress(inf->input_tensor_name, inf_image->rgb));
 
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
@@ -335,84 +592,48 @@ detections_t *infer(infer_t *inf, image_t *img)
     assert(0==inf->ec->inferShapes(0,0));
 
     Dims outputDims = inf->ec->getTensorShape(inf->output_tensor_name);
+    assert(num==outputDims.d[0]); // batch
     int columns=outputDims.d[1];
     int rows=outputDims.d[2];
 
-    cuda_stream_add_dependency(inf->stream, image_input->stream);
+    debugf("output dims %d %d %d\n",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2]);
+
+    cuda_stream_add_dependency(inf->stream, inf_image->stream);
     assert(true==inf->ec->enqueueV3(inf->stream));
     cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
+
+    // step5: process detections
+
     cuStreamSynchronize(inf->stream);
 
-    detections_t *dets=create_detections(inf->max_detections*10); // fixme
+    destroy_image(inf_image);
+    for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
 
     float *p=(float *)inf->output_mem_host;
-    float probsum=0;
-
-    int num_classes=inf->num_classes;
-    for(int i=0;i<rows;i++)
+    for(int i=0;i<num;i++)
     {
-        float max_prob=0;
-        int best_cl=0;
-        for(int j=0;j<num_classes;j++)
-        {
-            float prob=p[(4+j)*rows+i];
-            if (prob>max_prob)
-            {
-                max_prob=prob;
-                best_cl=j;
-            }
-        }
-        probsum+=max_prob;
-        if (max_prob>inf->det_thr)
-        {
-            detection_t *det=detection_add_end(dets);
-            assert(det!=0);
-            if (det)
-            {
-                float cx=p[0*rows+i];
-                float cy=p[1*rows+i];
-                float w=p[2*rows+i];
-                float h=p[3*rows+i];
-
-                det->x0=cx-w*0.5;
-                det->x1=cx+w*0.5;
-                det->y0=cy-h*0.5;
-                det->y1=cy+h*0.5;
-                det->index=i;
-                det->cl=best_cl;
-                det->conf=max_prob;
-            }
-        }
+        dets[i]=process_detections(inf,
+                                   p+i*rows*columns, /*offset into batch*/
+                                   rows,
+                                   rows,
+                                   image_widths[i], image_heights[i]);
+        debugf("i=%d (%dx%d, %d,%d,%d)\n",i,image_widths[i], image_heights[i],rows,columns,inf->output_size);
     }
+}
 
-    detections_nms_inplace(dets, inf->nms_thr);
-    //show_detections(dets);
+detections_t *infer(infer_t *inf, image_t *img)
+{
+    detections_t *ret[1];
+    image_t *images[1];
+    images[0]=img;
+    infer_batch(inf, images, ret, 1);
+    return ret[0];
+}
 
-    for(int i=0;i<dets->num_detections;i++)
-    {
-        detection_t *d=&dets->det[i];
-        detection_create_keypoints(d);
-        keypoints_t *kp=d->kp;
-        int index=d->index;
-        for(int i=0;i<5;i++)
-        {
-            kp->face_points[i].x=p[(4+num_classes+3*i+0)*rows+index];
-            kp->face_points[i].y=p[(4+num_classes+3*i+1)*rows+index];
-            kp->face_points[i].conf=p[(4+num_classes+3*i+2)*rows+index];
-        }
-        for(int i=0;i<17;i++)
-        {
-            kp->pose_points[i].x=p[(4+num_classes+3*(i+5)+0)*rows+index];
-            kp->pose_points[i].y=p[(4+num_classes+3*(i+5)+1)*rows+index];
-            kp->pose_points[i].conf=p[(4+num_classes+3*(i+5)+2)*rows+index];
-        }
-    }
-    detections_scale(dets, 1.0/image_input->width, 1.0/image_input->height);
-
-    inf->fn++;
-    destroy_image(img_device);
-    destroy_image(image_scaled);
-    destroy_image(image_input);
-
-    return dets;
+void infer_configure(infer_t *inf, infer_config_t *config)
+{
+    if (!inf) return;
+    if (!config) return;
+    if (config->set_det_thr) inf->det_thr=config->det_thr;
+    if (config->set_nms_thr) inf->nms_thr=config->nms_thr;
 }
