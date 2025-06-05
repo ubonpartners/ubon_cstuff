@@ -64,8 +64,7 @@ static void *infer_thread_fn(void *arg)
     if (!h) return NULL;
 
     // Initialize per‐thread CUDA / image state
-    init_cuda_stuff();
-    image_init();
+    cuda_thread_init();
 
     // Pre‐allocate fixed‐size arrays on the stack for up to MAX_BATCH jobs
     image_t          *imgs[MAX_BATCH];
