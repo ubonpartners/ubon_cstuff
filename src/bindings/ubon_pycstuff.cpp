@@ -148,6 +148,30 @@ public:
     image_t* raw() { return img; }
 };
 
+static void pop_float(py::dict& cfg, const char* key, float& dst, bool& flag) {
+    if (cfg.contains(key)) {
+        dst = cfg[key].cast<float>();
+        flag = true;
+        cfg.attr("pop")(key);
+    }
+};
+
+static void pop_int(py::dict& cfg, const char* key, int& dst, bool& flag) {
+    if (cfg.contains(key)) {
+        dst = cfg[key].cast<int>();
+        flag = true;
+        cfg.attr("pop")(key);
+    }
+};
+
+static void pop_bool(py::dict& cfg, const char* key, bool& dst, bool& flag) {
+    if (cfg.contains(key)) {
+        dst = cfg[key].cast<bool>();
+        flag = true;
+        cfg.attr("pop")(key);
+    }
+};
+
 class c_infer {
 private:
     py::list convert_points(kp_t *pts, int n)
@@ -229,40 +253,26 @@ public:
 
     void configure(py::dict cfg_dict) {
         infer_config_t config{};
-        config.set_det_thr = false;
-        config.set_nms_thr = false;
+        py::dict cfg_copy(cfg_dict);  // Mutable copy
 
-        if (cfg_dict.contains("det_thr")) {
-            config.det_thr = cfg_dict["det_thr"].cast<float>();
-            config.set_det_thr = true;
-        }
-        if (cfg_dict.contains("nms_thr")) {
-            config.nms_thr = cfg_dict["nms_thr"].cast<float>();
-            config.set_nms_thr = true;
-        }
-        if (cfg_dict.contains("use_cuda_nms")) {
-            config.use_cuda_nms = cfg_dict["use_cuda_nms"].cast<bool>();
-            config.set_use_cuda_nms = true;
-        }
-        if (cfg_dict.contains("limit_max_batch")) {
-            config.limit_max_batch = cfg_dict["limit_max_batch"].cast<int>();
-            config.set_limit_max_batch = true;
-        }
-        if (cfg_dict.contains("limit_max_width")) {
-            config.limit_max_width = cfg_dict["limit_max_width"].cast<int>();
-            config.set_limit_max_width = true;
-        }
-        if (cfg_dict.contains("limit_max_height")) {
-            config.limit_max_height = cfg_dict["limit_max_height"].cast<int>();
-            config.set_limit_max_height = true;
-        }
-        if (cfg_dict.contains("limit_min_width")) {
-            config.limit_min_width = cfg_dict["limit_min_width"].cast<int>();
-            config.set_limit_min_width = true;
-        }
-        if (cfg_dict.contains("limit_min_height")) {
-            config.limit_min_height = cfg_dict["limit_min_height"].cast<int>();
-            config.set_limit_min_height = true;
+        // Apply config
+        pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
+        pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
+        pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
+        pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
+        pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
+        pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);
+        pop_int(cfg_copy, "limit_min_width", config.limit_min_width, config.set_limit_min_width);
+        pop_int(cfg_copy, "limit_min_height", config.limit_min_height, config.set_limit_min_height);
+        pop_int(cfg_copy, "max_detections", config.max_detections, config.set_max_detections);
+
+        // Check for unknown keys
+        if (py::len(cfg_copy) > 0) {
+            std::string unknown_keys;
+            for (auto item : cfg_copy) {
+                unknown_keys += py::str(item.first).cast<std::string>() + " ";
+            }
+            throw std::runtime_error("Unknown config keys: " + unknown_keys);
         }
 
         infer_configure(inf, &config);

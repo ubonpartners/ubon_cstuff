@@ -34,6 +34,7 @@ typedef struct infer_config
     int limit_min_height;
     int limit_max_width;
     int limit_max_height;
+    int max_detections;
     bool set_det_thr;
     bool set_nms_thr;
     bool set_use_cuda_nms;
@@ -42,6 +43,7 @@ typedef struct infer_config
     bool set_limit_min_height;
     bool set_limit_max_width;
     bool set_limit_max_height;
+    bool set_max_detections;
 
 } infer_config_t;
 

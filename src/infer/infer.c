@@ -37,6 +37,7 @@ struct infer
     CUdeviceptr output_mem;
     cudaStream_t stream;
     CudaNMSHandle nms;
+    int nms_max_boxes;
     void *output_mem_host;
     int person_class_index, face_class_index;
     int max_batch;
@@ -229,7 +230,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->inf_limit_max_height=640;
     inf->inf_limit_min_width=128;
     inf->inf_limit_min_height=128;
-    inf->inf_limit_max_batch=256;
+    inf->inf_limit_max_batch=8;//256;
     inf->max_detections=200;
     inf->person_class_index=-1;
     inf->face_class_index=-1;
@@ -359,8 +360,6 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             expected_size,inf->detection_attribute_size,
             inf->md.num_classes,inf->md.num_person_attributes,inf->md.num_keypoints);
     }
-
-    inf->nms=cuda_nms_allocate_workspace(8400, inf->md.num_classes,250,0);
 
     return inf;
 }
@@ -501,10 +500,20 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                                         int *image_widths, int *image_heights,
                                         detections_t **dets)
 {
+    if (numBoxes>inf->nms_max_boxes)
+    {
+        if (inf->nms) cuda_nms_free_workspace(inf->nms);
+        inf->nms_max_boxes=0;
+    }
+    if (inf->nms==0)
+    {
+        inf->nms_max_boxes=numBoxes;
+        inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, inf->max_detections, 0);
+    }
+
     std::vector<std::vector<int>> keptIndices;
     std::vector<float> hostGathered;
     hostGathered.reserve(num * columns * 50); // roughly
-
     cuda_nms_run(
         inf->nms,
         (float *)inf->output_mem,
@@ -723,4 +732,11 @@ void infer_configure(infer_t *inf, infer_config_t *config)
     if (config->set_limit_min_height) inf->inf_limit_min_height=config->limit_min_height;
     if (config->set_limit_max_width) inf->inf_limit_max_width=config->limit_max_width;
     if (config->set_limit_max_height) inf->inf_limit_max_height=config->limit_max_height;
+    if (config->set_max_detections)
+    {
+        if (inf->nms) cuda_nms_free_workspace(inf->nms);
+        inf->nms_max_boxes=0;
+        inf->nms=0;
+        inf->max_detections=config->max_detections;
+    }
 }
