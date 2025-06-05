@@ -583,7 +583,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                         det->pose_points[k].conf=ptr[4+nc+num_attributes+3*(k+5)+2];
                     }
                     det->num_attr=num_attributes;
-                    for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+i];
+                    for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+k];
                 }
                 ptr+=columns;
             }
