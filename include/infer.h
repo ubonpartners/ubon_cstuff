@@ -28,8 +28,21 @@ typedef struct infer_config
 {
     float det_thr; // overall detection threshold for all classes
     float nms_thr;
+    bool use_cuda_nms;
+    int limit_max_batch;
+    int limit_min_width;
+    int limit_min_height;
+    int limit_max_width;
+    int limit_max_height;
     bool set_det_thr;
     bool set_nms_thr;
+    bool set_use_cuda_nms;
+    bool set_limit_max_batch;
+    bool set_limit_min_width;
+    bool set_limit_min_height;
+    bool set_limit_max_width;
+    bool set_limit_max_height;
+
 } infer_config_t;
 
 infer_t *infer_create(const char *model_trt, const char *config_yaml);

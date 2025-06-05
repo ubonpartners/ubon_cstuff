@@ -56,8 +56,8 @@ int main(int argc, char *argv[])
         destroy_detections(gts);
     }*/
 
-    inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224.trt", "/mldata/config/train/train_attr.yaml");
-    //inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224_dyn.trt", "/mldata/config/train/train_attr.yaml");
+    //inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224.trt", "/mldata/config/train/train_attr.yaml");
+    inf=infer_create("/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt", "/mldata/config/train/train_attr.yaml");
     v=nvof_create(0,320,320);
 
     if (argc>1)

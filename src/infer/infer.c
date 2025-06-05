@@ -19,6 +19,7 @@
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 #include "log.h"
+#include "cuda_nms.h"
 #include <yaml-cpp/yaml.h>
 
 #define debugf if (0) printf
@@ -35,11 +36,13 @@ struct infer
     IExecutionContext *ec;
     CUdeviceptr output_mem;
     cudaStream_t stream;
+    CudaNMSHandle nms;
     void *output_mem_host;
     int person_class_index, face_class_index;
     int max_batch;
     int min_w, min_h;
     int max_w, max_h;
+    bool use_cuda_nms;
     bool input_is_fp16, output_is_fp16;
     int output_size;
     int fn;
@@ -49,6 +52,7 @@ struct infer
     int inf_limit_min_height;
     int inf_limit_max_width;
     int inf_limit_max_height;
+    int inf_limit_max_batch;
     int max_detections;
     int detection_attribute_size;
     const char *input_tensor_name;
@@ -225,9 +229,11 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->inf_limit_max_height=640;
     inf->inf_limit_min_width=128;
     inf->inf_limit_min_height=128;
+    inf->inf_limit_max_batch=256;
     inf->max_detections=200;
     inf->person_class_index=-1;
     inf->face_class_index=-1;
+    inf->use_cuda_nms=true;
 
     cudaStreamCreate(&inf->stream);
 
@@ -354,6 +360,8 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             inf->md.num_classes,inf->md.num_person_attributes,inf->md.num_keypoints);
     }
 
+    inf->nms=cuda_nms_allocate_workspace(8400, inf->md.num_classes,250,0);
+
     return inf;
 }
 
@@ -361,6 +369,7 @@ void infer_destroy(infer_t *inf)
 {
     if (!inf) return;
     cudaStreamDestroy(inf->stream);
+    if (inf->nms) cuda_nms_free_workspace(inf->nms);
     if (inf->ec) delete inf->ec;
     if (inf->engine) delete inf->engine;
     if (inf->runtime) delete inf->runtime;
@@ -488,10 +497,105 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
     return dets;
 }
 
+static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int numBoxes,
+                                        int *image_widths, int *image_heights,
+                                        detections_t **dets)
+{
+    std::vector<std::vector<int>> keptIndices;
+    std::vector<float> hostGathered;
+    hostGathered.reserve(num * columns * 50); // roughly
+
+    cuda_nms_run(
+        inf->nms,
+        (float *)inf->output_mem,
+        num,
+        numBoxes,
+        inf->md.num_classes,
+        columns,
+        inf->det_thr,
+        inf->nms_thr,
+        inf->max_detections,
+        keptIndices,
+        inf->stream);
+
+    cuStreamSynchronize(inf->stream);
+
+    int nc=inf->md.num_classes;
+    int num_attributes=inf->md.num_person_attributes;
+    for(int b=0;b<num;b++)
+    {
+        // Slice keptIndices for batch b
+        std::vector<std::vector<int>> keptPerBatch;
+        keptPerBatch.reserve(nc);
+        for (int cl = 0; cl < nc; ++cl)
+            keptPerBatch.push_back(keptIndices[b * nc + cl]);
+
+        cuda_nms_gather_kept_outputs(
+            /*deviceOutputDev=*/ ((float*)inf->output_mem)+b*numBoxes*columns,
+            /*numBoxes=*/       numBoxes,
+            /*rowSize=*/        columns,
+            /*keptIndices=*/    keptPerBatch,
+            /*hostGathered=*/   hostGathered
+        );
+
+        float* ptr = hostGathered.data();
+        int num_dets=0;
+        for(int cl=0;cl<nc;cl++) num_dets+=keptIndices[b*nc+cl].size();
+        dets[b]=create_detections((num_dets<8) ? 8 : num_dets);
+        for(int cl=0;cl<nc;cl++)
+        {
+            int n=keptIndices[b*nc+cl].size();
+            for(int i=0;i<n;i++)
+            {
+                detection_t *det=detection_add_end(dets[b]);
+                assert(det!=0);
+                float cx=ptr[0];
+                float cy=ptr[1];
+                float w=ptr[2];
+                float h=ptr[3];
+                det->x0=cx-w*0.5;
+                det->x1=cx+w*0.5;
+                det->y0=cy-h*0.5;
+                det->y1=cy+h*0.5;
+                det->index=keptIndices[b*nc+cl][i];
+                det->cl=cl;
+                det->conf=ptr[4+cl];
+                det->num_face_points=0;
+                det->num_pose_points=0;
+
+                if (cl==inf->face_class_index)
+                {
+                    det->num_face_points=5;
+                    for(int k=0;k<det->num_face_points;k++)
+                    {
+                        det->face_points[k].x=ptr[4+nc+num_attributes+3*k+0];
+                        det->face_points[k].y=ptr[4+nc+num_attributes+3*k+1];
+                        det->face_points[k].conf=ptr[4+nc+num_attributes+3*k+2];
+                    }
+                }
+                if (cl==inf->person_class_index)
+                {
+                    det->num_pose_points=17;
+                    for(int k=0;k<det->num_pose_points;k++)
+                    {
+                        det->pose_points[k].x=ptr[4+nc+num_attributes+3*(k+5)+0];
+                        det->pose_points[k].y=ptr[4+nc+num_attributes+3*(k+5)+1];
+                        det->pose_points[k].conf=ptr[4+nc+num_attributes+3*(k+5)+2];
+                    }
+                    det->num_attr=num_attributes;
+                    for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+i];
+                }
+                ptr+=columns;
+            }
+        }
+        detections_scale(dets[b], 1.0/image_widths[b], 1.0/image_heights[b]);
+    }
+}
+
 void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 {
     // step 0: split into 'max batch' pieces
-    int max_batch=inf->max_batch;
+    int max_batch=std::min(inf->inf_limit_max_batch, inf->max_batch);
     if (num>max_batch)
     {
         for(int i=0;i<num;i+=max_batch) infer_batch(inf, img_list+i, dets+i, std::min(num-i, max_batch));
@@ -563,8 +667,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     Dims outputDims = inf->ec->getTensorShape(inf->output_tensor_name);
     assert(num==outputDims.d[0]); // batch
-    int columns=outputDims.d[1];
-    int rows=outputDims.d[2];
+    int columns=outputDims.d[1]; // eg 110
+    int rows=outputDims.d[2];   // eg 4620
+    int numBoxes=rows;
 
     debugf("output dims %d %d %d\n",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2]);
 
@@ -574,21 +679,27 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     // step5: process detections
 
-    cuStreamSynchronize(inf->stream);
+    if (inf->nms && inf->use_cuda_nms)
+    {
+        process_detections_cuda_nms(inf, num, columns, rows, image_widths, image_heights, dets);
+    }
+    else
+    {
+        cuStreamSynchronize(inf->stream);
+        float *p=(float *)inf->output_mem_host;
+        for(int i=0;i<num;i++)
+        {
+            dets[i]=process_detections(inf,
+                                    p+i*rows*columns, /*offset into batch*/
+                                    rows,
+                                    rows,
+                                    image_widths[i], image_heights[i]);
+            debugf("i=%d (%dx%d, %d,%d,%d)\n",i,image_widths[i], image_heights[i],rows,columns,inf->output_size);
+        }
+    }
 
     destroy_image(inf_image);
     for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
-
-    float *p=(float *)inf->output_mem_host;
-    for(int i=0;i<num;i++)
-    {
-        dets[i]=process_detections(inf,
-                                   p+i*rows*columns, /*offset into batch*/
-                                   rows,
-                                   rows,
-                                   image_widths[i], image_heights[i]);
-        debugf("i=%d (%dx%d, %d,%d,%d)\n",i,image_widths[i], image_heights[i],rows,columns,inf->output_size);
-    }
 }
 
 detections_t *infer(infer_t *inf, image_t *img)
@@ -606,4 +717,10 @@ void infer_configure(infer_t *inf, infer_config_t *config)
     if (!config) return;
     if (config->set_det_thr) inf->det_thr=config->det_thr;
     if (config->set_nms_thr) inf->nms_thr=config->nms_thr;
+    if (config->set_use_cuda_nms) inf->use_cuda_nms=config->use_cuda_nms;
+    if (config->set_limit_max_batch) inf->inf_limit_max_batch=config->limit_max_batch;
+    if (config->set_limit_min_width) inf->inf_limit_min_width=config->limit_min_width;
+    if (config->set_limit_min_height) inf->inf_limit_min_height=config->limit_min_height;
+    if (config->set_limit_max_width) inf->inf_limit_max_width=config->limit_max_width;
+    if (config->set_limit_max_height) inf->inf_limit_max_height=config->limit_max_height;
 }

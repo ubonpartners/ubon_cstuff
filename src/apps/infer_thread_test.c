@@ -17,7 +17,7 @@ static infer_thread_t *infer_thread=0;
 static void frame_callback(void *context, image_t *img)
 {
     // show inference working by doing two lots of inference with different ROIs
-    roi_t roi_a, roi_b;
+    roi_t roi_a, roi_b, roi_c;
     roi_a.box[0]=0.25;
     roi_a.box[1]=0.25;
     roi_a.box[2]=0.75;
@@ -27,6 +27,11 @@ static void frame_callback(void *context, image_t *img)
     roi_b.box[1]=0.1;
     roi_b.box[2]=0.2;
     roi_b.box[3]=0.8;
+
+    roi_c.box[0]=0;
+    roi_c.box[1]=0;
+    roi_c.box[2]=1;
+    roi_c.box[3]=1;
 
     infer_thread_result_handle_t *ha=infer_thread_infer_async(infer_thread, img, roi_a);
     infer_thread_result_handle_t *hb=infer_thread_infer_async(infer_thread, img, roi_b);
@@ -61,7 +66,7 @@ int main(int argc, char *argv[])
     config.nms_thr=0.5;
     config.set_nms_thr=true;
 
-    infer_thread=infer_thread_start("/mldata/weights/trt/yolo11l-dpa-131224.trt",
+    infer_thread=infer_thread_start("/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt",
                                     "/mldata/config/train/train_attr.yaml", &config);
 
     model_description_t *md=infer_thread_get_model_description(infer_thread);

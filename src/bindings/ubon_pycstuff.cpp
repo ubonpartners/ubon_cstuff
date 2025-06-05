@@ -240,6 +240,30 @@ public:
             config.nms_thr = cfg_dict["nms_thr"].cast<float>();
             config.set_nms_thr = true;
         }
+        if (cfg_dict.contains("use_cuda_nms")) {
+            config.use_cuda_nms = cfg_dict["use_cuda_nms"].cast<bool>();
+            config.set_use_cuda_nms = true;
+        }
+        if (cfg_dict.contains("limit_max_batch")) {
+            config.limit_max_batch = cfg_dict["limit_max_batch"].cast<int>();
+            config.set_limit_max_batch = true;
+        }
+        if (cfg_dict.contains("limit_max_width")) {
+            config.limit_max_width = cfg_dict["limit_max_width"].cast<int>();
+            config.set_limit_max_width = true;
+        }
+        if (cfg_dict.contains("limit_max_height")) {
+            config.limit_max_height = cfg_dict["limit_max_height"].cast<int>();
+            config.set_limit_max_height = true;
+        }
+        if (cfg_dict.contains("limit_min_width")) {
+            config.limit_min_width = cfg_dict["limit_min_width"].cast<int>();
+            config.set_limit_min_width = true;
+        }
+        if (cfg_dict.contains("limit_min_height")) {
+            config.limit_min_height = cfg_dict["limit_min_height"].cast<int>();
+            config.set_limit_min_height = true;
+        }
 
         infer_configure(inf, &config);
     }
