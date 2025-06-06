@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include "detections.h"
 
-#define MAX_DETS 200
+#define MAX_DETS 255
 
 /* Pair of uint8 indices */
 typedef struct {
