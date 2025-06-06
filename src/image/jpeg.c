@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
+#include <dirent.h>
+#include <ctype.h>
 #include <jpeglib.h>
 #include <setjmp.h>
 #include <cassert>
@@ -219,4 +222,51 @@ void save_jpeg(const char *filename, image_t *img)
     image_t *temp=image_convert(img, inter);
     save_jpeg(filename, temp);
     destroy_image(temp);
+}
+
+static int has_jpeg_extension(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if (!dot) return 0;
+
+    // Compare extension case-insensitively
+    if (strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0)
+        return 1;
+
+    return 0;
+}
+
+int load_images_from_folder(const char *path, image_t **dest, int max_images)
+{
+    DIR *dir;
+    struct dirent *entry;
+    int count = 0;
+
+    if (!path || !dest || max_images <= 0)
+        return 0;
+
+    dir = opendir(path);
+    if (!dir) {
+        perror("opendir failed");
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL && count < max_images) {
+        if (entry->d_type != DT_REG && entry->d_type != DT_UNKNOWN)
+            continue;
+
+        if (!has_jpeg_extension(entry->d_name))
+            continue;
+
+        // Construct full file path
+        char fullpath[4096];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+        image_t *img = load_jpeg(fullpath);
+        if (img) {
+            dest[count++] = img;
+        }
+    }
+
+    closedir(dir);
+    return count;
 }

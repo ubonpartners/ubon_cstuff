@@ -143,9 +143,10 @@ void show_detections(detections_t *dets)
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=&dets->det[i];
-        printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f]\n",i,
+        printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f] area %0.3f\n",i,
             (det->cl==0) ? "face" : "person",
-            det->conf, det->index, det->x0, det->y0, det->x1, det->y0);
+            det->conf, det->index, det->x0, det->y0, det->x1, det->y0,
+            (det->y1-det->y0)*(det->x1-det->x0));
     }
 }
 

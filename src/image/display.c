@@ -102,7 +102,7 @@ void display_image(display_t *d, image_t *img)
     {
         d->width=img->width*s;
         d->height=img->height*s;
-        d->window = SDL_CreateWindow(d->title, SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,img->width*s, img->height*s,SDL_WINDOW_SHOWN);  
+        d->window = SDL_CreateWindow(d->title, SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,img->width*s, img->height*s,SDL_WINDOW_SHOWN);
         d->renderer = SDL_CreateRenderer(d->window, -1, SDL_RENDERER_ACCELERATED);
         d->texture = SDL_CreateTexture(d->renderer,SDL_PIXELFORMAT_RGB24,SDL_TEXTUREACCESS_STREAMING,img->width,img->height);
     }
@@ -132,7 +132,7 @@ void display_image(display_t *d, image_t *img)
 
     SDL_Event e;
     SDL_PollEvent(&e);
-    if (e.type == SDL_QUIT) 
+    if (e.type == SDL_QUIT)
     {
         printf("Quitting\n");
         exit(-1);

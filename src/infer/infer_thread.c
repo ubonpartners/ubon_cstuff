@@ -1,5 +1,5 @@
 // infer_thread.c
-
+#include <unistd.h>
 #include "infer_thread.h"
 #include "cuda_stuff.h"
 #include "image.h"
@@ -9,8 +9,7 @@
 #include <string.h>
 #include <assert.h>
 #include "display.h"
-
-static int MAX_BATCH=32;
+#include "profile.h"
 
 /*
  * Internal job struct: holds the image, ROI, and result handle
@@ -52,6 +51,7 @@ struct infer_thread {
     infer_job_t *job_head;
     infer_job_t *job_tail;
     int stop;
+    infer_thread_stats_t stats;
 };
 
 /*
@@ -66,15 +66,15 @@ static void *infer_thread_fn(void *arg)
     // Initialize per‐thread CUDA / image state
     cuda_thread_init();
 
-    // Pre‐allocate fixed‐size arrays on the stack for up to MAX_BATCH jobs
-    image_t          *imgs[MAX_BATCH];
-    detections_t     *dets_arr[MAX_BATCH];
-    infer_thread_result_handle_t *handles[MAX_BATCH];
-    infer_job_t      *jobs[MAX_BATCH];
-    roi_t            rois[MAX_BATCH];
+    // Pre‐allocate fixed‐size arrays on the stack for up to INFER_THREAD_MAX_BATCH jobs
+    image_t          *imgs[INFER_THREAD_MAX_BATCH];
+    detections_t     *dets_arr[INFER_THREAD_MAX_BATCH];
+    infer_thread_result_handle_t *handles[INFER_THREAD_MAX_BATCH];
+    infer_job_t      *jobs[INFER_THREAD_MAX_BATCH];
+    roi_t            rois[INFER_THREAD_MAX_BATCH];
 
     int max_batch=h->md->max_batch;
-    if (max_batch>MAX_BATCH) max_batch=MAX_BATCH;
+    if (max_batch>INFER_THREAD_MAX_BATCH) max_batch=INFER_THREAD_MAX_BATCH;
 
     while (1) {
         int count = 0;
@@ -94,6 +94,7 @@ static void *infer_thread_fn(void *arg)
         // 3) Pop up to max_batch jobs from the head of the queue
         //    — we know job_head != NULL, so at least one iteration
 
+        //usleep(50000);
         while (count < max_batch && h->job_head != NULL) {
             infer_job_t *job = h->job_head;
             h->job_head = job->next;
@@ -116,13 +117,24 @@ static void *infer_thread_fn(void *arg)
         //    and that it will allocate + return one detections_t* per input image.
         //
 
-        image_t *img_cropped[MAX_BATCH];
+        image_t *img_cropped[INFER_THREAD_MAX_BATCH];
         for(int i=0;i<count;i++)
         {
             img_cropped[i]=image_crop_roi(imgs[i], rois[i], &handles[i]->inference_roi);
+            h->stats.total_roi_area=roi_area(&handles[i]->inference_roi);
         }
         //display_image("crop", img_cropped[0]);
+
+        double infer_start_time=profile_time();
+
         infer_batch(h->infer, img_cropped, dets_arr, count);
+
+        double infer_elapse_time=profile_time()-infer_start_time;
+
+        h->stats.batch_size_histogram[count]+=1;
+        h->stats.batch_size_histogram_total_time[count]+=infer_elapse_time;
+        h->stats.total_batches++;
+        h->stats.total_images+=count;
 
         for (int i = 0; i < count; ++i)
         {
@@ -272,4 +284,40 @@ void infer_thread_wait_result(infer_thread_result_handle_t *handle, infer_thread
     pthread_mutex_destroy(&handle->mutex);
     pthread_cond_destroy(&handle->cond);
     free(handle);
+}
+
+void infer_thread_get_stats(infer_thread_t *h, infer_thread_stats_t *s)
+{
+    memcpy(s, &h->stats, sizeof(infer_thread_stats_t));
+    s->mean_batch_size=s->total_images/(s->total_batches+0.0);
+    s->mean_roi_area=s->total_roi_area/s->total_images;
+    for (int i = 0; i < INFER_THREAD_MAX_BATCH; ++i) {
+        if (s->batch_size_histogram[i]!=0)
+            s->batch_size_histogram_time_per_inference[i]=s->batch_size_histogram_total_time[i]/s->batch_size_histogram[i];
+    }
+}
+
+void infer_thread_print_stats(infer_thread_t *h)
+{
+    infer_thread_stats_t ss;
+    infer_thread_stats_t *s=&ss;
+    infer_thread_get_stats(h, s);
+
+    printf("=== Infer Thread Stats ===\n");
+    printf("Total Batches   : %u\n", s->total_batches);
+    printf("Total Images    : %u\n", s->total_images);
+    printf("Total ROI Area  : %.2f\n", s->total_roi_area);
+    printf("Mean Batch Size : %.2f\n", s->mean_batch_size);
+    printf("Mean ROI Area   : %.2f\n", s->mean_roi_area);
+
+    printf("Batch Size Histogram:\n");
+    for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {
+        if (s->batch_size_histogram[i] > 0) {
+            printf("  Batch Size %2d: %8u Time/infer: %6.3fms Time/img %6.3fms\n", i,
+                s->batch_size_histogram[i],
+                s->batch_size_histogram_time_per_inference[i]*1000.0,
+                s->batch_size_histogram_time_per_inference[i]*1000.0/i
+            );
+        }
+    }
 }

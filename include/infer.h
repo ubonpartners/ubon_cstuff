@@ -44,7 +44,6 @@ typedef struct infer_config
     bool set_limit_max_width;
     bool set_limit_max_height;
     bool set_max_detections;
-
 } infer_config_t;
 
 infer_t *infer_create(const char *model_trt, const char *config_yaml);

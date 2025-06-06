@@ -136,6 +136,7 @@ set(APP_MAIN_FILES
     ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
     ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
     ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
+    ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
 )
 
 add_library(uboncstufflib STATIC ${SRC_FILES} ${CUDA_FILES})

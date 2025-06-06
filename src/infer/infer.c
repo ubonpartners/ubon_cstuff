@@ -218,19 +218,18 @@ model_description_t *infer_get_model_description(infer_t *inf)
     return &inf->md;
 }
 
-
 infer_t *infer_create(const char *model, const char *yaml_config)
 {
     infer_t *inf=(infer_t *)malloc(sizeof(infer_t));
     memset(inf, 0, sizeof(infer_t));
 
     inf->nms_thr=0.45;
-    inf->det_thr=0.05;
+    inf->det_thr=0.2;
     inf->inf_limit_max_width=640;
     inf->inf_limit_max_height=640;
     inf->inf_limit_min_width=128;
     inf->inf_limit_min_height=128;
-    inf->inf_limit_max_batch=8;//256;
+    inf->inf_limit_max_batch=8;
     inf->max_detections=200;
     inf->person_class_index=-1;
     inf->face_class_index=-1;
@@ -240,7 +239,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
     log_debug("Infer create");
 
-    if ((yaml_config!=0) and (strlen(yaml_config)>0))
+    if ((yaml_config==0)||(strlen(yaml_config)==0))
     {
         log_info("infer_create: No config specified; trying default:");
         yaml_config=default_config;
@@ -416,50 +415,48 @@ static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *re
 
 static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride, int img_w, int img_h)
 {
-    detections_t *dets=create_detections(inf->max_detections*30); // fixme
-    float probsum=0;
+    detections_t *temp_dets=create_detections(inf->max_detections*10); // will hold pre-NMS detections for 1 class
+    detections_t *dets=create_detections(inf->max_detections); // output post-NMS detections
 
     int num_classes=inf->md.num_classes;
     int num_attributes=inf->md.num_person_attributes;
-    for(int i=0;i<rows;i++)
+    for(int cl=0;cl<num_classes;cl++)
     {
-        float max_prob=0;
-        int best_cl=0;
-        for(int j=0;j<num_classes;j++)
+        temp_dets->num_detections=0;
+        for(int i=0;i<rows;i++)
         {
-            float prob=p[(4+j)*row_stride+i];
-            if (prob>max_prob)
+            float conf=p[(4+cl)*row_stride+i];
+            if (conf>inf->det_thr)
             {
-                max_prob=prob;
-                best_cl=j;
+                detection_t *det=detection_add_end(temp_dets);
+                assert(det!=0);
+                if (det)
+                {
+                    float cx=p[0*row_stride+i];
+                    float cy=p[1*row_stride+i];
+                    float w=p[2*row_stride+i];
+                    float h=p[3*row_stride+i];
+
+                    det->x0=cx-w*0.5;
+                    det->x1=cx+w*0.5;
+                    det->y0=cy-h*0.5;
+                    det->y1=cy+h*0.5;
+                    det->index=i;
+                    det->cl=cl;
+                    det->conf=conf;
+                    det->num_face_points=0;
+                    det->num_pose_points=0;
+                }
             }
         }
-        probsum+=max_prob;
-        if (max_prob>inf->det_thr)
+        detections_nms_inplace(temp_dets, inf->nms_thr);
+        for(int i=0;i<temp_dets->num_detections;i++)
         {
-            detection_t *det=detection_add_end(dets);
-            assert(det!=0);
-            if (det)
-            {
-                float cx=p[0*row_stride+i];
-                float cy=p[1*row_stride+i];
-                float w=p[2*row_stride+i];
-                float h=p[3*row_stride+i];
-
-                det->x0=cx-w*0.5;
-                det->x1=cx+w*0.5;
-                det->y0=cy-h*0.5;
-                det->y1=cy+h*0.5;
-                det->index=i;
-                det->cl=best_cl;
-                det->conf=max_prob;
-                det->num_face_points=0;
-                det->num_pose_points=0;
-            }
+            detection_t *d=detection_add_end(dets);
+            if (d) memcpy(d, &temp_dets->det[i], sizeof(detection_t));
         }
     }
-
-    detections_nms_inplace(dets, inf->nms_thr);
+    destroy_detections(temp_dets);
 
     for(int i=0;i<dets->num_detections;i++)
     {
@@ -473,7 +470,6 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
                 d->face_points[i].x=p[(4+num_classes+num_attributes+3*i+0)*row_stride+index];
                 d->face_points[i].y=p[(4+num_classes+num_attributes+3*i+1)*row_stride+index];
                 d->face_points[i].conf=p[(4+num_classes+num_attributes+3*i+2)*row_stride+index];
-                //printf("facept %d %d %f %f %f\n",i,index,d->face_points[i].x,d->face_points[i].y,d->face_points[i].conf);
             }
         }
         if (d->cl==inf->person_class_index)
@@ -503,6 +499,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
     if (numBoxes>inf->nms_max_boxes)
     {
         if (inf->nms) cuda_nms_free_workspace(inf->nms);
+        inf->nms=0;
         inf->nms_max_boxes=0;
     }
     if (inf->nms==0)
@@ -510,7 +507,6 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         inf->nms_max_boxes=numBoxes;
         inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, inf->max_detections, 0);
     }
-
     std::vector<std::vector<int>> keptIndices;
     std::vector<float> hostGathered;
     hostGathered.reserve(num * columns * 50); // roughly
@@ -610,7 +606,6 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         for(int i=0;i<num;i+=max_batch) infer_batch(inf, img_list+i, dets+i, std::min(num-i, max_batch));
         return;
     }
-
     int inf_max_w=std::min(inf->inf_limit_max_width, inf->max_w);
     int inf_max_h=std::min(inf->inf_limit_max_height, inf->max_h);
 
@@ -631,7 +626,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
     int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
     int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
-    debugf("INFER SIZE %dx%d\n",infer_w,infer_h);
+    debugf("INFER SIZE %dx%d (%dx%d)\n",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
 
     // step 2: determined scaled size for each image
     // the image will be fitted into the inference rect and padded on right
@@ -662,11 +657,11 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        log_debug("Reallocate output memory [%d bytes]\n",max_output_size);
+        //log_debug("Reallocate output memory [%d bytes]\n",max_output_size);
         if (inf->output_mem) cuMemFree(inf->output_mem);
         if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
         cuMemAlloc(&inf->output_mem, max_output_size);
-        cuMemAllocHost(&inf->output_mem_host, max_output_size);
+        inf->output_mem_host=0;
         inf->output_size=max_output_size;
     }
 
@@ -684,16 +679,17 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     cuda_stream_add_dependency(inf->stream, inf_image->stream);
     assert(true==inf->ec->enqueueV3(inf->stream));
-    cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
 
     // step5: process detections
 
-    if (inf->nms && inf->use_cuda_nms)
+    if (inf->use_cuda_nms)
     {
         process_detections_cuda_nms(inf, num, columns, rows, image_widths, image_heights, dets);
     }
     else
     {
+        if (inf->output_mem_host==0) cuMemAllocHost(&inf->output_mem_host, inf->output_size);
+        cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
         cuStreamSynchronize(inf->stream);
         float *p=(float *)inf->output_mem_host;
         for(int i=0;i<num;i++)
