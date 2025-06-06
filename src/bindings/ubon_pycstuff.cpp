@@ -259,6 +259,7 @@ public:
         pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
         pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
         pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
+        pop_bool(cfg_copy, "fuse_face_person", config.fuse_face_person, config.set_fuse_face_person);
         pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
         pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
         pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);

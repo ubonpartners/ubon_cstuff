@@ -87,6 +87,7 @@ static void *benchmark_thread(void *p)
     bool display=(bc->display && tc->index==0);
     double last_display_time=profile_time()-5;
 
+    int img_cnt=0;
     while (!bc->stop)
     {
         if (n==1 && waited==false) // run one iteration as warmup before barrier wait
@@ -98,17 +99,20 @@ static void *benchmark_thread(void *p)
             waited=true;
         }
 
-        image_t *img = bc->images[n % bc->num_images];
+        image_t *img = bc->images[img_cnt % bc->num_images];
+        img_cnt++;
         roi_t roi = { .box = {0, 0, 1, 1} };
         infer_thread_result_handle_t *h = infer_thread_infer_async(bc->infer_thread, img, roi);
         infer_thread_result_data_t d = {};
         infer_thread_wait_result(h, &d);
-        if (display && profile_time()-last_display_time>1)
+        if (display && 1)//profile_time()-last_display_time>1)
         {
             last_display_time=profile_time();
             image_t *out_frame=draw_detections(d.dets, img);
             show_detections(d.dets);
+            //printf("img_cnt %d img %p frame %p\n",img_cnt,img,out_frame);
             display_image("test", out_frame);
+            //usleep(5000000);
             destroy_image(out_frame);
         }
         total_detections += d.dets->num_detections;
@@ -206,7 +210,7 @@ int main(int argc, char *argv[])
 
     for(int images=0;images<2;images++)
     {
-        if (images==1)
+        if (images==0)
         {
             test_config.image_folder="/mldata/image/widerperson_100";
             test_config.num_images=32;

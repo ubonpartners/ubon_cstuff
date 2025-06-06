@@ -148,6 +148,7 @@ static void *infer_thread_fn(void *arg)
             infer_thread_result_handle_t *rh = handles[i];
             pthread_mutex_lock(&rh->mutex);
             rh->dets = dets_arr[i];
+            rh->dets->md=h->md; // attach the model description
             rh->done = 1;
             pthread_cond_signal(&rh->cond);
             pthread_mutex_unlock(&rh->mutex);

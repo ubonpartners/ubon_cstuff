@@ -5,11 +5,12 @@
 #include <vector>
 
 typedef struct infer infer_t;
+typedef struct model_description model_description_t;
 
 #include "image.h"
 #include "detections.h"
 
-typedef struct model_description
+struct model_description
 {
     std::vector<std::string> class_names;
     std::vector<std::string> person_attribute_names;
@@ -22,13 +23,14 @@ typedef struct model_description
     int min_h, max_h;  // min,max model input height
     int model_output_dims[3]; // output tensor dimensions
     const char *engineInfo;
-} model_description_t;
+};
 
 typedef struct infer_config
 {
     float det_thr; // overall detection threshold for all classes
     float nms_thr;
     bool use_cuda_nms;
+    bool fuse_face_person;
     int limit_max_batch;
     int limit_min_width;
     int limit_min_height;
@@ -44,6 +46,7 @@ typedef struct infer_config
     bool set_limit_max_width;
     bool set_limit_max_height;
     bool set_max_detections;
+    bool set_fuse_face_person;
 } infer_config_t;
 
 infer_t *infer_create(const char *model_trt, const char *config_yaml);

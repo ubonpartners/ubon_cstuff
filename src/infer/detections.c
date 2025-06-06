@@ -2,9 +2,101 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>  // for FLT_MIN
 #include "assert.h"
 #include "detections.h"
 #include "image.h"
+#include "infer.h"
+
+
+static inline uint64_t box_to_8x8_mask(float x0, float y0, float x1, float y1)
+{
+    /* 1) Reject degenerate or out‐of‐bounds boxes */
+    if (x1 <= x0 || y1 <= y0 || x0 >= 1.0f || y0 >= 1.0f || x1 <= 0.0f || y1 <= 0.0f) {
+        return 0ULL;
+    }
+
+    /* 2) Clamp the input to [0,1] to avoid any FP weirdness beyond [0,1] */
+    if (x0 < 0.0f) x0 = 0.0f;
+    if (y0 < 0.0f) y0 = 0.0f;
+    if (x1 > 1.0f) x1 = 1.0f;
+    if (y1 > 1.0f) y1 = 1.0f;
+
+    /* 3) Convert normalized coords to [0..8) range */
+    float fx0 = x0 * 8.0f;
+    float fy0 = y0 * 8.0f;
+    float fx1 = x1 * 8.0f;
+    float fy1 = y1 * 8.0f;
+
+    /* 4) Compute integer cell indices:
+     *      c0 = floor(fx0)        (first column touched)
+     *      c1 = ceil(fx1) - 1    (last column touched)
+     *      r0 = floor(fy0)        (first row touched)
+     *      r1 = ceil(fy1) - 1    (last row touched)
+     *
+     *    Because we treat an exact multiple of 1/8 as not entering the next cell,
+     *    using ceil(fx1) - 1 handles that correctly: e.g. fx1=2.0 => ceil(2.0)-1 = 1.
+     */
+    int c0 = (int)floorf(fx0);
+    int r0 = (int)floorf(fy0);
+    int c1 = (int)ceilf(fx1) - 1;
+    int r1 = (int)ceilf(fy1) - 1;
+
+    /* 5) Clamp to valid cell indices [0..7] */
+    if (c0 < 0) c0 = 0;   else if (c0 > 7) c0 = 7;
+    if (r0 < 0) r0 = 0;   else if (r0 > 7) r0 = 7;
+    if (c1 < 0) c1 = 0;   else if (c1 > 7) c1 = 7;
+    if (r1 < 0) r1 = 0;   else if (r1 > 7) r1 = 7;
+
+    /* 6) It may happen that after clamping, c1 < c0 or r1 < r0 (e.g. very thin box hugging a boundary),
+     *    so double‐check and abort if there’s truly no overlap.
+     */
+    if (c1 < c0 || r1 < r0) {
+        return 0ULL;
+    }
+
+    /* 7) Build a per‐row byte mask with bits [c0..c1] set.
+     *      width = (c1 - c0 + 1)
+     *    row_byte = ((1u << width) - 1) << c0
+     */
+    int width = c1 - c0 + 1;
+    uint8_t row_byte = (uint8_t)(((1u << width) - 1u) << c0);
+
+    /* 8) Replicate row_byte into every byte of a 64‐bit word:
+     *    e.g. if row_byte = 0b00011100, then
+     *         rep = 0x?[row_byte][row_byte][row_byte]…[row_byte]
+     */
+    const uint64_t BROADCAST = 0x0101010101010101ULL;
+    uint64_t rep = (uint64_t)row_byte * BROADCAST;
+
+    /* 9) Build a vertical mask that selects bytes r0..r1:
+     *    We want (r1 - r0 + 1) consecutive bytes of 0xFF, starting at byte‐index r0.
+     *    If we shift a 64‐bit all‐ones right by (64 - ((r1-r0+1)*8)), we get that many low bits set.
+     *    Then shift left by (r0 * 8) to push those bytes into rows r0..r1.
+     */
+    int row_count = (r1 - r0 + 1);
+    uint64_t vert_mask;
+    if (row_count == 8) {
+        /* special‐case: all rows */
+        vert_mask = ~0ULL;
+    } else {
+        uint64_t low_bytes = (~0ULL) >> (64 - (row_count * 8));
+        vert_mask = low_bytes << (r0 * 8);
+    }
+
+    /* 10) The final mask is the bitwise‐AND of rep and vert_mask */
+    uint64_t mask = rep & vert_mask;
+    return mask;
+}
+
+void detections_generate_overlap_masks(detections_t *dets)
+{
+    for(int i=0;i<dets->num_detections;i++)
+    {
+        detection_t *det=dets->det+i;
+        det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
+    }
+}
 
 detections_t *create_detections(int max_detections)
 {
@@ -140,11 +232,15 @@ static void draw_kp_line(image_t *img, kp_t *kp, int a, int b, int c)
 
 void show_detections(detections_t *dets)
 {
+    const char *guess_classes[5]={"person?","face?","vehicle?","animal?","weapon?"};
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=&dets->det[i];
+        const char * classname=0;
+        if (dets->md!=0) classname=dets->md->class_names[det->cl].c_str();
+        if (classname==0 && det->cl<5) classname=guess_classes[det->cl];
         printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f] area %0.3f\n",i,
-            (det->cl==0) ? "face" : "person",
+            classname,
             det->conf, det->index, det->x0, det->y0, det->x1, det->y0,
             (det->y1-det->y0)*(det->x1-det->x0));
     }
@@ -306,4 +402,78 @@ detections_t *detections_join(detections_t *dets1, detections_t *dets2)
     memcpy(ret->det+dets1->num_detections, dets2->det, sizeof(detection_t)*dets2->num_detections);
     ret->num_detections=dets1->num_detections+dets2->num_detections;
     return ret;
+}
+
+
+static float person_face_match_cost(const detection_t *person, const detection_t *face, void *context)
+{
+    float px0 = person->x0, py0 = person->y0, px1 = person->x1, py1 = person->y1;
+    float fx0 = face->x0,   fy0 = face->y0,   fx1 = face->x1,   fy1 = face->y1;
+
+    float ix0 = fmaxf(px0, fx0);
+    float iy0 = fmaxf(py0, fy0);
+    float ix1 = fminf(px1, fx1);
+    float iy1 = fminf(py1, fy1);
+
+    float iw = fmaxf(0.0f, ix1 - ix0);
+    float ih = fmaxf(0.0f, iy1 - iy0);
+    if (iw==0) return 0;
+    if (ih==0) return 0;
+
+    float inter_area = iw * ih;
+
+    float area_person = fmaxf((px1 - px0) * (py1 - py0), FLT_MIN);
+    float area_face   = fmaxf((fx1 - fx0) * (fy1 - fy0), FLT_MIN);
+    float min_area    = fminf(area_person, area_face);
+
+    return inter_area / min_area;
+}
+
+/* if stuff.box_w(f["box"])<0.10*stuff.box_w(p["box"]):
+        return 0
+    # top of face has to be in top half of body
+    if f["box"][1]>(0.5*p["box"][1]+0.5*p["box"][3]):
+        return 0
+    # face must not be too small relative to body
+    if intersection_area/(stuff.box_a(p["box"])+1e-10)<0.005:
+        return 0*/
+
+void fuse_face_person(detections_t *dets)
+{
+    int num=0;
+    uint8_t person_idx[256];
+    uint8_t face_idx[256];
+
+    //printf("nperson %d nface %d\n",dets->num_person_detections, dets->num_face_detections);
+
+    match_detections_greedy(dets->person_dets, std::min(255, dets->num_person_detections),
+                            dets->face_dets, std::min(255, dets->num_face_detections),
+                            person_face_match_cost, 0,
+                            person_idx, face_idx, &num);
+
+
+    for (int i=0;i<num;i++)
+    {
+        int pi=person_idx[i];
+        int fi=face_idx[i];
+        detection_t *person=&dets->person_dets[pi];
+        detection_t *face=&dets->face_dets[fi];
+        person->subbox_x0=face->x0;
+        person->subbox_y0=face->y0;
+        person->subbox_x1=face->x1;
+        person->subbox_y1=face->y1;
+        person->subbox_conf=face->conf;
+        person->num_face_points=face->num_face_points;
+        for(int j=0;j<face->num_face_points;j++) person->face_points[j]=face->face_points[j];
+        //printf("index %2d match %d with %d\n",i,person_idx[i],face_idx[i]);
+    }
+    /*if (num==dets->num_face_detections)
+    {
+        printf("ALL faces matched\n");
+    }
+    else
+    {
+        printf("%d unmatched faces\n", dets->num_face_detections-num);
+    }*/
+    dets->num_face_detections=0;
 }

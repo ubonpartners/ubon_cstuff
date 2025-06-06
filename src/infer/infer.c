@@ -44,6 +44,7 @@ struct infer
     int min_w, min_h;
     int max_w, max_h;
     bool use_cuda_nms;
+    bool do_fuse_face_person;
     bool input_is_fp16, output_is_fp16;
     int output_size;
     int fn;
@@ -234,6 +235,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->person_class_index=-1;
     inf->face_class_index=-1;
     inf->use_cuda_nms=true;
+    inf->do_fuse_face_person=true;
 
     cudaStreamCreate(&inf->stream);
 
@@ -420,6 +422,8 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
 
     int num_classes=inf->md.num_classes;
     int num_attributes=inf->md.num_person_attributes;
+    int num_person_detections=0;
+    int num_face_detections=0;
     for(int cl=0;cl<num_classes;cl++)
     {
         temp_dets->num_detections=0;
@@ -465,6 +469,7 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
         if (d->cl==inf->face_class_index)
         {
             d->num_face_points=5;
+            num_face_detections++;
             for(int i=0;i<d->num_face_points;i++)
             {
                 d->face_points[i].x=p[(4+num_classes+num_attributes+3*i+0)*row_stride+index];
@@ -474,6 +479,7 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
         }
         if (d->cl==inf->person_class_index)
         {
+            num_person_detections++;
             d->num_pose_points=17;
             for(int i=0;i<d->num_pose_points;i++)
             {
@@ -488,7 +494,15 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
             }
         }
     }
+
     detections_scale(dets, 1.0/img_w, 1.0/img_h);
+
+    assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
+    assert(inf->face_class_index==1);
+    dets->person_dets=&dets->det[0];
+    dets->num_person_detections=num_person_detections;
+    dets->face_dets=dets->person_dets+num_person_detections;
+    dets->num_face_detections=num_face_detections;
     return dets;
 }
 
@@ -547,6 +561,8 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         int num_dets=0;
         for(int cl=0;cl<nc;cl++) num_dets+=keptIndices[b*nc+cl].size();
         dets[b]=create_detections((num_dets<8) ? 8 : num_dets);
+        int num_person_detections=0;
+        int num_face_detections=0;
         for(int cl=0;cl<nc;cl++)
         {
             int n=keptIndices[b*nc+cl].size();
@@ -570,6 +586,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
 
                 if (cl==inf->face_class_index)
                 {
+                    num_face_detections++;
                     det->num_face_points=5;
                     for(int k=0;k<det->num_face_points;k++)
                     {
@@ -580,6 +597,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                 }
                 if (cl==inf->person_class_index)
                 {
+                    num_person_detections++;
                     det->num_pose_points=17;
                     for(int k=0;k<det->num_pose_points;k++)
                     {
@@ -594,6 +612,13 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
             }
         }
         detections_scale(dets[b], 1.0/image_widths[b], 1.0/image_heights[b]);
+        assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
+        assert(inf->face_class_index==1);
+
+        dets[b]->person_dets=&dets[b]->det[0];
+        dets[b]->num_person_detections=num_person_detections;
+        dets[b]->face_dets=dets[b]->person_dets+num_person_detections;
+        dets[b]->num_face_detections=num_face_detections;
     }
 }
 
@@ -702,6 +727,11 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
             debugf("i=%d (%dx%d, %d,%d,%d)\n",i,image_widths[i], image_heights[i],rows,columns,inf->output_size);
         }
     }
+    for(int i=0;i<num;i++)
+    {
+        detections_generate_overlap_masks(dets[i]);
+        if (inf->do_fuse_face_person) fuse_face_person(dets[i]);
+    }
 
     destroy_image(inf_image);
     for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
@@ -728,6 +758,7 @@ void infer_configure(infer_t *inf, infer_config_t *config)
     if (config->set_limit_min_height) inf->inf_limit_min_height=config->limit_min_height;
     if (config->set_limit_max_width) inf->inf_limit_max_width=config->limit_max_width;
     if (config->set_limit_max_height) inf->inf_limit_max_height=config->limit_max_height;
+    if (config->set_fuse_face_person) inf->do_fuse_face_person=config->fuse_face_person;
     if (config->set_max_detections)
     {
         if (inf->nms) cuda_nms_free_workspace(inf->nms);
