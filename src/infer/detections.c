@@ -426,17 +426,18 @@ static float person_face_match_cost(const detection_t *person, const detection_t
     float area_face   = fmaxf((fx1 - fx0) * (fy1 - fy0), FLT_MIN);
     float min_area    = fminf(area_person, area_face);
 
-    return inter_area / min_area;
-}
+    float ioma=inter_area / min_area;
+    float score=ioma;
 
-/* if stuff.box_w(f["box"])<0.10*stuff.box_w(p["box"]):
-        return 0
-    # top of face has to be in top half of body
-    if f["box"][1]>(0.5*p["box"][1]+0.5*p["box"][3]):
-        return 0
-    # face must not be too small relative to body
-    if intersection_area/(stuff.box_a(p["box"])+1e-10)<0.005:
-        return 0*/
+    // prefer face not too small compared to body
+    if ((px1-px0)<10*(fx1-fx0)) score+=0.2;
+    // prefer face is not bigger than body
+    if ((px1-px0)>=(fx1-fx0)) score+=0.2;
+    // perfer top of face top half of body
+    if (fy1<(0.5*(py0+py1))) score+=0.2;
+    // todo : add score for face keypoints matching
+    return ioma;
+}
 
 void fuse_face_person(detections_t *dets)
 {
