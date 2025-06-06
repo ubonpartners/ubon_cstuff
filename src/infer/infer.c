@@ -201,6 +201,7 @@ void infer_print_model_description(model_description_t *desc)
     std::cout << "Max Batch Size: " << desc->max_batch << "\n";
     std::cout << "Input Format: " << (desc->input_is_fp16 ? "FP16" : "FP32") << "\n";
     std::cout << "Output Format: " << (desc->output_is_fp16 ? "FP16" : "FP32") << "\n";
+    std::cout << "REID vector length: " << desc->reid_vector_len << "\n";
 
     std::cout << "Classes (" << desc->num_classes << "):\n";
     for (size_t i = 0; i < desc->class_names.size(); ++i) {
@@ -355,9 +356,14 @@ infer_t *infer_create(const char *model, const char *yaml_config)
                       +inf->md.num_classes
                       +inf->md.num_person_attributes
                       +inf->md.num_keypoints*3;
-    if (expected_size!=inf->detection_attribute_size)
+    if (expected_size+64==inf->detection_attribute_size)
     {
-        log_fatal("expected tensor size %d (%d classes, %d attr, %d kp), got %d",
+        inf->md.reid_vector_len=64;
+        log_debug("found REID vector length of %d\n",inf->md.reid_vector_len);
+    }
+    else if (expected_size!=inf->detection_attribute_size)
+    {
+        log_fatal("expected tensor size %d, got %d (%d classes, %d attr, %d kp)",
             expected_size,inf->detection_attribute_size,
             inf->md.num_classes,inf->md.num_person_attributes,inf->md.num_keypoints);
     }
@@ -492,6 +498,14 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
             {
                 d->attr[i]=p[(4+num_classes+i)*row_stride+index];
             }
+            if (inf->md.reid_vector_len!=0)
+            {
+                d->reid_vector_len=inf->md.reid_vector_len;
+                for(int i=0;i<inf->md.reid_vector_len;i++)
+                {
+                    d->reid[i]=p[(4+num_classes+num_attributes+3*(d->num_pose_points+d->num_face_points)+i)*row_stride+index];
+                }
+            }
         }
     }
 
@@ -607,6 +621,14 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                     }
                     det->num_attr=num_attributes;
                     for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+k];
+                    if (inf->md.reid_vector_len!=0)
+                    {
+                        det->reid_vector_len=inf->md.reid_vector_len;
+                        for(int i=0;i<inf->md.reid_vector_len;i++)
+                        {
+                            det->reid[i]=ptr[4+nc+num_attributes+3*(det->num_pose_points+det->num_face_points)+i];
+                        }
+                    }
                 }
                 ptr+=columns;
             }

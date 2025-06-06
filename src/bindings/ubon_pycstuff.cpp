@@ -295,6 +295,7 @@ public:
         d["num_person_attributes"] = desc->num_person_attributes;
         d["num_keypoints"] = desc->num_keypoints;
         d["max_batch"] = desc->max_batch;
+        d["reid_vector_len"] = desc->reid_vector_len;
         d["input_is_fp16"] = desc->input_is_fp16;
         d["output_is_fp16"] = desc->output_is_fp16;
         d["min_w"] = desc->min_w;

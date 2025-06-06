@@ -18,6 +18,7 @@ struct model_description
     int num_person_attributes;
     int num_keypoints;
     int max_batch;
+    int reid_vector_len;
     bool input_is_fp16, output_is_fp16; // input/output formats for model
     int min_w, max_w;  // min,max model input width
     int min_h, max_h;  // min,max model input height
