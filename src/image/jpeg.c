@@ -10,6 +10,7 @@
 #include <setjmp.h>
 #include <cassert>
 #include "image.h"
+#include "log.h"
 
 struct my_error_mgr
 {
@@ -63,8 +64,11 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size)
 image_t *load_jpeg(const char *file)
 {
     FILE *f=fopen(file, "rb");
-    if (!f) return 0;
-
+    if (!f)
+    {
+        log_error("Could not open file %s",file);
+        return 0;
+    }
     fseek(f, 0L, SEEK_END);
     size_t sz = ftell(f);
     fseek(f, 0L, SEEK_SET);
@@ -76,6 +80,7 @@ image_t *load_jpeg(const char *file)
         ret=decode_jpeg(mem, sz);
         free(mem);
     }
+    fclose(f);
     return ret;
 }
 
@@ -242,14 +247,18 @@ int load_images_from_folder(const char *path, image_t **dest, int max_images)
     int count = 0;
 
     if (!path || !dest || max_images <= 0)
-        return 0;
-
-    dir = opendir(path);
-    if (!dir) {
-        perror("opendir failed");
+    {
+        log_error("invalid parameter");
         return 0;
     }
 
+    dir = opendir(path);
+    if (!dir) {
+        log_error("opendir failed on %s",path);
+        return 0;
+    }
+
+    int n=0;
     while ((entry = readdir(dir)) != NULL && count < max_images) {
         if (entry->d_type != DT_REG && entry->d_type != DT_UNKNOWN)
             continue;
@@ -257,16 +266,23 @@ int load_images_from_folder(const char *path, image_t **dest, int max_images)
         if (!has_jpeg_extension(entry->d_name))
             continue;
 
+        n++;
         // Construct full file path
         char fullpath[4096];
         snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
 
         image_t *img = load_jpeg(fullpath);
-        if (img) {
+        if (img)
             dest[count++] = img;
+        else
+        {
+            log_error("failed to load jpeg %s",fullpath);
         }
     }
-
+    if (n==0)
+    {
+        log_error("no jpegs found in folder %s",path);
+    }
     closedir(dir);
     return count;
 }

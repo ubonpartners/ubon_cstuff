@@ -63,6 +63,15 @@ typedef struct benchmark_result {
     infer_thread_stats_t infer_stats;
 } benchmark_result_t;
 
+static const char* get_last_path_part(const char* path) {
+    const char* last_slash = strrchr(path, '/');
+    if (last_slash) {
+        return last_slash + 1;
+    } else {
+        return path;  // No slash found; return the whole string
+    }
+}
+
 static void *benchmark_thread(void *p)
 {
     benchmark_thread_context_t *tc = (benchmark_thread_context_t *)p;
@@ -139,7 +148,7 @@ static void benchmark(benchmark_config_t *config, benchmark_result_t *result)
     assert(bc.infer_thread!=0);
     bc.num_images = load_images_from_folder(config->image_folder, &bc.images[0],
                                             config->num_images < MAX_IMAGES ? config->num_images : MAX_IMAGES);
-    if (bc.num_images==0) log_fatal("Could not load any images from folder %s",config->image_folder);
+    if (bc.num_images==0) log_fatal("Could not load any images from folder %s (max %d)",config->image_folder, config->num_images);
 
     for (int i = 0; i < config->num_threads; i++) {
         bc.thread_context[i].parent = &bc;
@@ -183,7 +192,7 @@ static benchmark_config_t test_config = {
     .width=640,
     .height=640,
     .use_cuda_nms=false,
-    .run_time_seconds = 10.0,
+    .run_time_seconds = 5.0,
     .trt_model = "/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt",
     .trt_model_config = "/mldata/config/train/train_yolo_dpa_l.yaml"
 };
@@ -197,10 +206,16 @@ int main(int argc, char *argv[])
 
     for(int images=0;images<2;images++)
     {
-        if (images==0)
+        if (images==1)
+        {
             test_config.image_folder="/mldata/image/widerperson_100";
+            test_config.num_images=32;
+        }
         else
+        {
             test_config.image_folder="/mldata/image/coco_100";
+            test_config.num_images=32;
+        }
 
         for(int sizes=0;sizes<3;sizes++)
         {
@@ -228,7 +243,8 @@ int main(int argc, char *argv[])
                     test_config.use_cuda_nms=cuda_nms!=0;
                     benchmark(&test_config, &r);
 
-                    oss << "Images " << std::setw(32) << test_config.image_folder
+                    oss << "Model " << std::setw(22) << get_last_path_part(test_config.trt_model)
+                        << " Images " << std::setw(16) << get_last_path_part(test_config.image_folder)
                         << " Thr " << std::setw(2) << threads
                         << " Size " << std::setw(3) << test_config.width << "x" << std::setw(3) << test_config.height
                         << " Cu_NMS: " << cuda_nms
