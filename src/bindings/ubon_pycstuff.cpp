@@ -8,6 +8,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 
 #include "image.h"
 #include "infer.h"
+#include "infer_thread.h"
 #include "cuda_stuff.h"
 #include "detections.h"
 #include "simple_decoder.h"
@@ -172,25 +173,27 @@ static void pop_bool(py::dict& cfg, const char* key, bool& dst, bool& flag) {
     }
 };
 
+static py::list convert_points(kp_t *pts, int n)
+{
+    py::list pt_list;
+    for(int i=0;i<n;i++)
+    {
+        pt_list.append(pts[i].x);
+        pt_list.append(pts[i].y);
+        pt_list.append(pts[i].conf);
+    }
+    return pt_list;
+}
+
+static py::list convert_attributes(float *a, int n)
+{
+    py::list pt_list;
+    for(int i=0;i<n;i++) pt_list.append(a[i]);
+    return pt_list;
+}
+
 class c_infer {
 private:
-    py::list convert_points(kp_t *pts, int n)
-    {
-        py::list pt_list;
-        for(int i=0;i<n;i++)
-        {
-            pt_list.append(pts[i].x);
-            pt_list.append(pts[i].y);
-            pt_list.append(pts[i].conf);
-        }
-        return pt_list;
-    }
-    py::list convert_attributes(float *a, int n)
-    {
-        py::list pt_list;
-        for(int i=0;i<n;i++) pt_list.append(a[i]);
-        return pt_list;
-    }
     py::list convert_detections_batch(image_t** imgs, int num) {
         std::vector<detections_t*> dets(num, nullptr);
         infer_batch(inf, imgs, dets.data(), num);
@@ -308,6 +311,135 @@ public:
     }
 
     infer_t* raw() { return inf; }
+};
+
+class c_infer_thread {
+public:
+    infer_thread_t* thread;
+
+    c_infer_thread(const std::string& trt_file, const std::string& yaml_file, py::dict config_dict) {
+        infer_config_t config{};
+        py::dict cfg_copy(config_dict);
+
+        pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
+        pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
+        pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
+        pop_bool(cfg_copy, "fuse_face_person", config.fuse_face_person, config.set_fuse_face_person);
+        pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
+        pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
+        pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);
+        pop_int(cfg_copy, "limit_min_width", config.limit_min_width, config.set_limit_min_width);
+        pop_int(cfg_copy, "limit_min_height", config.limit_min_height, config.set_limit_min_height);
+        pop_int(cfg_copy, "max_detections", config.max_detections, config.set_max_detections);
+
+        thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str(), &config);
+        if (!thread) {
+            throw std::runtime_error("Failed to start infer_thread");
+        }
+    }
+
+    ~c_infer_thread() {
+        if (thread) infer_thread_destroy(thread);
+    }
+
+    py::object infer_async(std::shared_ptr<c_image> image_obj, py::list roi_list) {
+        roi_t roi;
+        if (py::len(roi_list) != 4)
+            throw std::runtime_error("ROI must have 4 elements: [x0, y0, x1, y1]");
+        for (int i = 0; i < 4; ++i)
+            roi.box[i] = roi_list[i].cast<float>();
+
+        auto h = infer_thread_infer_async(thread, image_obj->raw(), roi);
+        return py::capsule(h, "infer_thread_result_handle");
+    }
+
+    py::dict wait(py::object result_handle_capsule) {
+        auto* h = static_cast<infer_thread_result_handle_t*>(result_handle_capsule.cast<py::capsule>().get_pointer());
+
+        infer_thread_result_data_t result_data;
+        infer_thread_wait_result(h, &result_data);
+
+        py::dict result;
+        py::list box;
+        for (int i = 0; i < 4; ++i)
+            box.append(result_data.inference_roi.box[i]);
+
+        result["queue_time"] = result_data.queue_time;
+        result["inference_time"] = result_data.inference_time;
+        result["inference_roi"] = box;
+
+        // Convert detections
+        py::list detections;
+        if (result_data.dets) {
+            for (int j = 0; j < result_data.dets->num_detections; ++j) {
+                detection_t* det = &result_data.dets->det[j];
+                py::dict item;
+                item["class"] = det->cl;
+                item["confidence"] = det->conf;
+                py::list det_box;
+                det_box.append(det->x0);
+                det_box.append(det->y0);
+                det_box.append(det->x1);
+                det_box.append(det->y1);
+                item["box"] = det_box;
+                if (det->num_face_points > 0)
+                    item["face_points"] = convert_points(det->face_points, det->num_face_points);
+                if (det->num_pose_points > 0)
+                    item["pose_points"] = convert_points(det->pose_points, det->num_pose_points);
+                if (det->num_attr > 0)
+                    item["attrs"] = convert_attributes(det->attr, det->num_attr);
+                detections.append(item);
+            }
+            destroy_detections(result_data.dets);
+        }
+        result["detections"] = detections;
+        return result;
+    }
+
+    py::dict get_stats() {
+        infer_thread_stats_t stats{};
+        infer_thread_get_stats(thread, &stats);
+
+        py::dict d;
+        d["total_batches"] = stats.total_batches;
+        d["total_images"] = stats.total_images;
+        d["total_roi_area"] = stats.total_roi_area;
+        d["mean_batch_size"] = stats.mean_batch_size;
+        d["mean_roi_area"] = stats.mean_roi_area;
+
+        py::list hist, total_time, time_per_infer;
+        for (int i = 0; i < INFER_THREAD_MAX_BATCH; ++i) {
+            hist.append(stats.batch_size_histogram[i]);
+            total_time.append(stats.batch_size_histogram_total_time[i]);
+            time_per_infer.append(stats.batch_size_histogram_time_per_inference[i]);
+        }
+        d["batch_size_histogram"] = hist;
+        d["batch_size_histogram_total_time"] = total_time;
+        d["batch_size_histogram_time_per_inference"] = time_per_infer;
+        return d;
+    }
+
+    py::dict get_model_description() {
+        model_description_t* desc = infer_thread_get_model_description(thread);
+        if (!desc) throw std::runtime_error("Failed to get model description");
+
+        py::dict d;
+        d["class_names"] = py::cast(desc->class_names);
+        d["person_attribute_names"] = py::cast(desc->person_attribute_names);
+        d["num_classes"] = desc->num_classes;
+        d["num_person_attributes"] = desc->num_person_attributes;
+        d["num_keypoints"] = desc->num_keypoints;
+        d["max_batch"] = desc->max_batch;
+        d["input_is_fp16"] = desc->input_is_fp16;
+        d["output_is_fp16"] = desc->output_is_fp16;
+        d["min_w"] = desc->min_w;
+        d["max_w"] = desc->max_w;
+        d["min_h"] = desc->min_h;
+        d["max_h"] = desc->max_h;
+        d["model_output_dims"] = py::make_tuple(desc->model_output_dims[0], desc->model_output_dims[1], desc->model_output_dims[2]);
+        d["engineInfo"] = desc->engineInfo;
+        return d;
+    }
 };
 
 class c_decoder {
@@ -475,6 +607,14 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_batch", &c_infer::run_batch, py::arg("images"), "Run batched inference on a list of c_image")
         .def("configure", &c_infer::configure, py::arg("config_dict"), "Configure inference parameters from a dictionary")
         .def("get_model_description", &c_infer::get_model_description, "Get model description as dictionary");
+
+    py::class_<c_infer_thread, std::shared_ptr<c_infer_thread>>(m, "c_infer_thread")
+        .def(py::init<const std::string&, const std::string&, py::dict>(), py::arg("trt_file"), py::arg("yaml_file"), py::arg("config_dict"))
+        .def("infer_async", &c_infer_thread::infer_async, py::arg("image"), py::arg("roi"), "Submit async inference")
+        .def("wait", &c_infer_thread::wait, py::arg("result_handle"), "Wait for result and get detections + timings")
+        .def("get_stats", &c_infer_thread::get_stats, "Get internal inference stats")
+        .def("get_model_description", &c_infer_thread::get_model_description, "Get model description");
+
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())
