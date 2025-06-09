@@ -110,6 +110,9 @@ image_t *image_crop_roi(image_t *img, roi_t in_roi, roi_t *out_roi);
 // pad an image by adding extra pixels to the edges, using the specified RGB colour
 image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint32_t RGB);
 // image_make_tiled: given N images <= WxH make a single tiled image
-image_t *image_make_tiled(image_format_t fmt, int width, int height, image_t **images, int num);
+image_t *image_make_tiled(image_format_t fmt,
+                          int dst_width, int dst_height,
+                          image_t **images, int num,
+                          int *offs_x, int *offs_y);
 
 #endif

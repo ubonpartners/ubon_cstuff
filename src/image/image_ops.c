@@ -2,12 +2,14 @@
 #include <cuda.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <assert.h>
 #include "image.h"
 #include "libyuv.h"
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 #include "misc.h"
+#include "display.h"
 #include <mutex>
 #include <math.h>
 
@@ -388,63 +390,110 @@ image_t *image_pad(image_t *img, int left, int top, int right, int bottom, uint3
     assert(0); // todo: fixeme; not implemented
 }
 
+
+void image_apply_padding(image_t *img, int pad_l, int pad_t, int pad_r, int pad_b)
+{
+    assert(img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE || img->format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
+    int elt_size=(img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
+    bool is_fp16=(img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
+    int dst_width=img->width;
+    int dst_height=img->height;
+    if (pad_t>0)
+    {
+        cuda_fp_set(img->rgb+elt_size*(0*dst_width+0),
+                    dst_width, pad_t,
+                    dst_width, dst_width*dst_height, img->stream, is_fp16);
+    }
+    if (pad_b>0)
+    {
+        cuda_fp_set(img->rgb+elt_size*((img->height-pad_b)*dst_width+0),
+                    dst_width, pad_b,
+                    dst_width, dst_width*dst_height, img->stream, is_fp16);
+    }
+    if (pad_l>0)
+    {
+        cuda_fp_set(img->rgb+elt_size*(pad_t*dst_width+0),
+                    pad_l, dst_height-pad_t-pad_b,
+                    dst_width, dst_width*dst_height, img->stream, is_fp16);
+    }
+    if (pad_r>0)
+    {
+        cuda_fp_set(img->rgb+elt_size*(pad_t*dst_width+dst_width-pad_r),
+                    pad_r, dst_height-pad_t-pad_b,
+                    dst_width, dst_width*dst_height, img->stream, is_fp16);
+    }
+}
+
 // image_make_tiled: given N images <= WxH make a single tiled image
 // with all the sub-images together
 // this is commonly used for batch inference
 
-image_t *image_make_tiled(image_format_t fmt, int width, int height, image_t **images, int num)
+// following what ultralytics do, we put the image in the middle, and
+// use grey padding
+
+image_t *image_make_tiled(image_format_t fmt,
+                          int dst_width, int dst_height,
+                          image_t **images, int num,
+                          int *offs_x, int *offs_y)
 {
     assert(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE || fmt==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     int elt_size=(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
-    image_t *inf_image=create_image(width, height*num, fmt); // image big enough to hold "num" planar RGB images
+    image_t *inf_image=create_image(dst_width, dst_height*num, fmt); // image big enough to hold "num" planar RGB images
+    image_t *inf_subimage=create_image_no_surface_memory(dst_width, dst_height, fmt);
     for(int i=0;i<num;i++)
     {
         image_t *img=images[i];
-        assert(img->width<=width && img->height<=height);
+        inf_subimage->rgb=inf_image->rgb+3*i*elt_size*dst_width*dst_height;
+        inf_subimage->stride_rgb=dst_width*dst_height;
+
+        int src_width=img->width;
+        int src_height=img->height;
+
+        int pad_l=((dst_width-src_width)>>1);
+        int pad_t=((dst_height-src_height)>>1);
+
+        int pad_r=dst_width-src_width-pad_l;
+        int pad_b=dst_height-src_height-pad_t;
+
+        offs_x[i]=pad_l;
+        offs_y[i]=pad_t;
+
+        assert(src_width<=dst_width && src_height<=dst_height);
+
         assert(img->format==IMAGE_FORMAT_RGB24_DEVICE || img->format==IMAGE_FORMAT_YUV420_DEVICE);
         image_add_dependency(inf_image, img);
-        if (fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
+
+        // pointer to (pad_l, pad_t) in this destination subimage
+        void *offset_dest=inf_image->rgb+3*i*elt_size*dst_width*dst_height
+                                          +pad_t*dst_width*elt_size
+                                          +pad_l*elt_size;
+
+        if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
         {
-            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
-            {
-                cuda_convert_rgb24_to_planar_fp16(
-                    img->rgb,
-                    inf_image->rgb+i*3*elt_size*width*height,
-                    img->width, img->height,
-                    width, height,
-                    img->stride_rgb,
-                    inf_image->stream);
-            }
-            else
-            {
-                cuda_convertYUVtoRGB_fp16(img->y, img->u, img->v, img->stride_y, img->stride_uv,
-                                inf_image->rgb+i*3*elt_size*width*height,
-                                width*height,
-                                img->width, img->height,
-                                width, height, inf_image->stream);
-            }
+            cuda_convert_rgb24_to_fp_planar(img->rgb, img->stride_rgb, src_width, src_height,
+                                    offset_dest, dst_width, dst_width*dst_height,
+                                    inf_image->stream, fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
+
         }
         else
         {
-            if (img->format==IMAGE_FORMAT_RGB24_DEVICE)
-            {
-                cuda_convert_rgb24_to_planar_fp32(
-                    img->rgb,
-                    (float*)(inf_image->rgb+i*3*elt_size*width*height),
-                    img->width, img->height,
-                    width, height,
-                    img->stride_rgb,
-                    inf_image->stream);
-            }
-            else
-            {
-                cuda_convertYUVtoRGB_fp32(img->y, img->u, img->v, img->stride_y, img->stride_uv,
-                                inf_image->rgb+i*3*elt_size*width*height,
-                                width*height,
-                                img->width, img->height,
-                                width, height, inf_image->stream);
-            }
+            cuda_convert_yuv420_to_fp_planar(img->y, img->u, img->v, img->stride_y, img->stride_uv,
+                                    offset_dest, dst_width, dst_width*dst_height,
+                                    src_width, src_height,
+                                    inf_image->stream, fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
         }
+
+        image_apply_padding(inf_subimage, pad_l, pad_t, pad_r, pad_b);
+
     }
+
+    /*for(int i=0;i<num;i++)
+    {
+        inf_subimage->rgb=inf_image->rgb+3*i*elt_size*dst_width*dst_height;
+        display_image("subimage", inf_subimage);
+        usleep(5*1000*1000);
+    }*/
+
+    destroy_image(inf_subimage);
     return inf_image;
 }

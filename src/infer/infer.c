@@ -251,7 +251,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->person_class_index=-1;
     inf->face_class_index=-1;
     inf->use_cuda_nms=true;
-    inf->inf_allow_upscale=true; // to be like ultralytics
+    inf->inf_allow_upscale=false; // to be like ultralytics
     inf->do_fuse_face_person=true;
 
     cudaStreamCreate(&inf->stream);
@@ -457,7 +457,7 @@ static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *re
     *res_h=rh;
 }
 
-static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride, int img_w, int img_h)
+static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride)
 {
     detections_t *temp_dets=create_detections(inf->max_detections*10); // will hold pre-NMS detections for 1 class
     detections_t *dets=create_detections(inf->max_detections); // output post-NMS detections
@@ -545,8 +545,6 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
         }
     }
 
-    detections_scale(dets, 1.0/img_w, 1.0/img_h);
-
     assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
     assert(inf->face_class_index==1);
     dets->person_dets=&dets->det[0];
@@ -556,9 +554,7 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
     return dets;
 }
 
-static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int numBoxes,
-                                        int *image_widths, int *image_heights,
-                                        detections_t **dets)
+static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int numBoxes, detections_t **dets)
 {
     if (numBoxes>inf->nms_max_boxes)
     {
@@ -566,10 +562,11 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         inf->nms=0;
         inf->nms_max_boxes=0;
     }
+    int max_detections_per_class=std::min(inf->max_detections, 255);
     if (inf->nms==0)
     {
         inf->nms_max_boxes=numBoxes;
-        inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, inf->max_detections, 0);
+        inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, max_detections_per_class, 0);
     }
     std::vector<std::vector<int>> keptIndices;
     std::vector<float> hostGathered;
@@ -583,7 +580,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         columns,
         inf->det_thr,
         inf->nms_thr,
-        inf->max_detections,
+        max_detections_per_class,
         keptIndices,
         inf->stream);
 
@@ -669,7 +666,6 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                 ptr+=columns;
             }
         }
-        detections_scale(dets[b], 1.0/image_widths[b], 1.0/image_heights[b]);
         assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
         assert(inf->face_class_index==1);
 
@@ -720,16 +716,22 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         const char *testimage_path="/mldata/image/trt_inf.bin";
         log_debug("Loading inference test img %s",testimage_path);
         testimage=load_rgb32_tensor(testimage_path,640,640);
+        display_image("test",testimage);
+        infer_w=640;
+        infer_h=640;
+        usleep(1000000);
     }
     // step 2: determined scaled size for each image
     // the image will be fitted into the inference rect and padded on right
     // and bottom edges.
     int image_widths[num], image_heights[num];
+    int offs_x[num], offs_y[num];
     image_t *image_scaled_conv[num];
     for(int i=0;i<num;i++)
     {
         image_t *img=(testimage!=0) ? testimage : img_list[i];
         scale_to_fit(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i, true, inf->inf_allow_upscale);
+        //printf("%dx%d %dx%d %dx%d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0]);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
         image_format_t fmt=image_scaled->format;
         if (  (fmt==IMAGE_FORMAT_RGB24_DEVICE)
@@ -748,12 +750,12 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     // step 3: make planar RGB image with all batch images
 
     image_format_t fmt=inf->input_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
-    image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num);
+    image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num, offs_x, offs_y);
+
     // step4: run inference
     auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
     assert(true==inf->ec->setInputShape(inf->input_tensor_name, input_dims));
     assert(true==inf->ec->setTensorAddress(inf->input_tensor_name, inf_image->rgb));
-
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
@@ -764,7 +766,6 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         inf->output_mem_host=0;
         inf->output_size=max_output_size;
     }
-
     assert(true==inf->ec->setTensorAddress(inf->output_tensor_name, (void*)inf->output_mem));
     assert(true==inf->ec->allInputDimensionsSpecified());
     assert(0==inf->ec->inferShapes(0,0));
@@ -783,7 +784,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     // step5: process detections
     if (inf->use_cuda_nms)
     {
-        process_detections_cuda_nms(inf, num, columns, rows, image_widths, image_heights, dets);
+        process_detections_cuda_nms(inf, num, columns, rows, dets);
     }
     else
     {
@@ -796,11 +797,21 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
             dets[i]=process_detections(inf,
                                     p+i*rows*columns, /*offset into batch*/
                                     rows,
-                                    rows,
-                                    image_widths[i], image_heights[i]);
+                                    rows);
             debugf("i=%d (%dx%d, %d,%d,%d)\n",i,image_widths[i], image_heights[i],rows,columns,inf->output_size);
         }
     }
+
+    // map detections to the original image
+
+    for(int i=0;i<num;i++)
+    {
+        detections_scale_add2(dets[i], 1.0/image_widths[i],
+                                       1.0/image_heights[i],
+                                       offs_x[i],
+                                       offs_y[i]);
+    }
+
     for(int i=0;i<num;i++)
     {
         detections_generate_overlap_masks(dets[i]);

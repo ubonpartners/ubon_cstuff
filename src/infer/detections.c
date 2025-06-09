@@ -358,7 +358,7 @@ static inline float clip_01(float x)
     return std::min(std::max(x, 0.0f), 1.0f);
 }
 
-static void detections_scale_add(detections_t *dets, float sx, float sy, float dx, float dy)
+void detections_scale_add(detections_t *dets, float sx, float sy, float dx, float dy)
 {
     if (!dets) return;
     for(int i=0;i<dets->num_detections;i++)
@@ -377,6 +377,29 @@ static void detections_scale_add(detections_t *dets, float sx, float sy, float d
         {
             det->pose_points[i].x=clip_01(dx+det->pose_points[i].x*sx);
             det->pose_points[i].y=clip_01(dy+det->pose_points[i].y*sy);
+        }
+    }
+}
+
+void detections_scale_add2(detections_t *dets, float sx, float sy, float dx, float dy)
+{
+    if (!dets) return;
+    for(int i=0;i<dets->num_detections;i++)
+    {
+        detection_t *det=&dets->det[i];
+        det->x0=clip_01((det->x0-dx)*sx);
+        det->y0=clip_01((det->y0-dy)*sy);
+        det->x1=clip_01((det->x1-dx)*sx);
+        det->y1=clip_01((det->y1-dy)*sy);
+        for(int i=0;i<det->num_face_points;i++)
+        {
+            det->face_points[i].x=clip_01((det->face_points[i].x-dx)*sx);
+            det->face_points[i].y=clip_01((det->face_points[i].y-dy)*sy);
+        }
+        for(int i=0;i<det->num_pose_points;i++)
+        {
+            det->pose_points[i].x=clip_01((det->pose_points[i].x-dx)*sx);
+            det->pose_points[i].y=clip_01((det->pose_points[i].y-dy)*sy);
         }
     }
 }

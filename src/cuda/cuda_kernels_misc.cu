@@ -87,4 +87,62 @@ void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
         width, height);
 }
 
+// For float (fp32)
+static __global__ void set_rgb_region_float(
+    float* base_ptr, int w, int h,
+    int dst_w, int dst_plane_size_elements, float val)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h)
+        return;
+
+    int offset = y * dst_w + x;
+
+    base_ptr[offset] = val;
+    base_ptr[offset + dst_plane_size_elements] = val;
+    base_ptr[offset + 2 * dst_plane_size_elements] = val;
+}
+
+// For half (fp16)
+static __global__ void set_rgb_region_half(
+    __half* base_ptr, int w, int h,
+    int dst_w, int dst_plane_size_elements, __half val)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h)
+        return;
+
+    int offset = y * dst_w + x;
+
+    base_ptr[offset] = val;
+    base_ptr[offset + dst_plane_size_elements] = val;
+    base_ptr[offset + 2 * dst_plane_size_elements] = val;
+}
+
+void cuda_fp_set(
+    void* rgb_plane_ptr, int w, int h,
+    int dst_w, int dst_plane_size_elements,
+    cudaStream_t stream, bool is_fp16)
+{
+    dim3 block(16, 16);
+    dim3 grid((w + block.x - 1) / block.x,
+              (h + block.y - 1) / block.y);
+
+    if (is_fp16) {
+        __half val = __float2half(0.5f);
+        set_rgb_region_half<<<grid, block, 0, stream>>>(
+            static_cast<__half*>(rgb_plane_ptr),
+            w, h, dst_w, dst_plane_size_elements, val);
+    } else {
+        float val = 0.5f;
+        set_rgb_region_float<<<grid, block, 0, stream>>>(
+            static_cast<float*>(rgb_plane_ptr),
+            w, h, dst_w, dst_plane_size_elements, val);
+    }
+}
+
 } // extern "C"
