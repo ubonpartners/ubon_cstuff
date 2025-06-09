@@ -240,24 +240,31 @@ int main(int argc, char *argv[])
             }
             for(int threads=1;threads<=16;threads*=2)
             {
-                for(int cuda_nms=0;cuda_nms<2;cuda_nms++)
+                for(int cuda_nms=0;cuda_nms<1;cuda_nms++)
                 {
-                    benchmark_result_t r = {};
-                    test_config.num_threads=threads;
-                    test_config.use_cuda_nms=cuda_nms!=0;
-                    benchmark(&test_config, &r);
+                    for(int model=0;model<2;model++)
+                    {
+                        if (model==0)
+                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpar-250525-dyn.trt";
+                        else
+                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt";
+                        benchmark_result_t r = {};
+                        test_config.num_threads=threads;
+                        test_config.use_cuda_nms=cuda_nms!=0;
+                        benchmark(&test_config, &r);
 
-                    oss << "Model " << std::setw(22) << get_last_path_part(test_config.trt_model)
-                        << " Images " << std::setw(16) << get_last_path_part(test_config.image_folder)
-                        << " Thr " << std::setw(2) << threads
-                        << " Size " << std::setw(3) << test_config.width << "x" << std::setw(3) << test_config.height
-                        << " Cu_NMS: " << cuda_nms
-                        << " Avg batch: " << std::fixed << std::setprecision(2) << std::setw(6) << r.infer_stats.mean_batch_size
-                        << " Inf/s: "     << std::setw(8) << r.inferences_per_second
-                        << " Avg Det/f: " << std::setw(4) << (r.total_detections / (r.total_inferences+0.001))
-                        << "\n";
+                        oss << "Model " << std::setw(28) << get_last_path_part(test_config.trt_model)
+                            << " Images " << std::setw(16) << get_last_path_part(test_config.image_folder)
+                            << " Thr " << std::setw(2) << threads
+                            << " Size " << std::setw(3) << test_config.width << "x" << std::setw(3) << test_config.height
+                            << " Cu_NMS: " << cuda_nms
+                            << " Avg batch: " << std::fixed << std::setprecision(2) << std::setw(6) << r.infer_stats.mean_batch_size
+                            << " Inf/s: "     << std::setw(8) << r.inferences_per_second
+                            << " Avg Det/f: " << std::setw(4) << (r.total_detections / (r.total_inferences+0.001))
+                            << "\n";
 
-                    std::cout << oss.str();
+                        std::cout << oss.str();
+                    }
                 }
             }
         }

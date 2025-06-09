@@ -17,6 +17,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "log.h"
 #include "misc.h"
 #include "pcap_decoder.h"
+#include "profile.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -53,18 +54,27 @@ public:
     }
 
     static std::shared_ptr<c_image> from_numpy(py::array_t<uint8_t> input_rgb) {
-        auto buf = input_rgb.unchecked<3>();
-        int height = buf.shape(0);
-        int width = buf.shape(1);
+        py::buffer_info buf_info = input_rgb.request();
+        auto* src_ptr = static_cast<uint8_t*>(buf_info.ptr);
+        int height = buf_info.shape[0];
+        int width = buf_info.shape[1];
+
+        if (input_rgb.ndim() != 3 || input_rgb.shape(2) != 3)
+            throw std::runtime_error("Input must be HxWx3 uint8 numpy array");
+        if (!input_rgb.flags() & py::array::c_style)
+            throw std::runtime_error("Input array must be C-contiguous");
 
         image_t* img = create_image(width, height, IMAGE_FORMAT_RGB24_HOST);
+        uint8_t* dst_ptr = img->rgb;
+        for (int y = 0; y < height; ++y) {
+            uint8_t* row_dst = dst_ptr + y * img->stride_rgb;
+            uint8_t* row_src = src_ptr + y * width * 3;
+            std::memcpy(row_dst, row_src, width * 3);
+        }
+        image_t *image_device=image_convert(img, IMAGE_FORMAT_RGB24_DEVICE);
+        destroy_image(img);
 
-        for (int y = 0; y < height; ++y)
-            for (int x = 0; x < width; ++x)
-                for (int c = 0; c < 3; ++c)
-                    img->rgb[3 * x + c + img->stride_rgb * y] = buf(y, x, c);
-
-        return std::make_shared<c_image>(img);
+        return std::make_shared<c_image>(image_device);
     }
 
     std::shared_ptr<c_image> scale(int w, int h) {
@@ -132,14 +142,18 @@ public:
         else
         {
             image_t* tmp = image_convert(img, IMAGE_FORMAT_RGB24_HOST);
-            image_sync(tmp);
-            auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
-            auto buf = result.mutable_unchecked<3>();
+            image_sync(tmp);  // Ensure data is on host
 
-            for (int y = 0; y < tmp->height; ++y)
-                for (int x = 0; x < tmp->width; ++x)
-                    for (int c = 0; c < 3; ++c)
-                        buf(y, x, c) = tmp->rgb[3 * x + c + tmp->stride_rgb * y];
+            // Create output NumPy array with shape [H, W, 3]
+            auto result = py::array_t<uint8_t>({tmp->height, tmp->width, 3});
+            py::buffer_info buf_info = result.request();
+            uint8_t* dst_ptr = static_cast<uint8_t*>(buf_info.ptr);
+
+            for (int y = 0; y < tmp->height; ++y) {
+                uint8_t* src_row = tmp->rgb + y * tmp->stride_rgb;
+                uint8_t* dst_row = dst_ptr + y * tmp->width * 3;
+                std::memcpy(dst_row, src_row, tmp->width * 3);
+            }
 
             destroy_image(tmp);
             return result;
@@ -190,6 +204,31 @@ static py::list convert_attributes(float *a, int n)
     py::list pt_list;
     for(int i=0;i<n;i++) pt_list.append(a[i]);
     return pt_list;
+}
+
+static void apply_infer_config(py::dict cfg_dict, infer_config_t& config) {
+    py::dict cfg_copy(cfg_dict);  // Mutable copy
+
+    pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
+    pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
+    pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
+    pop_bool(cfg_copy, "fuse_face_person", config.fuse_face_person, config.set_fuse_face_person);
+    pop_bool(cfg_copy, "allow_upscale", config.allow_upscale, config.set_allow_upscale);
+    pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
+    pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
+    pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);
+    pop_int(cfg_copy, "limit_min_width", config.limit_min_width, config.set_limit_min_width);
+    pop_int(cfg_copy, "limit_min_height", config.limit_min_height, config.set_limit_min_height);
+    pop_int(cfg_copy, "max_detections", config.max_detections, config.set_max_detections);
+
+    // Check for unknown keys
+    if (py::len(cfg_copy) > 0) {
+        std::string unknown_keys;
+        for (auto item : cfg_copy) {
+            unknown_keys += py::str(item.first).cast<std::string>() + " ";
+        }
+        throw std::runtime_error("Unknown config keys: " + unknown_keys);
+    }
 }
 
 class c_infer {
@@ -256,29 +295,7 @@ public:
 
     void configure(py::dict cfg_dict) {
         infer_config_t config{};
-        py::dict cfg_copy(cfg_dict);  // Mutable copy
-
-        // Apply config
-        pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
-        pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
-        pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
-        pop_bool(cfg_copy, "fuse_face_person", config.fuse_face_person, config.set_fuse_face_person);
-        pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
-        pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
-        pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);
-        pop_int(cfg_copy, "limit_min_width", config.limit_min_width, config.set_limit_min_width);
-        pop_int(cfg_copy, "limit_min_height", config.limit_min_height, config.set_limit_min_height);
-        pop_int(cfg_copy, "max_detections", config.max_detections, config.set_max_detections);
-
-        // Check for unknown keys
-        if (py::len(cfg_copy) > 0) {
-            std::string unknown_keys;
-            for (auto item : cfg_copy) {
-                unknown_keys += py::str(item.first).cast<std::string>() + " ";
-            }
-            throw std::runtime_error("Unknown config keys: " + unknown_keys);
-        }
-
+        apply_infer_config(cfg_dict, config);
         infer_configure(inf, &config);
     }
 
@@ -320,18 +337,7 @@ public:
 
     c_infer_thread(const std::string& trt_file, const std::string& yaml_file, py::dict config_dict) {
         infer_config_t config{};
-        py::dict cfg_copy(config_dict);
-
-        pop_float(cfg_copy, "det_thr", config.det_thr, config.set_det_thr);
-        pop_float(cfg_copy, "nms_thr", config.nms_thr, config.set_nms_thr);
-        pop_bool(cfg_copy, "use_cuda_nms", config.use_cuda_nms, config.set_use_cuda_nms);
-        pop_bool(cfg_copy, "fuse_face_person", config.fuse_face_person, config.set_fuse_face_person);
-        pop_int(cfg_copy, "limit_max_batch", config.limit_max_batch, config.set_limit_max_batch);
-        pop_int(cfg_copy, "limit_max_width", config.limit_max_width, config.set_limit_max_width);
-        pop_int(cfg_copy, "limit_max_height", config.limit_max_height, config.set_limit_max_height);
-        pop_int(cfg_copy, "limit_min_width", config.limit_min_width, config.set_limit_min_width);
-        pop_int(cfg_copy, "limit_min_height", config.limit_min_height, config.set_limit_min_height);
-        pop_int(cfg_copy, "max_detections", config.max_detections, config.set_max_detections);
+        apply_infer_config(config_dict, config);
 
         thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str(), &config);
         if (!thread) {

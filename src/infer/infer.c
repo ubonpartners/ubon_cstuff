@@ -45,6 +45,7 @@ struct infer
     int max_w, max_h;
     bool use_cuda_nms;
     bool do_fuse_face_person;
+    bool inf_allow_upscale;
     bool input_is_fp16, output_is_fp16;
     int output_size;
     int fn;
@@ -86,6 +87,20 @@ static void create_exec_context(infer_t *inf)
 #endif
 
     return;
+}
+
+image_t *load_rgb32_tensor(const char *file, int w, int h)
+{
+    FILE *f=fopen(file, "rb");
+    if (!f)
+    {
+        log_error("Could not open file %s",file);
+        return 0;
+    }
+    image_t *img=create_image(w, h, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
+    fread(img->rgb, 1, w*h*4*3, f);
+    fclose(f);
+    return img;
 }
 
 static void infer_build(const char *onnx_filename, const char *out_filename)
@@ -236,6 +251,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->person_class_index=-1;
     inf->face_class_index=-1;
     inf->use_cuda_nms=true;
+    inf->inf_allow_upscale=true; // to be like ultralytics
     inf->do_fuse_face_person=true;
 
     cudaStreamCreate(&inf->stream);
@@ -387,8 +403,28 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
-static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *res_h, bool flexible)
+static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *res_h, bool flexible, bool allow_upscale)
 {
+    if (allow_upscale)
+    {
+        int scale_w_num = max_w;
+        int scale_w_den = w;
+        int scale_h_num = max_h;
+        int scale_h_den = h;
+
+        // Compare scale_w = scale_w_num / scale_w_den vs scale_h = scale_h_num / scale_h_den
+        if (scale_w_num * scale_h_den < scale_h_num * scale_w_den) {
+            // Use scale_w
+            *res_w = max_w;
+            *res_h = (h * max_w) / w;
+        } else {
+            // Use scale_h
+            *res_w = (w * max_h) / h;
+            *res_h = max_h;
+        }
+        return;
+    }
+
     // starting image w*h we need to determine a size to scale the image to so that it fits in
     // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
     int rw=w;
@@ -664,7 +700,8 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         image_t *img=img_list[i];
         int scale_w=0;
         int scale_h=0;
-        scale_to_fit(img->width, img->height, inf_max_w, inf_max_h, &scale_w, &scale_h, false);
+        scale_to_fit(img->width, img->height, inf_max_w, inf_max_h, &scale_w, &scale_h, false, inf->inf_allow_upscale);
+
         max_w=std::max(max_w, scale_w);
         max_h=std::max(max_h, scale_h);
         debugf("%d) %dx%d->%dx%d\n",i,img->width,img->height,scale_w,scale_h);
@@ -673,8 +710,17 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
     int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
     int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
-    debugf("INFER SIZE %dx%d (%dx%d)\n",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
+    debugf("INFER SIZE %dx%d (limit %dx%d)\n",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
 
+    bool do_testimage=false;
+
+    image_t *testimage=0;
+    if (do_testimage)
+    {
+        const char *testimage_path="/mldata/image/trt_inf.bin";
+        log_debug("Loading inference test img %s",testimage_path);
+        testimage=load_rgb32_tensor(testimage_path,640,640);
+    }
     // step 2: determined scaled size for each image
     // the image will be fitted into the inference rect and padded on right
     // and bottom edges.
@@ -682,20 +728,27 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     image_t *image_scaled_conv[num];
     for(int i=0;i<num;i++)
     {
-        image_t *img=img_list[i];
-        scale_to_fit(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i, true);
+        image_t *img=(testimage!=0) ? testimage : img_list[i];
+        scale_to_fit(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i, true, inf->inf_allow_upscale);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
         image_format_t fmt=image_scaled->format;
-        if (fmt!=IMAGE_FORMAT_RGB24_DEVICE) fmt=IMAGE_FORMAT_YUV420_DEVICE;
+        if (  (fmt==IMAGE_FORMAT_RGB24_DEVICE)
+            ||(fmt==IMAGE_FORMAT_RGB24_HOST)
+            ||(fmt==IMAGE_FORMAT_RGB_PLANAR_FP32_HOST)
+            ||(fmt==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE))
+            fmt=IMAGE_FORMAT_RGB24_DEVICE;
+        else
+            fmt=IMAGE_FORMAT_YUV420_DEVICE;
         image_scaled_conv[i]=image_convert(image_scaled, fmt);
         destroy_image(image_scaled);
     }
+
+    if (testimage) destroy_image(testimage);
 
     // step 3: make planar RGB image with all batch images
 
     image_format_t fmt=inf->input_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
     image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num);
-
     // step4: run inference
     auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
     assert(true==inf->ec->setInputShape(inf->input_tensor_name, input_dims));
@@ -728,7 +781,6 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     assert(true==inf->ec->enqueueV3(inf->stream));
 
     // step5: process detections
-
     if (inf->use_cuda_nms)
     {
         process_detections_cuda_nms(inf, num, columns, rows, image_widths, image_heights, dets);
@@ -781,6 +833,7 @@ void infer_configure(infer_t *inf, infer_config_t *config)
     if (config->set_limit_max_width) inf->inf_limit_max_width=config->limit_max_width;
     if (config->set_limit_max_height) inf->inf_limit_max_height=config->limit_max_height;
     if (config->set_fuse_face_person) inf->do_fuse_face_person=config->fuse_face_person;
+    if (config->set_allow_upscale) inf->inf_allow_upscale=config->allow_upscale;
     if (config->set_max_detections)
     {
         if (inf->nms) cuda_nms_free_workspace(inf->nms);

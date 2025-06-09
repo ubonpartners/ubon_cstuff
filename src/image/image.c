@@ -12,21 +12,70 @@ static bool async_cuda_mem=true;
 static std::once_flag initFlag;
 static bool image_inited=false;
 
-static uint64_t total_image_device_mem=0;
-static uint64_t total_image_host_mem=0;
-static uint64_t total_image_device_allocations=0;
-static uint64_t total_image_host_allocations=0;
+typedef struct image_mem_stats
+{
+    uint64_t outstanding_device_mem;
+    uint64_t outstanding_host_mem;
+    uint64_t outstanding_device_allocations;
+    uint64_t outstanding_host_allocations;
+    uint64_t total_device_mem;
+    uint64_t total_host_mem;
+    uint64_t total_device_allocations;
+    uint64_t total_host_allocations;
+    uint64_t hwm_host_mem;
+    uint64_t hwm_host_allocations;
+    uint64_t hwm_device_mem;
+    uint64_t hwm_device_allocations;
+} image_mem_stats_t;
+
+static image_mem_stats_t memstats={};
+
+void print_image_mem_stats(const image_mem_stats_t *stats)
+{
+    printf("Image Memory Stats:\n");
+    printf("    HWM:\n");
+    printf("        Device Memory (bytes):         %lu\n", stats->hwm_device_mem);
+    printf("        Host Memory (bytes):           %lu\n", stats->hwm_host_mem);
+    printf("        Device Allocations:            %lu\n", stats->hwm_device_allocations);
+    printf("        Host Allocations:              %lu\n", stats->hwm_host_allocations);
+    printf("    Outstanding:\n");
+    printf("        Device Memory (bytes):         %lu\n", stats->outstanding_device_mem);
+    printf("        Host Memory (bytes):           %lu\n", stats->outstanding_host_mem);
+    printf("        Device Allocations:            %lu\n", stats->outstanding_device_allocations);
+    printf("        Host Allocations:              %lu\n", stats->outstanding_host_allocations);
+    printf("    Total:\n");
+    printf("        Device Memory (bytes):         %lu\n", stats->total_device_mem);
+    printf("        Host Memory (bytes):           %lu\n", stats->total_host_mem);
+    printf("        Device Allocations:            %lu\n", stats->total_device_allocations);
+    printf("        Host Allocations:              %lu\n", stats->total_host_allocations);
+}
 
 static void image_mem_init()
 {
     // some stuff
 }
 
+static void atomic_max_u64(uint64_t *ptr, uint64_t val)
+{
+    uint64_t old = __atomic_load_n(ptr, __ATOMIC_RELAXED);
+    while (val > old &&
+           !__atomic_compare_exchange_n(ptr, &old, val,
+                                        /*weak=*/0,
+                                        __ATOMIC_RELAXED,
+                                        __ATOMIC_RELAXED)) {
+        // old is updated automatically
+    }
+}
+
 static void allocate_image_device_mem(image_t *img, int size)
 {
     img->device_mem_size=size;
-    __atomic_add_fetch(&total_image_device_mem, size, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&total_image_device_allocations, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.outstanding_device_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.outstanding_device_allocations, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.total_device_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.total_device_allocations, 1, __ATOMIC_RELAXED);
+    atomic_max_u64(&memstats.hwm_device_mem, memstats.outstanding_device_mem);
+    atomic_max_u64(&memstats.hwm_device_allocations, memstats.outstanding_device_allocations);
     if (async_cuda_mem)
     {
         CHECK_CUDART_CALL(cudaMallocAsync((void**)&img->device_mem, (size_t)size, img->stream));
@@ -40,9 +89,15 @@ static void allocate_image_device_mem(image_t *img, int size)
 static void allocate_image_host_mem(image_t *img, int size)
 {
     img->host_mem_size=size;
-    __atomic_add_fetch(&total_image_host_mem, size, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&total_image_host_allocations, 1, __ATOMIC_RELAXED);
-    CHECK_CUDART_CALL(cudaMallocHost(&img->host_mem, size));
+    __atomic_add_fetch(&memstats.outstanding_host_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.outstanding_host_allocations, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.total_host_mem, size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&memstats.total_host_allocations, 1, __ATOMIC_RELAXED);
+    atomic_max_u64(&memstats.hwm_host_mem, memstats.outstanding_host_mem);
+    atomic_max_u64(&memstats.hwm_host_allocations, memstats.outstanding_host_allocations);
+    //CHECK_CUDART_CALL(cudaMallocHost(&img->host_mem, size));
+    img->host_mem=malloc(size);
+    //print_image_mem_stats(&memstats);
 }
 
 static void free_image_mem(image_t *img)
@@ -50,9 +105,10 @@ static void free_image_mem(image_t *img)
     if (img->host_mem)
     {
         cudaStreamSynchronize(img->stream);
-        cudaFreeHost(img->host_mem);
-        __atomic_sub_fetch(&total_image_host_mem, img->device_mem_size, __ATOMIC_RELAXED);
-        __atomic_sub_fetch(&total_image_host_allocations, 1, __ATOMIC_RELAXED);
+        free(img->host_mem);
+        //cudaFreeHost(img->host_mem);
+        __atomic_sub_fetch(&memstats.outstanding_host_mem, img->host_mem_size, __ATOMIC_RELAXED);
+        __atomic_sub_fetch(&memstats.outstanding_host_allocations, 1, __ATOMIC_RELAXED);
     }
     if (img->device_mem)
     {
@@ -65,8 +121,8 @@ static void free_image_mem(image_t *img)
             cudaStreamSynchronize(img->stream);
             cudaFree((void*)img->device_mem);
         }
-        __atomic_sub_fetch(&total_image_device_mem, img->device_mem_size, __ATOMIC_RELAXED);
-        __atomic_sub_fetch(&total_image_device_allocations, 1, __ATOMIC_RELAXED);
+        __atomic_sub_fetch(&memstats.outstanding_device_mem, img->device_mem_size, __ATOMIC_RELAXED);
+        __atomic_sub_fetch(&memstats.outstanding_device_allocations, 1, __ATOMIC_RELAXED);
     }
     img->host_mem=0;
     img->device_mem=0;

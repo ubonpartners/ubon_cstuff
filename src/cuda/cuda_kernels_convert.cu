@@ -509,22 +509,22 @@ static __global__ void rgb24_to_planar_fp16_kernel_stride_single_dest(
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x >= dst_width || y >= dst_height) return;
+    int dst_idx = y * dst_width + x;
 
     int sx=x;
     int sy=y;
     if (sx>=src_width-1) sx=src_width-1;
     if (sy>=src_height-1) sy=src_height-1;
-    int idx = y * dst_width + x;             // index into each float plane
     int rgb_idx = sy * stride + sx * 3;    // index into packed uint8 RGB24
 
     float r = rgb24[rgb_idx    ] / 255.0f;
     float g = rgb24[rgb_idx + 1] / 255.0f;
     float b = rgb24[rgb_idx + 2] / 255.0f;
 
-    int plane_size = dst_width * dst_height;
-    dst[idx] = __float2half(r);
-    dst[idx + plane_size] = __float2half(g);
-    dst[idx + 2 * plane_size] = __float2half(b);
+    int dst_plane_size = dst_width * dst_height;
+    dst[dst_idx] = __float2half(r);
+    dst[dst_idx + dst_plane_size] = __float2half(g);
+    dst[dst_idx + 2 * dst_plane_size] = __float2half(b);
 }
 
 void cuda_convert_rgb24_to_planar_fp16(

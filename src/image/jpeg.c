@@ -11,6 +11,7 @@
 #include <cassert>
 #include "image.h"
 #include "log.h"
+#include "profile.h"
 
 struct my_error_mgr
 {
@@ -69,6 +70,7 @@ image_t *load_jpeg(const char *file)
         log_error("Could not open file %s",file);
         return 0;
     }
+    //double t=profile_time();
     fseek(f, 0L, SEEK_END);
     size_t sz = ftell(f);
     fseek(f, 0L, SEEK_SET);
@@ -81,6 +83,8 @@ image_t *load_jpeg(const char *file)
         free(mem);
     }
     fclose(f);
+    //t=profile_time()-t;
+    //printf("%f\n",(float)t);
     return ret;
 }
 

@@ -32,6 +32,7 @@ typedef struct infer_config
     float nms_thr;
     bool use_cuda_nms;
     bool fuse_face_person;
+    bool allow_upscale;
     int limit_max_batch;
     int limit_min_width;
     int limit_min_height;
@@ -41,6 +42,7 @@ typedef struct infer_config
     bool set_det_thr;
     bool set_nms_thr;
     bool set_use_cuda_nms;
+    bool set_allow_upscale;
     bool set_limit_max_batch;
     bool set_limit_min_width;
     bool set_limit_min_height;
