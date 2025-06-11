@@ -3,7 +3,7 @@ target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 if(DEFINED ENV{JETSON_SOC})
     set(ARCH_LIBS
-        pthread SDL2 jpeg openh264 yuv pcap srtp2
+        pthread SDL2 jpeg openh264 yuv pcap srtp2 yaml-cpp
         cuda cudart nvv4l2
         nppc nppisu nppig nppicc nppif nppidei
         nvbufsurface nvbufsurftransform
