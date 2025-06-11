@@ -114,5 +114,5 @@ image_t *image_make_tiled(image_format_t fmt,
                           int dst_width, int dst_height,
                           image_t **images, int num,
                           int *offs_x, int *offs_y);
-
+void image_get_aligned_faces(image_t **images, float *face_points, int n, int w, int h, image_t **ret);
 #endif

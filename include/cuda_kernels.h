@@ -45,8 +45,20 @@ void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *des
 void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
 uint8_t *out, int stride_out, int width, int height, cudaStream_t stream);
 void cuda_fp_set(void* rgb_plane_ptr, int w, int h,int dst_w, int dst_plane_size_elements,cudaStream_t stream, bool is_fp16);
-}
+void cuda_warp_yuv420_to_planar_float(
+    const image_t **inImgs,
+    void *outPlanes,
+    int batch,
+    int outW,
+    int outH,
+    const float *h_matrices,
+    bool use_rgb24,
+    bool use_fp16,
+    cudaStream_t stream);
+} // extern "C"
 // nvidia code
 void ResizeNv12(unsigned char *dpDstNv12, int nDstPitch, int nDstWidth, int nDstHeight, unsigned char *dpSrcNv12, int nSrcPitch, int nSrcWidth, int nSrcHeight, unsigned char* dpDstNv12UV, cudaStream_t *pstream);
+
+
 
 #endif

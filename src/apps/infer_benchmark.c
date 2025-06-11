@@ -238,14 +238,14 @@ int main(int argc, char *argv[])
                 test_config.width=640;
                 test_config.height=640;
             }
-            for(int threads=1;threads<=16;threads*=2)
+            for(int threads=1;threads<=32;threads*=2)
             {
-                for(int cuda_nms=0;cuda_nms<1;cuda_nms++)
+                for(int cuda_nms=1;cuda_nms<=1;cuda_nms++)
                 {
                     for(int model=0;model<2;model++)
                     {
                         if (model==0)
-                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpar-250525-dyn.trt";
+                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpa-250525-int8.trt";
                         else
                             test_config.trt_model="/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt";
                         benchmark_result_t r = {};

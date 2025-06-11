@@ -10,6 +10,7 @@
 #include "cuda_kernels.h"
 #include "misc.h"
 #include "display.h"
+#include "solvers.h"
 #include <mutex>
 #include <math.h>
 
@@ -496,4 +497,35 @@ image_t *image_make_tiled(image_format_t fmt,
 
     destroy_image(inf_subimage);
     return inf_image;
+}
+
+void image_get_aligned_faces(image_t **images, float *face_points, int n, int w, int h, image_t **ret)
+{
+    image_t *temp_in[n];
+    for(int i=0;i<n;i++) temp_in[i]=image_convert(images[i], IMAGE_FORMAT_YUV420_DEVICE);
+
+    image_t *img_rgb=create_image(w, h*n, IMAGE_FORMAT_RGB24_DEVICE);
+    for(int i=0;i<n;i++)
+    {
+        ret[i]=create_image_no_surface_memory(w, h, IMAGE_FORMAT_RGB24_DEVICE);
+        ret[i]=image_reference(img_rgb);
+        image_add_dependency(ret[i], img_rgb);
+        ret[i]->rgb=img_rgb->rgb+w*h*3*i;
+    }
+
+    float* M = (float*)malloc(n * 6 * sizeof(float));
+    solve_affine_face_points(images, face_points, n, w, h, M);
+
+    // warp (cast to const)
+    cuda_warp_yuv420_to_planar_float(
+        (const image_t**)temp_in,
+        img_rgb->rgb, n,
+        w, h,
+        M, true, false,
+        img_rgb->stream
+    );
+    free(M);
+    destroy_image(img_rgb);
+
+    for(int i=0;i<n;i++) destroy_image(temp_in[i]);
 }

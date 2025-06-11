@@ -1,0 +1,71 @@
+#include <math.h>
+#include "image.h"
+
+typedef double mat6x7[6][7];
+
+
+/**
+ * Solve 2D affine transform A x = b for 3 points
+ * pts_src, pts_dst: [3][2]
+ * M: output [2][3]
+ */
+// Compute affine transform via least-squares over 5 points
+static void compute_affine5(const float src[5][2], const float dst[5][2], float M[6])
+{
+    // Build normal equations ATA * p = ATb for parameters p = [a00 a01 a02 a10 a11 a12]
+    mat6x7 A = {0};
+    // Accumulate
+    for(int i=0;i<5;i++){
+        double xs = src[i][0], ys = src[i][1];
+        double xd = dst[i][0], yd = dst[i][1];
+        // First equation row: [xs, ys, 1, 0, 0, 0] = xd
+        double row1[6] = {xs, ys, 1, 0, 0, 0};
+        // Second eq: [0,0,0, xs, ys, 1] = yd
+        double row2[6] = {0, 0, 0, xs, ys, 1};
+        // Update A (6x6) and b
+        for(int r=0;r<6;r++){
+            for(int c=0;c<6;c++) A[r][c] += row1[r]*row1[c] + row2[r]*row2[c];
+            A[r][6]    += row1[r]*xd    + row2[r]*yd;
+        }
+    }
+    // Solve 6x6 via Gauss elimination on augmented matrix A
+    for(int i=0;i<6;i++){
+        // pivot
+        int piv=i;
+        for(int j=i+1;j<6;j++) if(fabs(A[j][i])>fabs(A[piv][i])) piv=j;
+        if(piv!=i) for(int k=i;k<=6;k++) std::swap(A[i][k], A[piv][k]);
+        double diag = A[i][i]; if(fabs(diag)<1e-12) { diag=1e-12; }
+        for(int k=i;k<=6;k++) A[i][k]/=diag;
+        for(int j=0;j<6;j++) if(j!=i){ double factor=A[j][i]; for(int k=i;k<=6;k++) A[j][k]-=factor*A[i][k]; }
+    }
+    for(int i=0;i<6;i++) M[i] = (float)A[i][6];
+}
+
+// InsightFace canonical keypoints for 112x112 crop
+static const float ref_pts[5][2] = {
+    {38.2946f, 51.6963f},
+    {73.5318f, 51.5014f},
+    {56.0252f, 71.7366f},
+    {41.5493f, 92.3655f},
+    {70.7299f, 92.2041f}
+};
+
+void solve_affine_face_points(image_t **images, float *face_points, int n, int dest_w, int dest_h, float *M)
+{
+    for(int i=0;i<n;i++)
+    {
+        float ref_scale_x=dest_w/112.0;
+        float ref_scale_y=dest_h/112.0;
+        // build affine matrices
+        for (int b = 0; b < n; ++b) {
+            float src5[5][2], dst5[5][2];
+            for (int i = 0; i < 3; ++i) {
+                src5[i][0] = face_points[2*(5*b+i) + 0] * images[b]->width;
+                src5[i][1] = face_points[2*(5*b+i) + 1] * images[b]->height;
+                dst5[i][0] = ref_pts[i][0]*ref_scale_x;
+                dst5[i][1] = ref_pts[i][1]*ref_scale_y;
+            }
+            compute_affine5(src5, dst5, &M[6*b]);
+        }
+    }
+}

@@ -608,6 +608,44 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("crop", &c_image::crop, "Return a crop of the surface")
         .def("blend", &c_image::blend, "Blend a rectange from a second surface over the top");
 
+    m.def("get_aligned_faces", [](const std::vector<std::shared_ptr<c_image>>& images,
+                                  const std::vector<float>& face_points,
+                                  int width,
+                                  int height) {
+            // Number of images / faces
+            size_t n = images.size();
+            if (face_points.size() != 2 * n) {
+                throw std::runtime_error("face_points must be a flat list of length 2 * n");
+            }
+
+            // Prepare input image_t* array
+            std::vector<image_t*> in_ptrs;
+            in_ptrs.reserve(n);
+            for (const auto& img : images) {
+                img->sync();
+                in_ptrs.push_back(img->raw());
+            }
+
+            // Prepare output array
+            std::vector<image_t*> out_ptrs(n);
+
+            // Call C function: face_points.data() is already flat floats
+            image_get_aligned_faces(in_ptrs.data(), const_cast<float*>(face_points.data()),
+                                    static_cast<int>(n), width, height, out_ptrs.data());
+
+            // Wrap outputs in shared_ptr<c_image>
+            std::vector<std::shared_ptr<c_image>> results;
+            results.reserve(n);
+            for (auto ptr : out_ptrs) {
+                results.emplace_back(std::make_shared<c_image>(ptr));
+            }
+            return results;
+        },
+        py::arg("images"),
+        py::arg("face_points"),
+        py::arg("width"),
+        py::arg("height"),
+        "Align faces in images given flat list of face landmarks and return list of aligned c_image objects.");
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
         .def("run", &c_infer::run, "Run inference on a c_image")
