@@ -63,7 +63,7 @@ struct infer
     model_description_t md;
 };
 
-class Logger : public nvinfer1::ILogger
+static class Logger : public nvinfer1::ILogger
 {
 public:
     void log(Severity severity, const char* msg) noexcept

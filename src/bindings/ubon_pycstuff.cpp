@@ -18,6 +18,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "misc.h"
 #include "pcap_decoder.h"
 #include "profile.h"
+#include "infer_aux.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -449,6 +450,101 @@ public:
     }
 };
 
+class c_infer_aux {
+public:
+    infer_aux_t* aux;
+    int embedding_size;
+
+    c_infer_aux(const std::string& trt_file) {
+        aux = infer_aux_create(trt_file.c_str());
+        if (!aux) {
+            throw std::runtime_error("Failed to create infer_aux_t");
+        }
+
+        aux_model_description_t* desc = infer_aux_get_model_description(aux);
+        if (!desc) {
+            throw std::runtime_error("Failed to get aux model description");
+        }
+
+        embedding_size = desc->embedding_size;
+    }
+
+    ~c_infer_aux() {
+        if (aux) infer_aux_destroy(aux);
+    }
+
+    py::list run(std::shared_ptr<c_image> image_obj, py::object keypoints = py::none()) {
+        image_t* img = image_obj->raw();
+        image_t* imgs[1] = { img };
+
+        float* kp_ptr = nullptr;
+        std::vector<float> kp_buf;
+
+        if (!keypoints.is_none()) {
+            py::list kp_list = keypoints;
+            kp_buf.resize(kp_list.size());
+            for (size_t i = 0; i < kp_buf.size(); ++i)
+                kp_buf[i] = kp_list[i].cast<float>();
+            kp_ptr = kp_buf.data();
+        }
+
+        float* output = infer_aux_batch(aux, imgs, kp_ptr, 1);
+
+        py::list result;
+        for (int i = 0; i < embedding_size; ++i)
+            result.append(output[i]);
+
+        return result;
+    }
+
+    py::list run_batch(const std::vector<std::shared_ptr<c_image>>& images, py::object all_keypoints = py::none()) {
+        int num = static_cast<int>(images.size());
+        std::vector<image_t*> img_ptrs(num);
+        for (int i = 0; i < num; ++i)
+            img_ptrs[i] = images[i]->raw();
+
+        float* kp_ptr = nullptr;
+        std::vector<float> kp_data;
+
+        if (!all_keypoints.is_none()) {
+            py::list kp_list = all_keypoints;
+            kp_data.resize(kp_list.size());
+            for (size_t i = 0; i < kp_data.size(); ++i)
+                kp_data[i] = kp_list[i].cast<float>();
+            kp_ptr = kp_data.data();
+        }
+
+        float* output = infer_aux_batch(aux, img_ptrs.data(), kp_ptr, num);
+
+        py::list results;
+        for (int i = 0; i < num; ++i) {
+            py::list embedding;
+            for (int j = 0; j < embedding_size; ++j)
+                embedding.append(output[i * embedding_size + j]);
+            results.append(embedding);
+        }
+
+        return results;
+    }
+
+    py::dict get_model_description() {
+        aux_model_description_t* desc = infer_aux_get_model_description(aux);
+        if (!desc) throw std::runtime_error("Failed to get aux model description");
+
+        py::dict d;
+        d["embedding_size"] = desc->embedding_size;
+        d["max_batch"] = desc->max_batch;
+        d["input_w"] = desc->input_w;
+        d["input_h"] = desc->input_h;
+        d["input_fp16"] = desc->input_fp16;
+        d["output_fp16"] = desc->output_fp16;
+        d["engineInfo"] = desc->engineInfo;
+        return d;
+    }
+
+    infer_aux_t* raw() { return aux; }
+};
+
 class c_decoder {
     public:
         simple_decoder_t* dec;
@@ -608,14 +704,14 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("crop", &c_image::crop, "Return a crop of the surface")
         .def("blend", &c_image::blend, "Blend a rectange from a second surface over the top");
 
-    m.def("get_aligned_faces", [](const std::vector<std::shared_ptr<c_image>>& images,
+    m.def("c_get_aligned_faces", [](const std::vector<std::shared_ptr<c_image>>& images,
                                   const std::vector<float>& face_points,
                                   int width,
                                   int height) {
             // Number of images / faces
             size_t n = images.size();
-            if (face_points.size() != 2 * n) {
-                throw std::runtime_error("face_points must be a flat list of length 2 * n");
+            if (face_points.size() != 10 * n) {
+                throw std::runtime_error("face_points must be a flat list of length 2*5 * n");
             }
 
             // Prepare input image_t* array
@@ -646,6 +742,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         py::arg("width"),
         py::arg("height"),
         "Align faces in images given flat list of face landmarks and return list of aligned c_image objects.");
+
     py::class_<c_infer, std::shared_ptr<c_infer>>(m, "c_infer")
         .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml_file"))
         .def("run", &c_infer::run, "Run inference on a c_image")
@@ -660,6 +757,16 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("get_stats", &c_infer_thread::get_stats, "Get internal inference stats")
         .def("get_model_description", &c_infer_thread::get_model_description, "Get model description");
 
+    py::class_<c_infer_aux, std::shared_ptr<c_infer_aux>>(m, "c_infer_aux")
+        .def(py::init<const std::string&>(), py::arg("trt_file"))
+        .def("run", &c_infer_aux::run,
+            py::arg("image"), py::arg("keypoints") = py::none(),
+            "Run auxiliary inference on a single image and optional keypoints (keypoints=None=>images already aligned)")
+        .def("run_batch", &c_infer_aux::run_batch,
+            py::arg("images"), py::arg("keypoints") = py::none(),
+            "Run auxiliary inference on a batch of images and optional keypoints (keypoints=None=>images already aligned)")
+        .def("get_model_description", &c_infer_aux::get_model_description,
+            "Get auxiliary model description as dictionary");
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())

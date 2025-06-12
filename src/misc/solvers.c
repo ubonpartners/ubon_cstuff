@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include "image.h"
 
 typedef double mat6x7[6][7];
@@ -58,14 +59,46 @@ void solve_affine_face_points(image_t **images, float *face_points, int n, int d
         float ref_scale_y=dest_h/112.0;
         // build affine matrices
         for (int b = 0; b < n; ++b) {
-            float src5[5][2], dst5[5][2];
-            for (int i = 0; i < 3; ++i) {
-                src5[i][0] = face_points[2*(5*b+i) + 0] * images[b]->width;
-                src5[i][1] = face_points[2*(5*b+i) + 1] * images[b]->height;
+            float src5[5][2];
+            float dst5[5][2];
+            if (face_points==0)
+            {
+                // this means images already aligned
+                // we put in some dummy facepoints in the right place so that
+                // the whole image gets used => still scaled to the right size
+                for (int i = 0; i < 5; ++i) {
+                    src5[i][0] = ref_pts[i][0] * images[b]->width / 112.0;
+                    src5[i][1] = ref_pts[i][1] * images[b]->height / 112.0;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < 5; ++i) {
+                    src5[i][0] = face_points[2*(5*b+i) + 0] * images[b]->width;
+                    src5[i][1] = face_points[2*(5*b+i) + 1] * images[b]->height;
+                }
+            }
+            for (int i = 0; i < 5; ++i) {
                 dst5[i][0] = ref_pts[i][0]*ref_scale_x;
                 dst5[i][1] = ref_pts[i][1]*ref_scale_y;
             }
-            compute_affine5(src5, dst5, &M[6*b]);
+            /*for(int i=0;i<5;i++)
+            {
+                printf("%d %3f %3f %3f %3f\n",i,src5[i][0],src5[i][1],dst5[i][0],dst5[i][1]);
+            }*/
+            compute_affine5(dst5, src5, &M[6*b]);
+            /*for(int i=0;i<6;i++) printf("%f ",M[i]);
+            printf("\n");
+            printf("Test\n");
+            for (int i=0;i<5;i++)
+            {
+                float x=dst5[i][0];
+                float y=dst5[i][1];
+                float x2=x*M[0]+y*M[1]+M[2];
+                float y2=x*M[3]+y*M[4]+M[5];
+                printf("Test %d %f %f->%f %f\n",i,x,y,x2,y2);
+            }*/
+
         }
     }
 }
