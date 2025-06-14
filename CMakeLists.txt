@@ -112,6 +112,7 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/image/*.c
     ${CMAKE_SOURCE_DIR}/src/infer/*.c
     ${CMAKE_SOURCE_DIR}/src/log/*.c
+    ${CMAKE_SOURCE_DIR}/src/match/*.c
     ${CMAKE_SOURCE_DIR}/src/misc/*.c
     ${CMAKE_SOURCE_DIR}/src/nvof/*.c
     ${CMAKE_SOURCE_DIR}/src/rtp/*.c

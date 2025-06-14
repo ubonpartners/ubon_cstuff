@@ -5,6 +5,7 @@
 
 #define DETECTION_MAX_ATTR  48
 #define REID_MAX_VECTOR_LEN 64
+#define MAX_DETS            65535 // per class
 
 typedef struct model_description model_description_t;
 
@@ -85,16 +86,32 @@ void show_detections(detections_t *dets);
 void detections_generate_overlap_masks(detections_t *dets);
 void fuse_face_person(detections_t *dets);
 
-void match_detections_greedy(
+int match_detections_greedy(
     const detection_t *dets_a,
     int                num_dets_a,
     const detection_t *dets_b,
     int                num_dets_b,
     float            (*cost_fn)(const detection_t *, const detection_t *, void *),
     void              *ctx,
-    uint8_t           *out_a_idx,
-    uint8_t           *out_b_idx,
-    int               *pOutCount
+    uint16_t           *out_a_idx,
+    uint16_t           *out_b_idx
 );
 
+typedef enum match_type
+{
+    MATCH_TYPE_BOX_IOU=0,
+    MATCH_TYPE_FACE_KP=1,
+    MATCH_TYPE_POSE_KP=2
+} match_type_t;
+
+int match_box_iou(
+    const detection_t *dets_a,
+    int                num_dets_a,
+    const detection_t *dets_b,
+    int                num_dets_b,
+    uint16_t           *out_a_idx,
+    uint16_t           *out_b_idx,
+    float             iou_thr,
+    match_type_t      match_type
+);
 #endif

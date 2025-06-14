@@ -7,87 +7,7 @@
 #include "detections.h"
 #include "image.h"
 #include "infer.h"
-
-
-static inline uint64_t box_to_8x8_mask(float x0, float y0, float x1, float y1)
-{
-    /* 1) Reject degenerate or out‐of‐bounds boxes */
-    if (x1 <= x0 || y1 <= y0 || x0 >= 1.0f || y0 >= 1.0f || x1 <= 0.0f || y1 <= 0.0f) {
-        return 0ULL;
-    }
-
-    /* 2) Clamp the input to [0,1] to avoid any FP weirdness beyond [0,1] */
-    if (x0 < 0.0f) x0 = 0.0f;
-    if (y0 < 0.0f) y0 = 0.0f;
-    if (x1 > 1.0f) x1 = 1.0f;
-    if (y1 > 1.0f) y1 = 1.0f;
-
-    /* 3) Convert normalized coords to [0..8) range */
-    float fx0 = x0 * 8.0f;
-    float fy0 = y0 * 8.0f;
-    float fx1 = x1 * 8.0f;
-    float fy1 = y1 * 8.0f;
-
-    /* 4) Compute integer cell indices:
-     *      c0 = floor(fx0)        (first column touched)
-     *      c1 = ceil(fx1) - 1    (last column touched)
-     *      r0 = floor(fy0)        (first row touched)
-     *      r1 = ceil(fy1) - 1    (last row touched)
-     *
-     *    Because we treat an exact multiple of 1/8 as not entering the next cell,
-     *    using ceil(fx1) - 1 handles that correctly: e.g. fx1=2.0 => ceil(2.0)-1 = 1.
-     */
-    int c0 = (int)floorf(fx0);
-    int r0 = (int)floorf(fy0);
-    int c1 = (int)ceilf(fx1) - 1;
-    int r1 = (int)ceilf(fy1) - 1;
-
-    /* 5) Clamp to valid cell indices [0..7] */
-    if (c0 < 0) c0 = 0;   else if (c0 > 7) c0 = 7;
-    if (r0 < 0) r0 = 0;   else if (r0 > 7) r0 = 7;
-    if (c1 < 0) c1 = 0;   else if (c1 > 7) c1 = 7;
-    if (r1 < 0) r1 = 0;   else if (r1 > 7) r1 = 7;
-
-    /* 6) It may happen that after clamping, c1 < c0 or r1 < r0 (e.g. very thin box hugging a boundary),
-     *    so double‐check and abort if there’s truly no overlap.
-     */
-    if (c1 < c0 || r1 < r0) {
-        return 0ULL;
-    }
-
-    /* 7) Build a per‐row byte mask with bits [c0..c1] set.
-     *      width = (c1 - c0 + 1)
-     *    row_byte = ((1u << width) - 1) << c0
-     */
-    int width = c1 - c0 + 1;
-    uint8_t row_byte = (uint8_t)(((1u << width) - 1u) << c0);
-
-    /* 8) Replicate row_byte into every byte of a 64‐bit word:
-     *    e.g. if row_byte = 0b00011100, then
-     *         rep = 0x?[row_byte][row_byte][row_byte]…[row_byte]
-     */
-    const uint64_t BROADCAST = 0x0101010101010101ULL;
-    uint64_t rep = (uint64_t)row_byte * BROADCAST;
-
-    /* 9) Build a vertical mask that selects bytes r0..r1:
-     *    We want (r1 - r0 + 1) consecutive bytes of 0xFF, starting at byte‐index r0.
-     *    If we shift a 64‐bit all‐ones right by (64 - ((r1-r0+1)*8)), we get that many low bits set.
-     *    Then shift left by (r0 * 8) to push those bytes into rows r0..r1.
-     */
-    int row_count = (r1 - r0 + 1);
-    uint64_t vert_mask;
-    if (row_count == 8) {
-        /* special‐case: all rows */
-        vert_mask = ~0ULL;
-    } else {
-        uint64_t low_bytes = (~0ULL) >> (64 - (row_count * 8));
-        vert_mask = low_bytes << (r0 * 8);
-    }
-
-    /* 10) The final mask is the bitwise‐AND of rep and vert_mask */
-    uint64_t mask = rep & vert_mask;
-    return mask;
-}
+#include "match.h"
 
 void detections_generate_overlap_masks(detections_t *dets)
 {
@@ -465,15 +385,15 @@ static float person_face_match_cost(const detection_t *person, const detection_t
 void fuse_face_person(detections_t *dets)
 {
     int num=0;
-    uint8_t person_idx[256];
-    uint8_t face_idx[256];
+    uint16_t person_idx[dets->num_person_detections];
+    uint16_t face_idx[dets->num_face_detections];
 
     //printf("nperson %d nface %d\n",dets->num_person_detections, dets->num_face_detections);
 
-    match_detections_greedy(dets->person_dets, std::min(255, dets->num_person_detections),
-                            dets->face_dets, std::min(255, dets->num_face_detections),
+    num=match_detections_greedy(dets->person_dets, dets->num_person_detections,
+                            dets->face_dets, dets->num_face_detections,
                             person_face_match_cost, 0,
-                            person_idx, face_idx, &num);
+                            person_idx, face_idx);
 
 
     for (int i=0;i<num;i++)
@@ -500,4 +420,154 @@ void fuse_face_person(detections_t *dets)
         printf("%d unmatched faces\n", dets->num_face_detections-num);
     }*/
     dets->num_face_detections=0;
+}
+
+int match_detections_greedy(
+    const detection_t *dets_a,
+    int                num_dets_a,
+    const detection_t *dets_b,
+    int                num_dets_b,
+    float            (*cost_fn)(const detection_t *, const detection_t *, void *),
+    void              *ctx,
+    uint16_t           *out_a_idx,
+    uint16_t           *out_b_idx
+)
+{
+    if (num_dets_a <= 0 || num_dets_b <= 0) {
+        return 0;
+    }
+
+    /* 1) Extract overlap_mask arrays */
+    uint64_t maskA[MAX_DETS], maskB[MAX_DETS];
+    void *dets_a_ptr[MAX_DETS];
+    void *dets_b_ptr[MAX_DETS];
+
+    for (int i = 0; i < num_dets_a; ++i) {
+        maskA[i] = dets_a[i].overlap_mask;
+        dets_a_ptr[i]=(void*)&dets_a[i];
+    }
+    for (int j = 0; j < num_dets_b; ++j) {
+        maskB[j] = dets_b[j].overlap_mask;
+        dets_b_ptr[j]=(void*)&dets_b[j];
+    }
+
+    return match_greedy(
+        (const void **)dets_a_ptr, maskA, num_dets_a,
+        (const void **)dets_b_ptr, maskB, num_dets_b,
+        (float (*)(const void*, const void*, void*))cost_fn, ctx,
+        out_a_idx, out_b_idx);
+}
+
+static float score_box_iou(const detection_t *da, const detection_t *db, void *ctx)
+{
+    float x_left = fmaxf(da->x0, db->x0);
+    float y_top = fmaxf(da->y0, db->y0);
+    float x_right = fminf(da->x1, db->x1);
+    float y_bottom = fminf(da->y1, db->y1);
+
+    if (x_right < x_left || y_bottom < y_top)
+        return 0.0f;
+
+    float inter=(x_right - x_left) * (y_bottom - y_top);
+
+    float area_a = (da->x1 - da->x0) * (da->y1 - da->y0);
+    float area_b = (db->x1 - db->x0) * (db->y1 - db->y0);
+
+    float union_area = area_a + area_b - inter;
+
+    if (union_area <= 0.0f)
+        return 0.0f;
+
+    float thr=*((float *)ctx);
+
+    float ret=inter / union_area;
+    if (ret<thr) return 0.0;
+    return ret;
+}
+
+static float kp_iou(const kp_t *a, const kp_t *b, const float *scales, int n, float area)
+{
+    float ss=area*0.53;
+    float num=0;
+    float denom=0;
+    for(int i=0;i<n;i++)
+    {
+        if (b[i].conf>0.3) // if GT is labelled
+        {
+            float dx=a[i].x-b[i].x;
+            float dy=a[i].y-b[i].y;
+            num+=expf(-(dx*dx+dy*dy)/(2.0*ss*scales[i]*scales[i]*4+1e-7));
+            denom+=1.0;
+        }
+    }
+    float iou=num/(denom+1e-7);
+    return iou;
+}
+
+static float score_facepoint_iou(const detection_t *da, const detection_t *db, void *ctx)
+{
+    assert(da->num_face_points==5);
+    assert(db->num_face_points==5);
+    assert(da->cl==db->cl);
+    if (score_box_iou(da, db, ctx)<=0) return 0;
+    const float face_scales[5]={0.025, 0.025, 0.026, 0.025, 0.025};
+    float box_a=(db->x1-db->x0)*(db->y1-db->y0);
+    float iou=kp_iou(da->face_points, db->face_points, face_scales, 5, box_a);
+    float thr=*((float *)ctx);
+    if (iou<thr) return 0.0;
+    return iou;
+}
+
+static float score_posepoint_iou(const detection_t *da, const detection_t *db, void *ctx)
+{
+    assert(da->num_pose_points==17);
+    assert(db->num_pose_points==17);
+    assert(da->cl==db->cl);
+    if (score_box_iou(da, db, ctx)<=0) return 0;
+
+    const float pose_scales[17]={0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072, 0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089};
+    float box_a=(db->x1-db->x0)*(db->y1-db->y0);
+
+    float iou=kp_iou(da->pose_points, db->pose_points, pose_scales, 17, box_a);
+    float thr=*((float *)ctx);
+    if (iou<thr) return 0.0;
+    return iou;
+}
+
+int match_box_iou(
+    const detection_t *dets_a,
+    int                num_dets_a,
+    const detection_t *dets_b,
+    int                num_dets_b,
+    uint16_t           *out_a_idx,
+    uint16_t           *out_b_idx,
+    float              iou_thr,
+    match_type_t      match_type
+)
+{
+    assert(num_dets_a<=MAX_DETS);
+    assert(num_dets_b<=MAX_DETS);
+    for(int i=0;i<num_dets_a;i++)
+    {
+        detection_t *det=(detection_t *)&dets_a[i];
+        det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
+    }
+    for(int i=0;i<num_dets_b;i++)
+    {
+        detection_t *det=(detection_t *)&dets_b[i];
+        det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
+    }
+
+    int ret=0;
+    if (match_type==MATCH_TYPE_BOX_IOU)
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_box_iou, &iou_thr,out_a_idx, out_b_idx);
+    else if (match_type==MATCH_TYPE_FACE_KP)
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_facepoint_iou, &iou_thr,out_a_idx, out_b_idx);
+    else if (match_type==MATCH_TYPE_POSE_KP)
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_posepoint_iou, &iou_thr,out_a_idx, out_b_idx);
+    else
+    {
+        assert(0);
+    }
+    return ret;
 }

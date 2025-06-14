@@ -545,6 +545,83 @@ public:
     infer_aux_t* raw() { return aux; }
 };
 
+static auto parse_detection = [](const std::unordered_map<std::string, py::object>& py_det) -> detection_t {
+    detection_t det = {};
+
+    // Required: box
+    auto box = py_det.at("box").cast<std::vector<float>>();
+    if (box.size() != 4) {
+        throw std::runtime_error("Expected 'box' to have 4 float elements (x0, y0, x1, y1).");
+    }
+
+    det.x0 = box[0];
+    det.y0 = box[1];
+    det.x1 = box[2];
+    det.y1 = box[3];
+
+    det.conf = py_det.at("confidence").cast<float>();
+    det.cl = py_det.at("class").cast<unsigned short>();
+
+    // Optional: face_points
+    if (py_det.find("face_points") != py_det.end()) {
+        auto face = py_det.at("face_points").cast<std::vector<float>>();
+        if (face.size() != 5 * 3) {
+            throw std::runtime_error("Expected 'face_points' to have 15 float elements (5 keypoints x 3).");
+        }
+
+        det.num_face_points = 5;
+        for (int i = 0; i < 5; ++i) {
+            det.face_points[i].x = face[i * 3 + 0];
+            det.face_points[i].y = face[i * 3 + 1];
+            det.face_points[i].conf = face[i * 3 + 2];
+        }
+    }
+
+    // Optional: pose_points
+    if (py_det.find("pose_points") != py_det.end()) {
+        auto pose = py_det.at("pose_points").cast<std::vector<float>>();
+        if (pose.size() != 17 * 3) {
+            throw std::runtime_error("Expected 'pose_points' to have 51 float elements (17 keypoints x 3).");
+        }
+
+        det.num_pose_points = 17;
+        for (int i = 0; i < 17; ++i) {
+            det.pose_points[i].x = pose[i * 3 + 0];
+            det.pose_points[i].y = pose[i * 3 + 1];
+            det.pose_points[i].conf = pose[i * 3 + 2];
+        }
+    }
+
+    return det;
+};
+
+std::pair<std::vector<int>, std::vector<int>> match_box_iou_wrapper(
+    const std::vector<std::unordered_map<std::string, py::object>>& py_dets_a,
+    const std::vector<std::unordered_map<std::string, py::object>>& py_dets_b,
+    float iou_thr, match_type_t match_type)
+{
+    std::vector<detection_t> dets_a, dets_b;
+
+    // Parse detections
+    for (const auto& py_det : py_dets_a) dets_a.push_back(parse_detection(py_det));
+    for (const auto& py_det : py_dets_b) dets_b.push_back(parse_detection(py_det));
+
+    std::vector<uint16_t> out_a_idx(dets_a.size());
+    std::vector<uint16_t> out_b_idx(dets_b.size());
+
+    int N = match_box_iou(
+        dets_a.data(), dets_a.size(),
+        dets_b.data(), dets_b.size(),
+        out_a_idx.data(), out_b_idx.data(),
+        iou_thr, match_type
+    );
+
+    std::vector<int> out_a(out_a_idx.begin(), out_a_idx.begin() + N);
+    std::vector<int> out_b(out_b_idx.begin(), out_b_idx.begin() + N);
+
+    return {out_a, out_b};
+}
+
 class c_decoder {
     public:
         simple_decoder_t* dec;
@@ -678,6 +755,12 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .value("MONO_DEVICE", IMAGE_FORMAT_MONO_DEVICE)
         .export_values();
 
+    py::enum_<match_type>(m, "MatchType")
+        .value("MATCH_TYPE_BOX_IOU", MATCH_TYPE_BOX_IOU)
+        .value("MATCH_TYPE_FACE_KP", MATCH_TYPE_FACE_KP)
+        .value("MATCH_TYPE_POSE_KP", MATCH_TYPE_POSE_KP)
+        .export_values();
+
     py::class_<c_image, std::shared_ptr<c_image>>(m, "c_image")
         .def(py::init<int, int, image_format_t>(), "Create empty image")
         .def_static("from_numpy", &c_image::from_numpy, "Create from NumPy RGB array")
@@ -779,6 +862,10 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_pcap_decoder, std::shared_ptr<c_pcap_decoder>>(m, "c_pcap_decoder")
         .def(py::init<const std::string&>(), py::arg("filename"))
         .def("get_frame", &c_pcap_decoder::get_frame, "Get the next decoded frame (returns c_image or None)");
+
+    m.def("match_box_iou", &match_box_iou_wrapper,
+          "Matches boxes using IoU and returns index lists",
+          py::arg("dets_a"), py::arg("dets_b"), py::arg("iou_thr"), py::arg("match_type"));
 
     m.def("cuda_set_sync_mode", &cuda_set_sync_mode,
             py::arg("force_sync"),

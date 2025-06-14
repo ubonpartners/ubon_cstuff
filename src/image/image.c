@@ -162,8 +162,8 @@ static void allocate_image_surfaces(image_t *img)
         }
         case IMAGE_FORMAT_YUV420_DEVICE:
         {
-            int round_w=(img->width+63)&(~63);
-            int round_h=((img->height+7)&(~7));
+            int round_w=(img->width+127)&(~127);
+            int round_h=((img->height+15)&(~15));
             allocate_image_device_mem(img, (round_w*round_h*3)/2);
             img->y=(uint8_t *)img->device_mem;
             img->u=img->y+(round_w*round_h);
