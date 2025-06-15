@@ -34,7 +34,7 @@ struct infer
     IRuntime *runtime;
     ICudaEngine* engine;
     IExecutionContext *ec;
-    CUdeviceptr output_mem;
+    void *output_mem;
     cudaStream_t stream;
     CudaNMSHandle nms;
     int nms_max_boxes;
@@ -390,14 +390,17 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 void infer_destroy(infer_t *inf)
 {
     if (!inf) return;
-    cudaStreamDestroy(inf->stream);
+    CHECK_CUDART_CALL(cudaStreamDestroy(inf->stream));
     if (inf->nms) cuda_nms_free_workspace(inf->nms);
     if (inf->ec) delete inf->ec;
     if (inf->engine) delete inf->engine;
     if (inf->runtime) delete inf->runtime;
-    if (inf->output_mem) cuMemFree(inf->output_mem);
+    if (inf->output_mem)
+    {
+        CHECK_CUDART_CALL(cudaFree(inf->output_mem));
+    }
     inf->output_mem=0;
-    if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
+    if (inf->output_mem_host) free(inf->output_mem_host);
     inf->output_mem_host=0;
     if (inf->md.engineInfo) free((void*)inf->md.engineInfo);
     free(inf);
@@ -558,14 +561,15 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
 {
     if (numBoxes>inf->nms_max_boxes)
     {
+        CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
         if (inf->nms) cuda_nms_free_workspace(inf->nms);
         inf->nms=0;
         inf->nms_max_boxes=0;
     }
-    int max_detections_per_class=std::min(inf->max_detections, 255);
+    int max_detections_per_class=inf->max_detections;
     if (inf->nms==0)
     {
-        inf->nms_max_boxes=numBoxes;
+        inf->nms_max_boxes=std::max(1200, numBoxes);
         inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, max_detections_per_class, 0);
     }
     std::vector<std::vector<int>> keptIndices;
@@ -584,12 +588,14 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         keptIndices,
         inf->stream);
 
-    cuStreamSynchronize(inf->stream);
+    CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
 
     int nc=inf->md.num_classes;
     int num_attributes=inf->md.num_person_attributes;
     for(int b=0;b<num;b++)
     {
+        hostGathered.clear();
+
         // Slice keptIndices for batch b
         std::vector<std::vector<int>> keptPerBatch;
         keptPerBatch.reserve(nc);
@@ -678,6 +684,11 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
 
 void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 {
+    // check
+    for(int i=0;i<num;i++)
+    {
+        assert(img_list[i]!=0);
+    }
     // step 0: split into 'max batch' pieces
     int max_batch=std::min(inf->inf_limit_max_batch, inf->max_batch);
     if (num>max_batch)
@@ -760,13 +771,16 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     if (max_output_size>inf->output_size)
     {
         //log_debug("Reallocate output memory [%d bytes]\n",max_output_size);
-        if (inf->output_mem) cuMemFree(inf->output_mem);
-        if (inf->output_mem_host) cuMemFreeHost(inf->output_mem_host);
-        cuMemAlloc(&inf->output_mem, max_output_size);
+        if (inf->output_mem)
+        {
+            CHECK_CUDART_CALL(cudaFree(inf->output_mem));
+        }
+        if (inf->output_mem_host) free(inf->output_mem_host);
+        CHECK_CUDART_CALL(cudaMalloc(&inf->output_mem, max_output_size));
         inf->output_mem_host=0;
         inf->output_size=max_output_size;
     }
-    assert(true==inf->ec->setTensorAddress(inf->output_tensor_name, (void*)inf->output_mem));
+    assert(true==inf->ec->setTensorAddress(inf->output_tensor_name, inf->output_mem));
     assert(true==inf->ec->allInputDimensionsSpecified());
     assert(0==inf->ec->inferShapes(0,0));
 
@@ -788,9 +802,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     }
     else
     {
-        if (inf->output_mem_host==0) cuMemAllocHost(&inf->output_mem_host, inf->output_size);
-        cudaMemcpyAsync(inf->output_mem_host, (void*)inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream);
-        cuStreamSynchronize(inf->stream);
+        if (inf->output_mem_host==0) inf->output_mem_host=malloc(inf->output_size);
+        CHECK_CUDART_CALL(cudaMemcpyAsync(inf->output_mem_host, inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream));
+        CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
         float *p=(float *)inf->output_mem_host;
         for(int i=0;i<num;i++)
         {

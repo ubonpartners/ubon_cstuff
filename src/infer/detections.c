@@ -438,9 +438,9 @@ int match_detections_greedy(
     }
 
     /* 1) Extract overlap_mask arrays */
-    uint64_t maskA[MAX_DETS], maskB[MAX_DETS];
-    void *dets_a_ptr[MAX_DETS];
-    void *dets_b_ptr[MAX_DETS];
+    uint64_t maskA[num_dets_a], maskB[num_dets_b];
+    void *dets_a_ptr[num_dets_a];
+    void *dets_b_ptr[num_dets_b];
 
     for (int i = 0; i < num_dets_a; ++i) {
         maskA[i] = dets_a[i].overlap_mask;

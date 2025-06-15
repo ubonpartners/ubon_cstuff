@@ -19,6 +19,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "pcap_decoder.h"
 #include "profile.h"
 #include "infer_aux.h"
+#include "jpeg.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -163,6 +164,11 @@ public:
 
     image_t* raw() { return img; }
 };
+
+std::shared_ptr<c_image> c_load_jpeg(const char *file) {
+        image_t *jpg=load_jpeg(file);
+        return std::make_shared<c_image>(jpg);
+    }
 
 static void pop_float(py::dict& cfg, const char* key, float& dst, bool& flag) {
     if (cfg.contains(key)) {
@@ -862,6 +868,10 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_pcap_decoder, std::shared_ptr<c_pcap_decoder>>(m, "c_pcap_decoder")
         .def(py::init<const std::string&>(), py::arg("filename"))
         .def("get_frame", &c_pcap_decoder::get_frame, "Get the next decoded frame (returns c_image or None)");
+
+    m.def("load_jpeg", &c_load_jpeg,
+          "load jpeg file to c img",
+          py::arg("file"));
 
     m.def("match_box_iou", &match_box_iou_wrapper,
           "Matches boxes using IoU and returns index lists",

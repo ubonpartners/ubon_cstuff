@@ -1,4 +1,10 @@
-
+#include <nvjpeg.h>
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+#include <fstream>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -8,57 +14,199 @@
 #include <ctype.h>
 #include <jpeglib.h>
 #include <setjmp.h>
+#include <mutex>
 #include <cassert>
 #include "image.h"
 #include "log.h"
 #include "profile.h"
 
-struct my_error_mgr
-{
-    struct jpeg_error_mgr pub;
-    jmp_buf setjmp_buffer;
+#define MAX_IMAGE_DIMENSION 10000
+
+struct my_error_mgr {
+    struct jpeg_error_mgr pub;    /* “public” fields */
+    jmp_buf setjmp_buffer;        /* for return to caller */
 };
+typedef struct my_error_mgr * my_error_ptr;
 
-typedef struct my_error_mgr *my_error_ptr;
-
-void my_error_exit(j_common_ptr cinfo)
-{
-    my_error_ptr myerr = (my_error_ptr) cinfo->err;
-    longjmp(myerr->setjmp_buffer, 1);
+/* Replacement for stderr output */
+void my_output_message(j_common_ptr cinfo) {
+    /* swallow or route into your log system */
+    char buffer[JMSG_LENGTH_MAX];
+    (*cinfo->err->format_message)(cinfo, buffer);
+    log_error("libjpeg warning: %s", buffer);
 }
 
-image_t *decode_jpeg(uint8_t *buffer, size_t size)
-{
-    // Decode JPEG using libjpeg
+/* Replacement for exit() on fatal errors */
+void my_error_exit(j_common_ptr cinfo) {
+    my_error_ptr err = (my_error_ptr)cinfo->err;
+    /* Clean up libjpeg state */
+    jpeg_destroy_decompress((j_decompress_ptr)cinfo);
+    /* Jump back to caller */
+    longjmp(err->setjmp_buffer, 1);
+}
+
+image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     struct jpeg_decompress_struct cinfo;
     struct my_error_mgr jerr;
+    image_t *img = NULL;
 
+    /* 1) Install our error handlers _before_ any libjpeg call */
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = my_error_exit;
+    jerr.pub.output_message = my_output_message;
 
-    if (setjmp(jerr.setjmp_buffer))
-    {
-        jpeg_destroy_decompress(&cinfo);
+    /* 2) Establish setjmp “checkpoint” */
+    if (setjmp(jerr.setjmp_buffer)) {
+        /* If we get here, the JPEG code signaled an error. */
+        if (img) {
+            destroy_image(img);
+            img=0;
+        }
         return 0;
     }
 
+    /* 3) Now it’s safe to call libjpeg routines */
     jpeg_create_decompress(&cinfo);
     jpeg_mem_src(&cinfo, buffer, size);
+
+    /* 4) Read header and sanity‐check dimensions */
     jpeg_read_header(&cinfo, TRUE);
-    jpeg_start_decompress(&cinfo);
-
-    int row_stride = cinfo.output_width * cinfo.output_components;
-    image_t *img=create_image(cinfo.output_width, cinfo.output_height, IMAGE_FORMAT_RGB24_HOST);
-
-    while (cinfo.output_scanline < cinfo.output_height)
-    {
-        unsigned char *buffer_array[1];
-        buffer_array[0] = img->rgb + cinfo.output_scanline * img->stride_rgb;
-        jpeg_read_scanlines(&cinfo, buffer_array, 1);
+    if (cinfo.image_width  > MAX_IMAGE_DIMENSION ||
+        cinfo.image_height > MAX_IMAGE_DIMENSION) {
+        jpeg_destroy_decompress(&cinfo);
+        log_error("JPEG dimensions too large: %ux%u",
+                  cinfo.image_width, cinfo.image_height);
+        return 0;
     }
 
+    cinfo.dct_method = JDCT_IFAST;
+    if (cinfo.jpeg_color_space == JCS_CMYK || cinfo.jpeg_color_space == JCS_YCCK) {
+        cinfo.out_color_space = JCS_CMYK;
+    } else {
+        cinfo.out_color_space = JCS_RGB;
+    }
+    jpeg_start_decompress(&cinfo);
+
+    /* 5) Allocate only after header is validated */
+    img = create_image(cinfo.output_width,
+                       cinfo.output_height,
+                       IMAGE_FORMAT_RGB24_HOST);
+    if (!img) {
+        jpeg_destroy_decompress(&cinfo);
+        log_error("Out of memory allocating image");
+        return 0;
+    }
+
+    /* 6) Read scanlines */
+
+    if ((cinfo.out_color_space == JCS_CMYK)||(cinfo.out_color_space == JCS_YCCK))
+    {
+        uint8_t *rowbuf=(uint8_t *)malloc(cinfo.output_width*cinfo.output_components);
+        uint8_t *dst = img->rgb;
+        assert(rowbuf!=0);
+        JSAMPROW ptr = rowbuf;
+        while (cinfo.output_scanline < cinfo.output_height) {
+            jpeg_read_scanlines(&cinfo, &ptr, 1);
+            for(int i=0;i<cinfo.output_width;i++)
+            {
+                float C=1.0-rowbuf[i*4+0]/255.0;
+                float M=1.0-rowbuf[i*4+1]/255.0;
+                float Y=1.0-rowbuf[i*4+2]/255.0;
+                float K=1.0-rowbuf[i*4+3]/255.0;
+                dst[3*i+0]=(uint8_t)((1.0-C)*(1.0-K)*255+0.5f);
+                dst[3*i+1]=(uint8_t)((1.0-M)*(1.0-K)*255+0.5f);
+                dst[3*i+2]=(uint8_t)((1.0-Y)*(1.0-K)*255+0.5f);
+            }
+            dst+=img->stride_rgb;
+        }
+        free(rowbuf);
+    }
+    else
+    {
+        while (cinfo.output_scanline < cinfo.output_height) {
+            JSAMPROW row_pointer = img->rgb
+            + cinfo.output_scanline * img->stride_rgb;
+            jpeg_read_scanlines(&cinfo, &row_pointer, 1);
+        }
+    }
+
+    /* 7) Finish up cleanly */
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
+    return img;
+}
+
+#define NVJPEG_CHECK(status) do { \
+    nvjpegStatus_t err = status; \
+    if (err != NVJPEG_STATUS_SUCCESS) { \
+        std::cerr << "nvJPEG error: " << err << " at line " << __LINE__ << std::endl; \
+        std::exit(1); \
+    } \
+} while (0)
+
+
+static nvjpegHandle_t nvjpeg_handle = nullptr;
+static nvjpegJpegState_t nvjpeg_state = nullptr;
+static std::mutex nvjpeg_mutex;
+static bool nvjpeg_inited=false;
+
+static void init_nvjpeg()
+{
+    std::lock_guard<std::mutex> lock(nvjpeg_mutex);
+    if (!nvjpeg_inited)
+    {
+        NVJPEG_CHECK(nvjpegCreateSimple(&nvjpeg_handle));
+        NVJPEG_CHECK(nvjpegJpegStateCreate(nvjpeg_handle, &nvjpeg_state));
+        nvjpeg_inited=true;
+    }
+}
+
+image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
+{
+    init_nvjpeg();
+
+    nvjpegStatus_t status;
+
+    std::lock_guard<std::mutex> lock(nvjpeg_mutex);
+    int nComponents = 0;
+    nvjpegChromaSubsampling_t subsampling;
+
+    nvjpegImage_t nv_image;
+    int widths[NVJPEG_MAX_COMPONENT] = {0};
+    int heights[NVJPEG_MAX_COMPONENT] = {0};
+
+    nvjpegOutputFormat_t out_fmt = NVJPEG_OUTPUT_RGBI;
+    status=nvjpegGetImageInfo(nvjpeg_handle, buffer, size,
+                              &nComponents,
+                              &subsampling, widths, heights);
+
+    if (status != NVJPEG_STATUS_SUCCESS)
+    {
+        log_error("NVJPEG GetImageInfo failed");
+        return 0;
+    }
+
+    int width = widths[0];
+    int height = heights[0];
+
+    if (width  > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+        log_error("NVEC JPEG dimensions too large: %ux%u", width, height);
+        return 0;
+    }
+
+    image_t *img=create_image(width, height, IMAGE_FORMAT_RGB24_DEVICE);
+
+    nv_image.channel[0] = img->rgb;
+    nv_image.pitch[0] = img->stride_rgb;
+
+    // Decode to RGB interleaved
+    status=nvjpegDecode(nvjpeg_handle, nvjpeg_state,buffer, size, out_fmt, &nv_image, 0);
+    if (status != NVJPEG_STATUS_SUCCESS)
+    {
+        //log_error("NVJPEG nvjpegDecode failed");
+        destroy_image(img);
+        return 0;
+    }
     return img;
 }
 
@@ -79,12 +227,21 @@ image_t *load_jpeg(const char *file)
     if (mem)
     {
         fread(mem, 1, sz, f);
-        ret=decode_jpeg(mem, sz);
+        ret=decode_jpeg_nvjpeg(mem,sz);
+        if (ret==0)
+        {
+            //log_error("NVJPEG could not decode jpeg %s", file);
+            // failed; try libjpeg (e.g. nvjpeg can't seem to code CMMY)
+            ret=decode_jpeg(mem, sz);
+            if (ret==0)
+            {
+                log_error("Could not decode jpeg %s", file);
+            }
+        }
         free(mem);
     }
     fclose(f);
-    //t=profile_time()-t;
-    //printf("%f\n",(float)t);
+    if (ret==0) log_error("Failed to decode jpeg %s",file);;
     return ret;
 }
 
