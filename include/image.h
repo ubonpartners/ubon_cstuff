@@ -35,7 +35,8 @@ static bool image_format_is_host(image_format_t format)
   return ~image_format_is_device(format);
 }
 
-#include <cuda.h>
+#include <stdint.h>
+#include <cuda_runtime.h>
 
 struct image
 {
@@ -49,8 +50,8 @@ struct image
     uint8_t *rgb;
     volatile int reference_count;
     int stride_y, stride_uv, stride_rgb;
-    CUstream stream; // any outstanding work on this surface will put a depency on this stream
-    CUdeviceptr device_mem;
+    cudaStream_t stream; // any outstanding work on this surface will put a depency on this stream
+    void *device_mem;
     void *host_mem;
     int device_mem_size;
     int host_mem_size;

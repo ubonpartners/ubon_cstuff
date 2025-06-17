@@ -17,6 +17,7 @@
 #include <mutex>
 #include <cassert>
 #include "image.h"
+#include "cuda_stuff.h"
 #include "log.h"
 #include "profile.h"
 
@@ -167,6 +168,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
 
 static nvjpegHandle_t nvjpeg_handle = nullptr;
 static nvjpegJpegState_t nvjpeg_state = nullptr;
+static cudaStream_t jpeg_stream;
 static std::mutex nvjpeg_mutex;
 static bool nvjpeg_inited=false;
 
@@ -177,6 +179,7 @@ static void init_nvjpeg()
     {
         NVJPEG_CHECK(nvjpegCreateSimple(&nvjpeg_handle));
         NVJPEG_CHECK(nvjpegJpegStateCreate(nvjpeg_handle, &nvjpeg_state));
+        jpeg_stream=create_cuda_stream();
         nvjpeg_inited=true;
     }
 }
@@ -186,8 +189,11 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     init_nvjpeg();
 
     nvjpegStatus_t status;
-
     std::lock_guard<std::mutex> lock(nvjpeg_mutex);
+    // chatGPT says you have to explicitly wait on the previous
+    // nvjpeg_handle stream - which is strange but indeed it
+    // does not seem to work if this wait is removed.
+    cudaStreamSynchronize(jpeg_stream);
     int nComponents = 0;
     nvjpegChromaSubsampling_t subsampling;
 
@@ -195,7 +201,6 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     int widths[NVJPEG_MAX_COMPONENT] = {0};
     int heights[NVJPEG_MAX_COMPONENT] = {0};
 
-    nvjpegOutputFormat_t out_fmt = NVJPEG_OUTPUT_RGBI;
     status=nvjpegGetImageInfo(nvjpeg_handle, buffer, size,
                               &nComponents,
                               &subsampling, widths, heights);
@@ -220,15 +225,16 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     nv_image.pitch[0] = img->stride_rgb;
 
     // Decode to RGB interleaved
-    status=nvjpegDecode(nvjpeg_handle, nvjpeg_state,buffer, size, out_fmt, &nv_image, img->stream);
+
+    status=nvjpegDecode(nvjpeg_handle, nvjpeg_state,buffer, size, NVJPEG_OUTPUT_RGBI, &nv_image, jpeg_stream);
+    cuda_stream_add_dependency(img->stream, jpeg_stream);
+
     if (status != NVJPEG_STATUS_SUCCESS)
     {
         //log_error("NVJPEG nvjpegDecode failed");
         destroy_image(img);
         return 0;
     }
-    //cudaDeviceSynchronize();
-    cudaStreamSynchronize(img->stream); // TODO: should not be needed but seems to be
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
     log_error("NVJPEG CUDA error: %s", cudaGetErrorString(err));
@@ -267,7 +273,15 @@ image_t *load_jpeg(const char *file)
         free(mem);
     }
     fclose(f);
-    if (ret==0) log_error("Failed to decode jpeg %s",file);;
+    if (ret==0)
+    {
+        log_error("Failed to decode jpeg %s",file);
+        return 0;
+    }
+
+    //image_t *ret_yuv=image_convert(ret, IMAGE_FORMAT_YUV420_DEVICE);
+    //destroy_image(ret);
+    //return ret_yuv;
     return ret;
 }
 
