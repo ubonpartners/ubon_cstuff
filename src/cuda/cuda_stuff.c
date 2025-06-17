@@ -192,23 +192,21 @@ void cuda_thread_init()
     int device = 0;
     cudaError_t err = cudaSetDevice(device);
     if (err != cudaSuccess) {
-        fprintf(stderr, "cuda_thread_init: cudaSetDevice(%d) failed: %s\n",
-                device, cudaGetErrorString(err));
+        log_fatal("cuda_thread_init: cudaSetDevice(%d) failed: %s",device, cudaGetErrorString(err));
         abort();
     }
 
     // Force creation of primary context on this thread
     err = cudaFree(0);
     if (err != cudaSuccess) {
-        fprintf(stderr, "cuda_thread_init: cudaFree(0) failed: %s\n",
-                cudaGetErrorString(err));
+        log_fatal("cuda_thread_init: cudaFree(0) failed: %s",cudaGetErrorString(err));
         abort();
     }
 
     // Optional: sanity check
     res = cuCtxGetCurrent(&ctx);
     if (res != CUDA_SUCCESS || ctx == nullptr) {
-        fprintf(stderr, "cuda_thread_init: cuCtxGetCurrent failed: %d\n", res);
+        log_fatal("cuda_thread_init: cuCtxGetCurrent failed: %d\n", res);
         abort();
     }
 

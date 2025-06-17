@@ -389,6 +389,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
 void infer_destroy(infer_t *inf)
 {
+    log_debug("infer destroy %p",inf);
     if (!inf) return;
     CHECK_CUDART_CALL(cudaStreamDestroy(inf->stream));
     if (inf->nms) cuda_nms_free_workspace(inf->nms);
@@ -561,6 +562,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
 {
     if (numBoxes>inf->nms_max_boxes)
     {
+        log_debug("increase cudaNMS boxes %d->%d",inf->nms_max_boxes,numBoxes);
         CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
         if (inf->nms) cuda_nms_free_workspace(inf->nms);
         inf->nms=0;
@@ -572,7 +574,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         inf->nms_max_boxes=std::max(1200, numBoxes);
         inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, max_detections_per_class, 0);
     }
-    std::vector<std::vector<int>> keptIndices;
+    std::vector<std::vector<uint16_t>> keptIndices;
     std::vector<float> hostGathered;
     hostGathered.reserve(num * columns * 50); // roughly
     cuda_nms_run(
@@ -597,7 +599,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         hostGathered.clear();
 
         // Slice keptIndices for batch b
-        std::vector<std::vector<int>> keptPerBatch;
+        std::vector<std::vector<uint16_t>> keptPerBatch;
         keptPerBatch.reserve(nc);
         for (int cl = 0; cl < nc; ++cl)
             keptPerBatch.push_back(keptIndices[b * nc + cl]);
@@ -770,7 +772,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        //log_debug("Reallocate output memory [%d bytes]\n",max_output_size);
+        log_debug("Infer reallocate output memory [%d bytes]\n",max_output_size);
         if (inf->output_mem)
         {
             CHECK_CUDART_CALL(cudaFree(inf->output_mem));

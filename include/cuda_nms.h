@@ -58,6 +58,8 @@
  * All functions accept an optional cudaStream_t. If you pass NULL, they use the default stream.
  */
 
+ #include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -107,7 +109,7 @@ void cuda_nms_run(
     float                         scoreThreshold,
     float                         iouThreshold,
     int                           maxOutPerClass,
-    std::vector<std::vector<int>>& keptIndices,
+    std::vector<std::vector<uint16_t>>& keptIndices,
     cudaStream_t                  stream  // optional; default = NULL
 );
 
@@ -115,7 +117,7 @@ void cuda_nms_gather_kept_outputs(
     const float*                             deviceOutputDev,   // [ rowSize × numBoxes ], on device
     int                                      numBoxes,
     int                                      rowSize,
-    const std::vector<std::vector<int>>&     keptIndices,
+    const std::vector<std::vector<uint16_t>>&     keptIndices,
     std::vector<float>&                      hostGathered     // (output) length = totalKept × rowSize
 );
 

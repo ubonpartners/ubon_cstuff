@@ -79,6 +79,25 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
         return 0;
     }
 
+    /* --- downscale early if user’s max is smaller --- */
+    int max_w=1920;
+    int max_h=1080;
+    if (cinfo.image_width > max_w || cinfo.image_height > max_h) {
+        int denom = 1;
+        while (denom < 8
+               && (cinfo.image_width  / (denom * 2) > max_w
+                || cinfo.image_height / (denom * 2) > max_h)) {
+            denom *= 2;
+        }
+        cinfo.scale_num   = 1;
+        cinfo.scale_denom = denom;
+    }
+    if (cinfo.scale_denom!=1)
+    {
+        log_info("Downscaling jpeg %dx%d by %d",cinfo.image_width,cinfo.image_height,cinfo.scale_denom);
+    }
+
+
     cinfo.dct_method = JDCT_IFAST;
     if (cinfo.jpeg_color_space == JCS_CMYK || cinfo.jpeg_color_space == JCS_YCCK) {
         cinfo.out_color_space = JCS_CMYK;
@@ -123,6 +142,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     }
     else
     {
+        assert(cinfo.output_width*cinfo.output_components<=img->stride_rgb);
         while (cinfo.output_scanline < cinfo.output_height) {
             JSAMPROW row_pointer = img->rgb
             + cinfo.output_scanline * img->stride_rgb;
@@ -171,7 +191,7 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     int nComponents = 0;
     nvjpegChromaSubsampling_t subsampling;
 
-    nvjpegImage_t nv_image;
+    nvjpegImage_t nv_image={0};
     int widths[NVJPEG_MAX_COMPONENT] = {0};
     int heights[NVJPEG_MAX_COMPONENT] = {0};
 
@@ -200,12 +220,18 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     nv_image.pitch[0] = img->stride_rgb;
 
     // Decode to RGB interleaved
-    status=nvjpegDecode(nvjpeg_handle, nvjpeg_state,buffer, size, out_fmt, &nv_image, 0);
+    status=nvjpegDecode(nvjpeg_handle, nvjpeg_state,buffer, size, out_fmt, &nv_image, img->stream);
     if (status != NVJPEG_STATUS_SUCCESS)
     {
         //log_error("NVJPEG nvjpegDecode failed");
         destroy_image(img);
         return 0;
+    }
+    //cudaDeviceSynchronize();
+    cudaStreamSynchronize(img->stream); // TODO: should not be needed but seems to be
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+    log_error("NVJPEG CUDA error: %s", cudaGetErrorString(err));
     }
     return img;
 }
