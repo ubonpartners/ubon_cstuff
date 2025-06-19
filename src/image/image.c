@@ -255,6 +255,7 @@ image_t *create_image(int width, int height, image_format_t fmt)
 image_t *image_reference(image_t *img)
 {
     if (img==0) return 0;
+    assert(img->reference_count>0);
     __sync_fetch_and_add(&img->reference_count, 1);
     return img;
 }

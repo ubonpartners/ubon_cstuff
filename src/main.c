@@ -37,10 +37,6 @@ int main(int argc, char *argv[])
     init_cuda_stuff();
     image_init();
 
-    if (argc>1 && strcmp(argv[1], "--test")==0)
-    {
-        return run_all_c_tests();
-    }
 
     /*dataset_t *ds=dataset_create("/mldata/coco-face/val/images");
     int num=dataset_get_num(ds);
@@ -57,7 +53,7 @@ int main(int argc, char *argv[])
     }*/
 
     //inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224.trt", "/mldata/config/train/train_attr.yaml");
-    inf=infer_create("/mldata/weights/trt/yolo11l-dpar-250525-dyn.trt", "/mldata/config/train/train_yolo_dpa_l.yaml");
+    inf=infer_create("/mldata/weights/trt/yolo11l-dpa-250525-int8.trt", "/mldata/config/train/train_yolo_dpa_l.yaml");
     v=nvof_create(0,320,320);
 
     if (argc>1)

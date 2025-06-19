@@ -1,0 +1,258 @@
+#include <stdint.h>
+#include <stdlib.h>
+#include <cassert>
+#include <string.h>
+#include <unistd.h>
+#include "track.h"
+#include "image.h"
+#include "motion_track.h"
+#include "log.h"
+#include "infer_thread.h"
+#include "ctpl_stl.h"
+#include "cuda_stuff.h"
+#include "BYTETracker.h"
+#include "yaml.h"
+
+#define debugf if (0) log_debug
+
+struct track_shared_state
+{
+    const char *config_yaml;
+    int max_width, max_height;
+    int num_worker_threads;
+    float motiontrack_min_roi;
+    infer_thread_t *infer_thread;
+    ctpl::thread_pool *thread_pool;
+};
+
+struct track_stream
+{
+    track_shared_state_t *tss;
+    //
+    void *result_callback_context;
+    void (*result_callback)(void *context, track_results_t *results);
+    //
+    pthread_mutex_t run_mutex;
+    uint32_t frame_count;
+    motion_track_t *mt;
+    BYTETracker *bytetracker;
+    //
+    double last_run_time;
+    double min_time_delta_process;
+    double min_time_delta_full_roi;
+    roi_t motion_roi;
+    roi_t inference_roi;
+    detections_t *inference_detections;
+    //
+    std::vector<track_results_t> track_results;
+};
+
+static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
+{
+    debugf("starting ctpl thread %d",id);
+    cuda_thread_init();
+    pthread_barrier_wait(barrier);
+}
+
+track_shared_state_t *track_shared_state_create(const char *yaml_config)
+{
+    YAML::Node yaml_base=yaml_load(yaml_config);
+
+    track_shared_state_t *tss=(track_shared_state_t *)malloc(sizeof(track_shared_state_t));
+    assert(tss!=0);
+    memset(tss, 0, sizeof(track_shared_state_t));
+    debugf("Track shared state create");
+    tss->config_yaml=yaml_to_cstring(yaml_base);
+    tss->max_width=yaml_base["max_width"].as<int>();
+    tss->max_height=yaml_base["max_height"].as<int>();
+    tss->num_worker_threads=yaml_base["num_worker_threads"].as<int>();
+    tss->motiontrack_min_roi=yaml_get_float_value(yaml_base["motiontrack_min_roi"], 0.05);
+
+    // create worker threads
+    tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, nullptr, tss->num_worker_threads);
+    for(int i=0;i<tss->num_worker_threads;i++) tss->thread_pool->push(ctpl_thread_init, &barrier);
+
+    // setup inference from yaml config
+    YAML::Node inferenceConfigNode = yaml_base["inference_config"];
+    std::string trt_file=inferenceConfigNode["trt"].as<std::string>();
+    const char *inference_yaml=yaml_to_cstring(inferenceConfigNode);
+    infer_config_t config={};
+    config.det_thr=yaml_base["conf_thresh"].as<float>();
+    config.set_det_thr=true;
+    config.nms_thr=yaml_base["nms_thresh"].as<float>();
+    config.set_nms_thr=true;
+    tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml, &config);
+    free((void*)inference_yaml);
+
+    // done
+    return tss;
+}
+
+void track_shared_state_destroy(track_shared_state_t *tss)
+{
+    if (!tss) return;
+    tss->thread_pool->stop();
+    delete tss->thread_pool;
+    free((void *)tss->config_yaml);
+    free(tss);
+}
+
+track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_callback_context, void (*result_callback)(void *context, track_results_t *results))
+{
+    track_stream_t *ts=(track_stream_t *)malloc(sizeof(track_stream_t));
+    assert(ts!=0);
+    memset(ts, 0, sizeof(track_stream_t));
+    pthread_mutex_init(&ts->run_mutex, 0);
+    ts->frame_count=0;
+    ts->tss=tss;
+    ts->result_callback_context=result_callback_context;
+    ts->result_callback=result_callback;
+    ts->mt=motion_track_create(tss->config_yaml);
+    ts->bytetracker=new BYTETracker(tss->config_yaml);
+    ts->min_time_delta_process=0.0;
+    ts->min_time_delta_full_roi=120.0;
+    return ts;
+}
+
+void track_stream_destroy(track_stream_t *ts)
+{
+    if (!ts) return;
+    motion_track_destroy(ts->mt);
+    delete ts->bytetracker;
+    pthread_mutex_destroy(&ts->run_mutex);
+    free(ts);
+}
+
+static void process_results(track_stream_t *ts, track_results_t *r)
+{
+    if (ts->result_callback)
+        ts->result_callback(ts->result_callback_context, r);
+    else
+        ts->track_results.push_back(*r);
+}
+
+static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
+{
+    track_results_t r;
+    memset(&r, 0, sizeof(track_results_t));
+
+    motion_track_set_roi(ts->mt, ts->inference_roi);
+    //show_detections(ts->inference_detections);
+
+    r.result_type=TRACK_FRAME_TRACKED_ROI;
+    r.time=ts->last_run_time;
+    r.track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
+    r.inference_dets=ts->inference_detections;
+    r.motion_roi=ts->motion_roi;
+    r.inference_roi=ts->inference_roi;
+
+    process_results(ts, &r);
+    pthread_mutex_unlock(&ts->run_mutex);
+}
+
+static void infer_done_callback(void *context, infer_thread_result_data_t *r)
+{
+    debugf("infer_done_callback");
+    track_stream_t *ts=(track_stream_t *)context;
+    track_shared_state_t *tss=ts->tss;
+    ts->inference_detections=r->dets;
+    ts->inference_roi=r->inference_roi;
+    tss->thread_pool->push(thread_stream_run_process_inference_results, ts);
+}
+
+void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_roi)
+{
+    pthread_mutex_lock(&ts->run_mutex);
+    ts->min_time_delta_process=min_process;
+    ts->min_time_delta_full_roi=min_full_roi;
+    pthread_mutex_unlock(&ts->run_mutex);
+}
+
+static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img, double time)
+{
+    debugf("thread_stream_run_input_job run");
+    track_shared_state_t *tss=ts->tss;
+    int scale_w, scale_h;
+    double time_delta=0;
+    if (ts->frame_count==0) ts->last_run_time=time-10.0;
+
+    assert(time>=ts->last_run_time);
+    time_delta=time-ts->last_run_time;
+    ts->frame_count++;
+
+    if ((time_delta<ts->min_time_delta_process) || (img==0))
+    {
+        track_results_t r;
+        memset(&r, 0, sizeof(track_results_t));
+        r.result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
+        r.time=time;
+        r.motion_roi=ROI_ZERO;
+        r.inference_roi=ROI_ZERO;
+        r.track_dets=0;
+        r.inference_dets=0;
+        process_results(ts, &r);
+        pthread_mutex_unlock(&ts->run_mutex);
+        return;
+    }
+
+    determine_scale_size(img->width, img->height,
+                         tss->max_width, tss->max_height, &scale_w, &scale_h,
+                         10, 8, 8, false);
+
+    image_t *image_scaled=image_scale_convert(img, IMAGE_FORMAT_YUV420_DEVICE, scale_w, scale_h);
+    destroy_image(img);
+    motion_track_add_frame(ts->mt, image_scaled);
+
+    roi_t motion_roi=motion_track_get_roi(ts->mt);
+    if (roi_area(&motion_roi)<tss->motiontrack_min_roi)
+    {
+        debugf("skip inference\n");
+        motion_track_set_roi(ts->mt, ROI_ZERO);
+        destroy_image(image_scaled);
+
+        track_results_t r;
+        memset(&r, 0, sizeof(track_results_t));
+        r.result_type=TRACK_FRAME_SKIP_NO_MOTION;
+        r.time=time;
+        r.motion_roi=motion_roi;
+        r.inference_roi=ROI_ZERO;
+        r.track_dets=0;
+        r.inference_dets=0;
+
+        process_results(ts, &r);
+        pthread_mutex_unlock(&ts->run_mutex);
+        return;
+    }
+
+    // now we are definitely doing a full run
+    ts->last_run_time=time;
+    ts->motion_roi=motion_roi;
+    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, motion_roi, infer_done_callback, ts);
+    destroy_image(image_scaled);
+}
+
+void track_stream_run(track_stream_t *ts, image_t *img, double time)
+{
+    pthread_mutex_lock(&ts->run_mutex);
+    debugf("track stream run");
+    track_shared_state_t *tss=ts->tss;
+    tss->thread_pool->push(thread_stream_run_input_job, ts, image_reference(img), time);
+}
+
+void track_stream_run_frame_time(track_stream_t *ts, image_t *img)
+{
+    assert(img!=0);
+    double time=img->timestamp/90000.0;
+    track_stream_run(ts, img, time);
+}
+
+std::vector<track_results_t> track_stream_get_results(track_stream_t *ts)
+{
+    pthread_mutex_lock(&ts->run_mutex);
+    std::vector<track_results_t> ret=ts->track_results;
+    ts->track_results.clear();
+    pthread_mutex_unlock(&ts->run_mutex);
+    return ret;
+}

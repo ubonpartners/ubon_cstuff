@@ -6,21 +6,34 @@
 #include "assert.h"
 #include "detections.h"
 #include "image.h"
+#include "image_draw.h"
 #include "infer.h"
 #include "match.h"
+
+detection_t *detection_create()
+{
+    detection_t *d=(detection_t *)malloc(sizeof(detection_t));
+    memset(d, 0, sizeof(detection_t));
+    return d;
+}
+
+void detection_destroy(detection_t *det)
+{
+    free(det);
+}
 
 void detections_generate_overlap_masks(detections_t *dets)
 {
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=dets->det+i;
+        detection_t *det=dets->det[i];
         det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
     }
 }
 
 detections_t *create_detections(int max_detections)
 {
-    int sz=sizeof(detections_t)+max_detections*sizeof(detection_t);
+    int sz=sizeof(detections_t)+max_detections*sizeof(detection_t *);
     detections_t *dets=(detections_t *)malloc(sz);
     if (!dets) return 0;
     memset(dets, 0, sz);
@@ -37,16 +50,22 @@ void destroy_detections(detections_t *detections)
 detection_t *detection_add_end(detections_t *detections)
 {
     if (detections->num_detections>=detections->max_detections) return 0;
-    detection_t *det=&detections->det[detections->num_detections];
-    detections->num_detections++;
-    memset(det, 0, sizeof(detection_t));
+    assert(detections->det[detections->num_detections]==0);
+    detection_t *det=detection_create();
+    detections->det[detections->num_detections++]=det;
     return det;
+}
+
+void detection_append_copy(detections_t *detections, detection_t *det)
+{
+    detection_t *det1=detection_add_end(detections);
+    if (det1) memcpy(det1, det, sizeof(detection_t));
 }
 
 static int compare_detections(const void *a, const void *b)
 {
-    float conf_a = ((detection_t*)a)->conf;
-    float conf_b = ((detection_t*)b)->conf;
+    float conf_a = (*((detection_t**)a))->conf;
+    float conf_b = (*((detection_t**)b))->conf;
     if (conf_a < conf_b) return 1;
     if (conf_a > conf_b) return -1;
     return 0;
@@ -54,7 +73,7 @@ static int compare_detections(const void *a, const void *b)
 
 void detections_sort_descending_conf(detections_t *detections)
 {
-    qsort(detections->det, detections->num_detections, sizeof(detection_t), compare_detections);
+    qsort(detections->det, detections->num_detections, sizeof(detection_t*), compare_detections);
 }
 
 float det_iou(detection_t *deta, detection_t *detb)
@@ -74,10 +93,10 @@ void detections_nms_inplace(detections_t *dets, float iou_thr)
     // NMS - set conf to 0 for 'suppressed' detections
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=&dets->det[i];
+        detection_t *det=dets->det[i];
         for(int j=i+1;j<dets->num_detections;j++)
         {
-            detection_t *det1=&dets->det[j];
+            detection_t *det1=dets->det[j];
             if ((det1->cl==det->cl)&&(det1->conf!=0))
             {
                 if (det_iou(det, det1)>iou_thr) det1->conf=0;
@@ -88,34 +107,13 @@ void detections_nms_inplace(detections_t *dets, float iou_thr)
     int num_out=0;
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=&dets->det[i];
+        detection_t *det=dets->det[i];
         if (det->conf>0)
-        {
-            if (i!=num_out) memcpy(&dets->det[num_out], det, sizeof(detection_t));
-            num_out++;
-        }
+            dets->det[num_out++]=det;
+        else
+            detection_destroy(det);
     }
     dets->num_detections=num_out;
-}
-
-static void draw_line(image_t *img, float x0, float y0, float x1, float y1, int clr)
-{
-    int steps=(int)(fmaxf(fabsf(x1-x0)*img->width, fabsf(y1-y0)*img->height)+0.999);
-    if (steps==0) return;
-    assert(img->format==IMAGE_FORMAT_RGB24_HOST);
-    assert(img->rgb!=0);
-    for(int i=0;i<=steps;i++)
-    {
-        float l=(i+0.0)/(steps+0.0);
-        float x=x0*(1.0-l)+x1*l;
-        float y=y0*(1.0-l)+y1*l;
-        int xi=(int)(x*img->width);
-        int yi=(int)(y*img->height);
-        if ((xi<0)||(yi<0)||(xi>=img->width)||(yi>=img->height)) continue;
-        img->rgb[xi*3+yi*img->stride_rgb+0]=(clr>>16)&0xff;
-        img->rgb[xi*3+yi*img->stride_rgb+1]=(clr>>8)&0xff;
-        img->rgb[xi*3+yi*img->stride_rgb+2]=(clr>>0)&0xff;
-    }
 }
 
 static void draw_detection(detection_t *d, image_t *img)
@@ -123,42 +121,48 @@ static void draw_detection(detection_t *d, image_t *img)
     int clr=0xff0000;
     assert(img->format==IMAGE_FORMAT_RGB24_HOST);
     if (d->cl==0) clr=0xffff00;
-    draw_line(img, d->x0, d->y0, d->x1, d->y0, clr);
-    draw_line(img, d->x0, d->y1, d->x1, d->y1, clr);
-    draw_line(img, d->x0, d->y0, d->x0, d->y1, clr);
-    draw_line(img, d->x1, d->y0, d->x1, d->y1, clr);
+    image_draw_line(img, d->x0, d->y0, d->x1, d->y0, clr);
+    image_draw_line(img, d->x0, d->y1, d->x1, d->y1, clr);
+    image_draw_line(img, d->x0, d->y0, d->x0, d->y1, clr);
+    image_draw_line(img, d->x1, d->y0, d->x1, d->y1, clr);
 }
 
 static void draw_cross(image_t *img, float cx, float cy, float w, int clr)
 {
-    draw_line(img, cx-w, cy-w, cx+w, cy+w, clr);
-    draw_line(img, cx-w, cy+w, cx+w, cy-w, clr);
+    image_draw_line(img, cx-w, cy-w, cx+w, cy+w, clr);
+    image_draw_line(img, cx-w, cy+w, cx+w, cy-w, clr);
 }
 
 static void draw_kp_line(image_t *img, kp_t *kp, int a, int b)
 {
     float thr=0.2;
     if ((kp[a].conf<thr) || (kp[b].conf<thr)) return;
-    draw_line(img, kp[a].x, kp[a].y, kp[b].x, kp[b].y, 0x0000ff);
+    image_draw_line(img, kp[a].x, kp[a].y, kp[b].x, kp[b].y, 0x0000ff);
 }
 
 static void draw_kp_line(image_t *img, kp_t *kp, int a, int b, int c)
 {
     float thr=0.2;
     if ((kp[a].conf<thr) || (kp[b].conf<thr) || (kp[c].conf<thr)) return;
-    draw_line(img, kp[a].x, kp[a].y,
+    image_draw_line(img, kp[a].x, kp[a].y,
                    0.5*(kp[b].x+kp[c].x), 0.5*(kp[b].y+kp[c].y), 0x0000ff);
+}
+
+static const char *detection_get_classname(detections_t *dets, int cl)
+{
+    const char * classname=0;
+    static const char *guess_classes[5]={"person?","face?","vehicle?","animal?","weapon?"};
+    if (dets->md!=0) classname=dets->md->class_names[cl].c_str();
+    if (classname==0 && cl<5) classname=guess_classes[cl];
+    return classname;
 }
 
 void show_detections(detections_t *dets)
 {
-    const char *guess_classes[5]={"person?","face?","vehicle?","animal?","weapon?"};
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=&dets->det[i];
-        const char * classname=0;
-        if (dets->md!=0) classname=dets->md->class_names[det->cl].c_str();
-        if (classname==0 && det->cl<5) classname=guess_classes[det->cl];
+        detection_t *det=dets->det[i];
+        const char * classname=detection_get_classname(dets, det->cl);
         printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f] area %0.3f\n",i,
             classname,
             det->conf, det->index, det->x0, det->y0, det->x1, det->y0,
@@ -168,23 +172,25 @@ void show_detections(detections_t *dets)
 
 image_t *draw_detections(detections_t *dets, image_t *img)
 {
-    image_sync(img);
+    if (!img) return 0;
     image_t *x=image_convert(img, IMAGE_FORMAT_RGB24_HOST);
+    image_sync(x);
     assert(x!=0);
     assert(x->format==IMAGE_FORMAT_RGB24_HOST);
     for(int i=0;i<dets->num_detections;i++)
     {
-        draw_detection(&dets->det[i], x);
+        detection_t *det=dets->det[i];
+        draw_detection(det, x);
 
-        for(int j=0;j<dets->det[i].num_face_points;j++)
+        for(int j=0;j<det->num_face_points;j++)
         {
-            if (dets->det[i].face_points[j].conf>0.5)
+            if (det->face_points[j].conf>0.5)
             {
-                draw_cross(x, dets->det[i].face_points[j].x, dets->det[i].face_points[j].y, 0.002, 0x00ff00);
+                draw_cross(x, det->face_points[j].x, det->face_points[j].y, 0.002, 0x00ff00);
             }
         }
 
-        kp_t *kp=dets->det[i].pose_points;
+        kp_t *kp=det->pose_points;
         draw_kp_line(x, kp, 0, 1);
         draw_kp_line(x, kp, 0, 2);
         draw_kp_line(x, kp, 0, 5, 6);
@@ -208,6 +214,10 @@ image_t *draw_detections(detections_t *dets, image_t *img)
 
         draw_kp_line(x, kp, 12, 14);
         draw_kp_line(x, kp, 14, 16);
+        const char * classname=detection_get_classname(dets, det->cl);
+        char text[256];
+        snprintf(text, 255, "ID:%d %s",(int)det->track_id,classname);
+        image_draw_text(x, det->x0, det->y0, text, 0xffffff);
 
     }
     return x;
@@ -258,12 +268,12 @@ detections_t *load_detections(const char *filename)
                 {
                     // 5 + 15 + 51 = 71
                     int start=(n==56) ? 5 : 20;
-                    d->num_face_points=5;
+                    d->num_pose_points=17;
                     for(int i=0;i<17;i++)
                     {
-                        d->face_points[i].x=v[start+3*i+0];
-                        d->face_points[i].y=v[start+3*i+1];
-                        d->face_points[i].conf=v[start+3*i+2];
+                        d->pose_points[i].x=v[start+3*i+0];
+                        d->pose_points[i].y=v[start+3*i+1];
+                        d->pose_points[i].conf=v[start+3*i+2];
                     }
                 }
             }
@@ -283,7 +293,7 @@ void detections_scale_add(detections_t *dets, float sx, float sy, float dx, floa
     if (!dets) return;
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=&dets->det[i];
+        detection_t *det=dets->det[i];
         det->x0=clip_01(dx+det->x0*sx);
         det->y0=clip_01(dy+det->y0*sy);
         det->x1=clip_01(dx+det->x1*sx);
@@ -306,7 +316,7 @@ void detections_scale_add2(detections_t *dets, float sx, float sy, float dx, flo
     if (!dets) return;
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *det=&dets->det[i];
+        detection_t *det=dets->det[i];
         det->x0=clip_01((det->x0-dx)*sx);
         det->y0=clip_01((det->y0-dy)*sy);
         det->x1=clip_01((det->x1-dx)*sx);
@@ -341,12 +351,10 @@ void detections_unmap_roi(detections_t *dets, roi_t roi)
 detections_t *detections_join(detections_t *dets1, detections_t *dets2)
 {
     detections_t *ret=create_detections(dets1->num_detections+dets2->num_detections);
-    memcpy(ret->det, dets1->det, sizeof(detection_t)*dets1->num_detections);
-    memcpy(ret->det+dets1->num_detections, dets2->det, sizeof(detection_t)*dets2->num_detections);
-    ret->num_detections=dets1->num_detections+dets2->num_detections;
+    for(int i=0;i<dets1->num_detections;i++) detection_append_copy(ret, dets1->det[i]);
+    for(int i=0;i<dets2->num_detections;i++) detection_append_copy(ret, dets2->det[i]);
     return ret;
 }
-
 
 static float person_face_match_cost(const detection_t *person, const detection_t *face, void *context)
 {
@@ -400,8 +408,8 @@ void fuse_face_person(detections_t *dets)
     {
         int pi=person_idx[i];
         int fi=face_idx[i];
-        detection_t *person=&dets->person_dets[pi];
-        detection_t *face=&dets->face_dets[fi];
+        detection_t *person=dets->person_dets[pi];
+        detection_t *face=dets->face_dets[fi];
         person->subbox_x0=face->x0;
         person->subbox_y0=face->y0;
         person->subbox_x1=face->x1;
@@ -423,9 +431,9 @@ void fuse_face_person(detections_t *dets)
 }
 
 int match_detections_greedy(
-    const detection_t *dets_a,
+    detection_t **dets_a,
     int                num_dets_a,
-    const detection_t *dets_b,
+    detection_t **dets_b,
     int                num_dets_b,
     float            (*cost_fn)(const detection_t *, const detection_t *, void *),
     void              *ctx,
@@ -443,12 +451,12 @@ int match_detections_greedy(
     void *dets_b_ptr[num_dets_b];
 
     for (int i = 0; i < num_dets_a; ++i) {
-        maskA[i] = dets_a[i].overlap_mask;
-        dets_a_ptr[i]=(void*)&dets_a[i];
+        maskA[i] = dets_a[i]->overlap_mask;
+        dets_a_ptr[i]=(void*)dets_a[i];
     }
     for (int j = 0; j < num_dets_b; ++j) {
-        maskB[j] = dets_b[j].overlap_mask;
-        dets_b_ptr[j]=(void*)&dets_b[j];
+        maskB[j] = dets_b[j]->overlap_mask;
+        dets_b_ptr[j]=(void*)dets_b[j];
     }
 
     return match_greedy(
@@ -535,9 +543,9 @@ static float score_posepoint_iou(const detection_t *da, const detection_t *db, v
 }
 
 int match_box_iou(
-    const detection_t *dets_a,
+    detection_t **dets_a,
     int                num_dets_a,
-    const detection_t *dets_b,
+    detection_t **dets_b,
     int                num_dets_b,
     uint16_t           *out_a_idx,
     uint16_t           *out_b_idx,

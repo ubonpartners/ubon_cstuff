@@ -36,7 +36,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_COMPILER /usr/bin/gcc-11)
 set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 
-set(CMAKE_CXX_FLAGS "-O2 -g")
+set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type")
+set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O1")
+set(CMAKE_C_FLAGS_DEBUG "-g3 -O1")
+set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O1")  # For CUDA debugging
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -x c++")  # treat .c files as C++
 
 # Path to the generated header
@@ -59,6 +63,7 @@ enable_language(CUDA)
 # Include dirs
 set(PROJECT_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/track/bytetracker
     ${CUDA_INCLUDE_DIRS}
 )
 
@@ -102,7 +107,7 @@ endif()
 include_directories(${PROJECT_INCLUDE_DIRS})
 
 # Include the binary dir to access the generated header
-include_directories(${CMAKE_BINARY_DIR})
+include_directories(${CMAKE_BINARY_DIR} )
 
 # Gather sources
 file(GLOB SRC_FILES
@@ -114,8 +119,11 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/log/*.c
     ${CMAKE_SOURCE_DIR}/src/match/*.c
     ${CMAKE_SOURCE_DIR}/src/misc/*.c
+    ${CMAKE_SOURCE_DIR}/src/motion_track/*.c
     ${CMAKE_SOURCE_DIR}/src/nvof/*.c
     ${CMAKE_SOURCE_DIR}/src/rtp/*.c
+    ${CMAKE_SOURCE_DIR}/src/track/*.c
+    ${CMAKE_SOURCE_DIR}/src/track/bytetracker/*.cpp
     ${CMAKE_SOURCE_DIR}/src/vpi/*.c
 )
 
@@ -134,10 +142,12 @@ endforeach()
 
 set(APP_MAIN_FILES
     ${CMAKE_SOURCE_DIR}/src/main.c
-    ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
-    ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
     ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
     ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
+    ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
+    ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
+    ${CMAKE_SOURCE_DIR}/src/apps/run_tests.c
+    ${CMAKE_SOURCE_DIR}/src/apps/track_test.c
     ${CMAKE_SOURCE_DIR}/src/apps/warp_test.c
 )
 

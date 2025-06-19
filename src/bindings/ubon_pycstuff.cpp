@@ -20,6 +20,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "profile.h"
 #include "infer_aux.h"
 #include "jpeg.h"
+#include "track.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -238,6 +239,42 @@ static void apply_infer_config(py::dict cfg_dict, infer_config_t& config) {
     }
 }
 
+static py::list convert_roi(roi_t roi)
+{
+    py::list box;
+    box.append(roi.box[0]);
+    box.append(roi.box[1]);
+    box.append(roi.box[2]);
+    box.append(roi.box[3]);
+    return box;
+}
+
+static py::object convert_detections(detections_t *dets)
+{
+    if (!dets)
+        return py::none();  // <-- return Python None if dets is null
+
+    py::list results;
+    for (int j = 0; j < dets->num_detections; ++j) {
+        detection_t* det = dets->det[j];
+        py::dict item;
+        item["class"] = det->cl;
+        item["confidence"] = det->conf;
+        item["track_id"] = det->track_id;
+        py::list box;
+        box.append(det->x0);
+        box.append(det->y0);
+        box.append(det->x1);
+        box.append(det->y1);
+        item["box"] = box;
+        if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
+        if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
+        if (det->num_attr>0) item["attrs"]=convert_attributes(det->attr, det->num_attr);
+        results.append(item);
+    }
+    return results;
+}
+
 class c_infer {
 private:
     py::list convert_detections_batch(image_t** imgs, int num) {
@@ -248,22 +285,7 @@ private:
         for (int i = 0; i < num; ++i) {
             py::list results;
             if (dets[i]) {
-                for (int j = 0; j < dets[i]->num_detections; ++j) {
-                    detection_t* det = &dets[i]->det[j];
-                    py::dict item;
-                    item["class"] = det->cl;
-                    item["confidence"] = det->conf;
-                    py::list box;
-                    box.append(det->x0);
-                    box.append(det->y0);
-                    box.append(det->x1);
-                    box.append(det->y1);
-                    item["box"] = box;
-                    if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
-                    if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
-                    if (det->num_attr>0) item["attrs"]=convert_attributes(det->attr, det->num_attr);
-                    results.append(item);
-                }
+                results=convert_detections(dets[i]);
                 destroy_detections(dets[i]);
             }
             all_results.append(results);
@@ -378,15 +400,15 @@ public:
         for (int i = 0; i < 4; ++i)
             box.append(result_data.inference_roi.box[i]);
 
-        result["queue_time"] = result_data.queue_time;
-        result["inference_time"] = result_data.inference_time;
+        //result["queue_time"] = result_data.queue_time;
+        //result["inference_time"] = result_data.inference_time;
         result["inference_roi"] = box;
 
         // Convert detections
         py::list detections;
         if (result_data.dets) {
             for (int j = 0; j < result_data.dets->num_detections; ++j) {
-                detection_t* det = &result_data.dets->det[j];
+                detection_t* det = result_data.dets->det[j];
                 py::dict item;
                 item["class"] = det->cl;
                 item["confidence"] = det->conf;
@@ -551,8 +573,8 @@ public:
     infer_aux_t* raw() { return aux; }
 };
 
-static auto parse_detection = [](const std::unordered_map<std::string, py::object>& py_det) -> detection_t {
-    detection_t det = {};
+static auto parse_detection = [](const std::unordered_map<std::string, py::object>& py_det) -> detection_t* {
+    detection_t *det = detection_create();
 
     // Required: box
     auto box = py_det.at("box").cast<std::vector<float>>();
@@ -560,13 +582,18 @@ static auto parse_detection = [](const std::unordered_map<std::string, py::objec
         throw std::runtime_error("Expected 'box' to have 4 float elements (x0, y0, x1, y1).");
     }
 
-    det.x0 = box[0];
-    det.y0 = box[1];
-    det.x1 = box[2];
-    det.y1 = box[3];
+    det->x0 = box[0];
+    det->y0 = box[1];
+    det->x1 = box[2];
+    det->y1 = box[3];
 
-    det.conf = py_det.at("confidence").cast<float>();
-    det.cl = py_det.at("class").cast<unsigned short>();
+    det->conf = py_det.at("confidence").cast<float>();
+    det->cl = py_det.at("class").cast<unsigned short>();
+
+    // Optional: track_id
+    if (py_det.find("track_id") != py_det.end()) {
+        det->track_id= py_det.at("track_id").cast<uint64_t>();
+    }
 
     // Optional: face_points
     if (py_det.find("face_points") != py_det.end()) {
@@ -575,11 +602,11 @@ static auto parse_detection = [](const std::unordered_map<std::string, py::objec
             throw std::runtime_error("Expected 'face_points' to have 15 float elements (5 keypoints x 3).");
         }
 
-        det.num_face_points = 5;
+        det->num_face_points = 5;
         for (int i = 0; i < 5; ++i) {
-            det.face_points[i].x = face[i * 3 + 0];
-            det.face_points[i].y = face[i * 3 + 1];
-            det.face_points[i].conf = face[i * 3 + 2];
+            det->face_points[i].x = face[i * 3 + 0];
+            det->face_points[i].y = face[i * 3 + 1];
+            det->face_points[i].conf = face[i * 3 + 2];
         }
     }
 
@@ -590,11 +617,11 @@ static auto parse_detection = [](const std::unordered_map<std::string, py::objec
             throw std::runtime_error("Expected 'pose_points' to have 51 float elements (17 keypoints x 3).");
         }
 
-        det.num_pose_points = 17;
+        det->num_pose_points = 17;
         for (int i = 0; i < 17; ++i) {
-            det.pose_points[i].x = pose[i * 3 + 0];
-            det.pose_points[i].y = pose[i * 3 + 1];
-            det.pose_points[i].conf = pose[i * 3 + 2];
+            det->pose_points[i].x = pose[i * 3 + 0];
+            det->pose_points[i].y = pose[i * 3 + 1];
+            det->pose_points[i].conf = pose[i * 3 + 2];
         }
     }
 
@@ -606,21 +633,24 @@ std::pair<std::vector<int>, std::vector<int>> match_box_iou_wrapper(
     const std::vector<std::unordered_map<std::string, py::object>>& py_dets_b,
     float iou_thr, match_type_t match_type)
 {
-    std::vector<detection_t> dets_a, dets_b;
+    int num_a=py_dets_a.size();
+    int num_b=py_dets_b.size();
+    detection_t *dets_a[num_a], *dets_b[num_b];
+    for(int i=0;i<num_a;i++) dets_a[i]=parse_detection(py_dets_a[i]);
+    for(int i=0;i<num_b;i++) dets_b[i]=parse_detection(py_dets_b[i]);
 
-    // Parse detections
-    for (const auto& py_det : py_dets_a) dets_a.push_back(parse_detection(py_det));
-    for (const auto& py_det : py_dets_b) dets_b.push_back(parse_detection(py_det));
-
-    std::vector<uint16_t> out_a_idx(dets_a.size());
-    std::vector<uint16_t> out_b_idx(dets_b.size());
+    std::vector<uint16_t> out_a_idx(num_a);
+    std::vector<uint16_t> out_b_idx(num_b);
 
     int N = match_box_iou(
-        dets_a.data(), dets_a.size(),
-        dets_b.data(), dets_b.size(),
+        dets_a, num_a,
+        dets_b, num_b,
         out_a_idx.data(), out_b_idx.data(),
         iou_thr, match_type
     );
+
+    for(int i=0;i<num_a;i++) detection_destroy(dets_a[i]);
+    for(int i=0;i<num_b;i++) detection_destroy(dets_b[i]);
 
     std::vector<int> out_a(out_a_idx.begin(), out_a_idx.begin() + N);
     std::vector<int> out_b(out_b_idx.begin(), out_b_idx.begin() + N);
@@ -632,10 +662,14 @@ class c_decoder {
     public:
         simple_decoder_t* dec;
         std::vector<std::shared_ptr<c_image>> current_output;
+        uint64_t dec_time;
+        uint64_t dec_time_increment;
 
         c_decoder() {
             // Create the decoder, register our static callback, pass `this` as context
             dec = simple_decoder_create(this, &c_decoder::on_frame_static, SIMPLE_DECODER_CODEC_H264);
+            dec_time=0;
+            dec_time_increment=90000/30;
             if (!dec) {
                 throw std::runtime_error("Failed to create decoder");
             }
@@ -643,6 +677,10 @@ class c_decoder {
 
         ~c_decoder() {
             if (dec) simple_decoder_destroy(dec);
+        }
+
+        void set_framerate(double fps) {
+            dec_time_increment=(uint64_t)(90000.0/fps);
         }
 
         py::list decode(py::bytes bitstream) {
@@ -669,6 +707,8 @@ class c_decoder {
 
         void on_frame(image_t* img) {
             // Reference the frame so we manage its lifetime cleanly
+            img->timestamp=dec_time;
+            dec_time+=dec_time_increment;
             current_output.emplace_back(std::make_shared<c_image>(image_reference(img)));
         }
     };
@@ -743,6 +783,70 @@ class c_pcap_decoder {
             return std::make_shared<c_image>(img);
         }
     };
+
+class PyTrackSharedState {
+public:
+    explicit PyTrackSharedState(const std::string& config_path) {
+        state = track_shared_state_create(config_path.c_str());
+        if (!state)
+            throw std::runtime_error("Failed to create shared state");
+    }
+
+    ~PyTrackSharedState() {
+        if (state)
+            track_shared_state_destroy(state);
+    }
+
+    track_shared_state_t* get() const { return state; }
+
+private:
+    track_shared_state_t* state = nullptr;
+};
+
+class PyTrackStream {
+public:
+    explicit PyTrackStream(std::shared_ptr<PyTrackSharedState> shared_state_py)
+        : shared_state(shared_state_py)
+    {
+        stream = track_stream_create(shared_state->get(), nullptr, nullptr);
+        if (!stream)
+            throw std::runtime_error("Failed to create track stream");
+    }
+
+    ~PyTrackStream() {
+        if (stream)
+            track_stream_destroy(stream);
+    }
+
+    void set_frame_intervals(double min_process, double min_full_roi) {
+        track_stream_set_minimum_frame_intervals(stream, min_process, min_full_roi);
+    }
+
+    void run_on_images(const std::vector<std::shared_ptr<c_image>>& images) {
+        for (const auto& img : images)
+            track_stream_run_frame_time(stream, img->raw());
+    }
+
+    std::vector<py::dict> get_results() {
+        std::vector<py::dict> results_out;
+        auto results = track_stream_get_results(stream);
+        for (auto& res : results) {
+            py::dict d;
+            d["result_type"] = res.result_type;
+            d["time"] = res.time;
+            d["motion_roi"] = convert_roi(res.motion_roi);
+            d["inference_roi"] = convert_roi(res.inference_roi);
+            d["track_dets"] = convert_detections(res.track_dets);
+            d["inference_dets"] = convert_detections(res.inference_dets);
+            results_out.push_back(d);
+        }
+        return results_out;
+    }
+
+private:
+    track_stream_t* stream = nullptr;
+    std::shared_ptr<PyTrackSharedState> shared_state;  // Shared ownership to keep it alive
+};
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
     //std::cout << "ubon_pycstuff bindings loaded for version" << ubon_cstuff_get_version() << std::endl;
@@ -856,6 +960,23 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             "Run auxiliary inference on a batch of images and optional keypoints (keypoints=None=>images already aligned)")
         .def("get_model_description", &c_infer_aux::get_model_description,
             "Get auxiliary model description as dictionary");
+
+    py::enum_<result_type_t>(m, "ResultType")
+        .value("TRACK_FRAME_SKIP_FRAMERATE", TRACK_FRAME_SKIP_FRAMERATE)
+        .value("TRACK_FRAME_SKIP_NO_MOTION", TRACK_FRAME_SKIP_NO_MOTION)
+        .value("TRACK_FRAME_SKIP_NO_IMG", TRACK_FRAME_SKIP_NO_IMG)
+        .value("TRACK_FRAME_TRACKED_ROI", TRACK_FRAME_TRACKED_ROI)
+        .value("TRACK_FRAME_TRACKED_FULL_REFRESH", TRACK_FRAME_TRACKED_FULL_REFRESH)
+        .export_values();
+
+    py::class_<PyTrackSharedState, std::shared_ptr<PyTrackSharedState>>(m, "c_track_shared_state")
+        .def(py::init<const std::string&>());
+
+    py::class_<PyTrackStream>(m, "c_track_stream")
+        .def(py::init<std::shared_ptr<PyTrackSharedState>>(), py::arg("shared_state"))
+        .def("set_frame_intervals", &PyTrackStream::set_frame_intervals)
+        .def("run_on_images", &PyTrackStream::run_on_images)
+        .def("get_results", &PyTrackStream::get_results);
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<>())

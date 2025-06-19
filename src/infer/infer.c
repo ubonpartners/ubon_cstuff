@@ -20,7 +20,7 @@
 #include "cuda_kernels.h"
 #include "log.h"
 #include "cuda_nms.h"
-#include <yaml-cpp/yaml.h>
+#include "yaml.h"
 
 #define debugf if (0) printf
 
@@ -98,7 +98,7 @@ image_t *load_rgb32_tensor(const char *file, int w, int h)
         return 0;
     }
     image_t *img=create_image(w, h, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
-    fread(img->rgb, 1, w*h*4*3, f);
+    assert(w*h*4*3==fread(img->rgb, 1, w*h*4*3, f));
     fclose(f);
     return img;
 }
@@ -264,7 +264,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         yaml_config=default_config;
     }
 
-    YAML::Node config = YAML::LoadFile(yaml_config);
+    YAML::Node config = yaml_load(yaml_config);
     std::vector<std::string> names = config["dataset"]["names"].as<std::vector<std::string>>();
     std::vector<int> kpt_shape = config["dataset"]["kpt_shape"].as<std::vector<int>>();
     model_description_t md = {};
@@ -407,63 +407,8 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
-static void scale_to_fit(int w, int h, int max_w, int max_h, int *res_w, int *res_h, bool flexible, bool allow_upscale)
-{
-    if (allow_upscale)
-    {
-        int scale_w_num = max_w;
-        int scale_w_den = w;
-        int scale_h_num = max_h;
-        int scale_h_den = h;
-
-        // Compare scale_w = scale_w_num / scale_w_den vs scale_h = scale_h_num / scale_h_den
-        if (scale_w_num * scale_h_den < scale_h_num * scale_w_den) {
-            // Use scale_w
-            *res_w = max_w;
-            *res_h = (h * max_w) / w;
-        } else {
-            // Use scale_h
-            *res_w = (w * max_h) / h;
-            *res_h = max_h;
-        }
-        return;
-    }
-
-    // starting image w*h we need to determine a size to scale the image to so that it fits in
-    // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
-    int rw=w;
-    int rh=h;
-    if (rw>max_w)
-    {
-        // scale by max_w/w
-        rh=(rh*max_w)/rw;
-        rw=(rw*max_w)/rw;
-    }
-    if (rh>max_h)
-    {
-        // scale by max_h/rh
-        rw=(rw*max_h)/rh;
-        rh=(rh*max_h)/rh;
-    }
-    rw&=(~1);
-    rh&=(~1); // make sizes even
-    if (flexible)
-    {
-        // allow 10% or so distortion if it makes it fit better
-        int thr_w=(max_w*9)/10;
-        int thr_h=(max_h*9)/10;
-        if (rw>thr_w && w>=max_w) rw=max_w;
-        if (rh>thr_w && h>=max_h) rh=max_h;
-    }
-    assert(rw<=max_w);
-    assert(rh<=max_h);
-    *res_w=rw;
-    *res_h=rh;
-}
-
 static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride)
 {
-    detections_t *temp_dets=create_detections(inf->max_detections*10); // will hold pre-NMS detections for 1 class
     detections_t *dets=create_detections(inf->max_detections); // output post-NMS detections
 
     int num_classes=inf->md.num_classes;
@@ -472,45 +417,51 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
     int num_face_detections=0;
     for(int cl=0;cl<num_classes;cl++)
     {
-        temp_dets->num_detections=0;
+        int num=0;
         for(int i=0;i<rows;i++)
         {
             float conf=p[(4+cl)*row_stride+i];
-            if (conf>inf->det_thr)
+            if (conf>inf->det_thr) num++;
+        }
+        if (num!=0)
+        {
+            detections_t *temp_dets=create_detections(num); // will hold pre-NMS detections for 1 class
+            for(int i=0;i<rows;i++)
             {
-                detection_t *det=detection_add_end(temp_dets);
-                assert(det!=0);
-                if (det)
+                float conf=p[(4+cl)*row_stride+i];
+                if (conf>inf->det_thr)
                 {
-                    float cx=p[0*row_stride+i];
-                    float cy=p[1*row_stride+i];
-                    float w=p[2*row_stride+i];
-                    float h=p[3*row_stride+i];
+                    detection_t *det=detection_add_end(temp_dets);
+                    assert(det!=0);
+                    if (det)
+                    {
+                        float cx=p[0*row_stride+i];
+                        float cy=p[1*row_stride+i];
+                        float w=p[2*row_stride+i];
+                        float h=p[3*row_stride+i];
 
-                    det->x0=cx-w*0.5;
-                    det->x1=cx+w*0.5;
-                    det->y0=cy-h*0.5;
-                    det->y1=cy+h*0.5;
-                    det->index=i;
-                    det->cl=cl;
-                    det->conf=conf;
-                    det->num_face_points=0;
-                    det->num_pose_points=0;
+                        det->x0=cx-w*0.5;
+                        det->x1=cx+w*0.5;
+                        det->y0=cy-h*0.5;
+                        det->y1=cy+h*0.5;
+                        det->index=i;
+                        det->cl=cl;
+                        det->conf=conf;
+                        det->num_face_points=0;
+                        det->num_pose_points=0;
+                    }
                 }
             }
-        }
-        detections_nms_inplace(temp_dets, inf->nms_thr);
-        for(int i=0;i<temp_dets->num_detections;i++)
-        {
-            detection_t *d=detection_add_end(dets);
-            if (d) memcpy(d, &temp_dets->det[i], sizeof(detection_t));
+            detections_nms_inplace(temp_dets, inf->nms_thr);
+            for(int i=0;i<temp_dets->num_detections;i++) detection_append_copy(dets, temp_dets->det[i]);
+            destroy_detections(temp_dets);
         }
     }
-    destroy_detections(temp_dets);
+
 
     for(int i=0;i<dets->num_detections;i++)
     {
-        detection_t *d=&dets->det[i];
+        detection_t *d=dets->det[i];
         int index=d->index;
         if (d->cl==inf->face_class_index)
         {
@@ -551,7 +502,7 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
 
     assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
     assert(inf->face_class_index==1);
-    dets->person_dets=&dets->det[0];
+    dets->person_dets=dets->det;
     dets->num_person_detections=num_person_detections;
     dets->face_dets=dets->person_dets+num_person_detections;
     dets->num_face_detections=num_face_detections;
@@ -709,7 +660,8 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
         image_t *img=img_list[i];
         int scale_w=0;
         int scale_h=0;
-        scale_to_fit(img->width, img->height, inf_max_w, inf_max_h, &scale_w, &scale_h, false, inf->inf_allow_upscale);
+
+        determine_scale_size(img->width, img->height, inf_max_w, inf_max_h, &scale_w, &scale_h, 0,2,2,inf->inf_allow_upscale);
 
         max_w=std::max(max_w, scale_w);
         max_h=std::max(max_h, scale_h);
@@ -743,7 +695,8 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     for(int i=0;i<num;i++)
     {
         image_t *img=(testimage!=0) ? testimage : img_list[i];
-        scale_to_fit(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i, true, inf->inf_allow_upscale);
+        determine_scale_size(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i,
+                          10, 2, 2, inf->inf_allow_upscale);
         //printf("%dx%d %dx%d %dx%d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0]);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
         image_format_t fmt=image_scaled->format;

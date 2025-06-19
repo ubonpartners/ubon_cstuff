@@ -5,12 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "cuda_stuff.h"
-#include "display.h"
-#include "webcam.h"
-#include "infer.h"
 #include "jpeg.h"
-#include "dataset.h"
-#include "nvof.h"
 #include "c_tests.h"
 #include "misc.h"
 
@@ -102,22 +97,19 @@ static void run_one_test(const char *txt, uint32_t (*test)(image_t *img), int ru
             fails++;
         }
     }
-    printf("%40s FAILS:%d; %f iterations/sec\n", txt, fails, (float)(runs/elapsed_time));
+    printf("%40s THREADS:%d FAILS:%d; %f iterations/sec\n", txt, num_threads, fails, (float)(runs/elapsed_time));
     free(hashes);
 }
 
 int run_all_c_tests()
 {
     printf("Running all tests....\n");
-    
+
     cuda_set_sync_mode(false, false);
 
     image_t *img_base=load_jpeg("/mldata/image/arrest2.jpg");
     image_t *img=image_scale(img_base, 1280, 720);
 
-    //display_image("test", img);
-    //usleep(5000);
-    
     int runs=5000;
     int threads=16;
     run_one_test("test convert yuv420_device", test_convert_yuv420, runs, img, threads);

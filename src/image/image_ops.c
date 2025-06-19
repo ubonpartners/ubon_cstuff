@@ -209,14 +209,15 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
                       out->stream));
 
     // Copy selected region from src2 Y plane
-    for (int row = 0; row < h; row++) {
-        CHECK_CUDART_CALL(cudaMemcpyAsync(
-            out->y + (dy + row) * out->stride_y + dx,
-            src2->y + (sy + row) * src2->stride_y + sx,
-            w,
-            cudaMemcpyDeviceToDevice,
-            out->stream));
-    }
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(
+    out->y + dy * out->stride_y + dx,         // dst pointer
+    out->stride_y,                            // dst pitch
+    src2->y + sy * src2->stride_y + sx,       // src pointer
+    src2->stride_y,                           // src pitch
+    w,                                        // width in bytes
+    h,                                        // height
+    cudaMemcpyDeviceToDevice,                 // direction
+    out->stream));
 
     if (src->format == IMAGE_FORMAT_YUV420_DEVICE) {
         int uv_w = w / 2;
@@ -233,22 +234,27 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
                           src->width / 2, src->height / 2,
                           cudaMemcpyDeviceToDevice, out->stream));
 
-        // Copy U and V blocks
-        for (int row = 0; row < uv_h; row++) {
-            CHECK_CUDART_CALL(cudaMemcpyAsync(
-                out->u + (dy_uv + row) * out->stride_uv + dx_uv,
-                src2->u + (sy_uv + row) * src2->stride_uv + sx_uv,
-                uv_w,
-                cudaMemcpyDeviceToDevice,
-                out->stream));
+        // Copy U block
+        CHECK_CUDART_CALL(cudaMemcpy2DAsync(
+            out->u + dy_uv * out->stride_uv + dx_uv,      // dst pointer
+            out->stride_uv,                               // dst pitch
+            src2->u + sy_uv * src2->stride_uv + sx_uv,    // src pointer
+            src2->stride_uv,                              // src pitch
+            uv_w,                                         // width in bytes
+            uv_h,                                         // height
+            cudaMemcpyDeviceToDevice,                     // direction
+            out->stream));                                // stream
 
-            CHECK_CUDART_CALL(cudaMemcpyAsync(
-                out->v + (dy_uv + row) * out->stride_uv + dx_uv,
-                src2->v + (sy_uv + row) * src2->stride_uv + sx_uv,
-                uv_w,
-                cudaMemcpyDeviceToDevice,
-                out->stream));
-        }
+        // Copy V block
+        CHECK_CUDART_CALL(cudaMemcpy2DAsync(
+            out->v + dy_uv * out->stride_uv + dx_uv,      // dst pointer
+            out->stride_uv,                               // dst pitch
+            src2->v + sy_uv * src2->stride_uv + sx_uv,    // src pointer
+            src2->stride_uv,                              // src pitch
+            uv_w,                                         // width in bytes
+            uv_h,                                         // height
+            cudaMemcpyDeviceToDevice,                     // direction
+            out->stream));                                // stream
     }
 
     return out;
@@ -528,4 +534,69 @@ void image_get_aligned_faces(image_t **images, float *face_points, int n, int w,
     destroy_image(img_rgb);
 
     for(int i=0;i<n;i++) destroy_image(temp_in[i]);
+}
+
+void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *res_h,
+                          int percent_stretch_allowed,
+                          int round_w, int round_h,
+                          bool allow_upscale)
+{
+    if (allow_upscale)
+    {
+        int scale_w_num = max_w;
+        int scale_w_den = w;
+        int scale_h_num = max_h;
+        int scale_h_den = h;
+
+        // Compare scale_w = scale_w_num / scale_w_den vs scale_h = scale_h_num / scale_h_den
+        if (scale_w_num * scale_h_den < scale_h_num * scale_w_den) {
+            // Use scale_w
+            *res_w = max_w;
+            *res_h = (h * max_w) / w;
+        } else {
+            // Use scale_h
+            *res_w = (w * max_h) / h;
+            *res_h = max_h;
+        }
+        return;
+    }
+
+    // starting image w*h we need to determine a size to scale the image to so that it fits in
+    // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
+    int rw=w;
+    int rh=h;
+    if (rw>max_w)
+    {
+        // scale by max_w/w
+        rh=(rh*max_w)/rw;
+        rw=(rw*max_w)/rw;
+    }
+    if (rh>max_h)
+    {
+        // scale by max_h/rh
+        rw=(rw*max_h)/rh;
+        rh=(rh*max_h)/rh;
+    }
+    if (round_w!=0) rw&=(~(round_w-1));
+    if (round_h!=0) rh&=(~(round_h-1));
+    if (percent_stretch_allowed!=0)
+    {
+        // allow 10% or so distortion if it makes it fit better
+        int thr_w=(max_w*(100-percent_stretch_allowed))/100;
+        int thr_h=(max_h*(100-percent_stretch_allowed))/100;
+        if (rw>thr_w && w>=max_w) rw=max_w;
+        if (rh>thr_w && h>=max_h) rh=max_h;
+    }
+    assert(rw<=max_w);
+    assert(rh<=max_h);
+    *res_w=rw;
+    *res_h=rh;
+}
+
+image_t *image_scale_convert(image_t *img, image_format_t format, int width, int height)
+{
+    image_t *tmp=image_convert(img, format);
+    image_t *scaled=image_scale(tmp, width, height);
+    destroy_image(tmp);
+    return scaled;
 }

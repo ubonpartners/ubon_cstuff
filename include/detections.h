@@ -26,6 +26,8 @@ struct detection
     unsigned short cl;
     // original anchor box index (debug)
     unsigned short index;
+    // track ID
+    uint64_t track_id;
     // overlap mask is a 64 bit mask of which "subblocks"
     // the detection box overlaps, when considering the whole
     // (0,0)->(1,1) 2D space as an 8x8 grid
@@ -62,18 +64,22 @@ typedef struct detections
     int max_detections;
     int num_person_detections;
     int num_face_detections;
-    detection_t *person_dets; // points into the 'det' array above
-    detection_t *face_dets;   // points into the 'det' array above
+    detection_t **person_dets; // points into the 'det' array above
+    detection_t **face_dets;   // points into the 'det' array above
     // must be last!
-    detection_t det[0];
+    detection_t *det[1];
 } detections_t;
 
 #include "image.h"
+
+detection_t *detection_create();
+void detection_destroy(detection_t *det);
 
 detections_t *create_detections(int max_detections);
 detections_t *load_detections(const char *filename);
 void destroy_detections(detections_t *detections);
 detection_t *detection_add_end(detections_t *detections);
+void detection_append_copy(detections_t *detections, detection_t *det);
 void detections_nms_inplace(detections_t *detections, float iou_thr);
 void detections_sort_descending_conf(detections_t *detections);
 void detections_scale(detections_t *dets, float sx, float sy);
@@ -87,9 +93,9 @@ void detections_generate_overlap_masks(detections_t *dets);
 void fuse_face_person(detections_t *dets);
 
 int match_detections_greedy(
-    const detection_t *dets_a,
+    detection_t        **dets_a,
     int                num_dets_a,
-    const detection_t *dets_b,
+    detection_t        **dets_b,
     int                num_dets_b,
     float            (*cost_fn)(const detection_t *, const detection_t *, void *),
     void              *ctx,
@@ -105,9 +111,9 @@ typedef enum match_type
 } match_type_t;
 
 int match_box_iou(
-    const detection_t *dets_a,
+    detection_t        **dets_a,
     int                num_dets_a,
-    const detection_t *dets_b,
+    detection_t        **dets_b,
     int                num_dets_b,
     uint16_t           *out_a_idx,
     uint16_t           *out_b_idx,

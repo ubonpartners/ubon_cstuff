@@ -1,0 +1,44 @@
+#ifndef __TRACK_H
+#define __TRACK_H
+
+#include <vector>
+
+typedef struct track_shared_state track_shared_state_t;
+typedef struct track_stream track_stream_t;
+typedef struct track_results track_results_t;;
+
+#include "image.h"
+#include "detections.h"
+
+typedef enum result_type
+{
+    TRACK_FRAME_SKIP_FRAMERATE=0,           // time gap since previous processed frame too small
+    TRACK_FRAME_SKIP_NO_MOTION=1,           // motion analysis determined not enough change
+    TRACK_FRAME_SKIP_NO_IMG=2,              // 0 was passed in for 'img'
+    TRACK_FRAME_TRACKED_ROI=3,              // normally processed frame
+    TRACK_FRAME_TRACKED_FULL_REFRESH=4,     // periodic full ROI
+} result_type_t;
+
+struct track_results
+{
+    result_type_t result_type;
+    double time;
+    roi_t motion_roi;                // ROI that was detected as containing motion. Note that if this is
+                                     // less than skip_thr then inference/tracking will be skipped. In this
+                                     // case inference_roi will be (0,0,0,0) and track_dets/inference_dets 0
+    roi_t inference_roi;             // ROI that was used for inference (likely larger than motion_roi)
+    detections_t *track_dets;        // tracker output
+    detections_t *inference_dets;    // raw detection output (for debug)
+};
+
+track_shared_state_t *track_shared_state_create(const char *yaml_config);
+void track_shared_state_destroy(track_shared_state_t *tss);
+
+track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
+void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
+void track_stream_destroy(track_stream_t *ts);
+void track_stream_run(track_stream_t *ts, image_t *img, double time);
+void track_stream_run_frame_time(track_stream_t *ts, image_t *img); // takes time from img->timestamp - be sure it's monotonic!
+std::vector<track_results_t> track_stream_get_results(track_stream_t *ts);
+
+#endif

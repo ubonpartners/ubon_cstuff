@@ -93,6 +93,8 @@ image_t *image_scale(image_t *img, int width, int height);
 // any format to any other should work although some are not direct
 // and work via an intermediate format
 image_t *image_convert(image_t *img, image_format_t format);
+// combine both of the above
+image_t *image_scale_convert(image_t *img, image_format_t format, int width, int height);
 // generate a 32 bit value from a hash of the surface's pixel contents
 // this is very useful for checking for reproducibility bugs
 uint32_t image_hash(image_t *img);
@@ -116,4 +118,10 @@ image_t *image_make_tiled(image_format_t fmt,
                           image_t **images, int num,
                           int *offs_x, int *offs_y);
 void image_get_aligned_faces(image_t **images, float *face_points, int n, int w, int h, image_t **ret);
+
+
+void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *res_h,
+                          int percent_stretch_allowed,
+                          int round_w, int round_h,
+                          bool allow_upscale);
 #endif

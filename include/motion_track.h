@@ -1,0 +1,15 @@
+#ifndef __MOTION_TRACK_H
+#define __MOTION_TRACK_H
+
+typedef struct motion_track motion_track_t;
+
+#include "image.h"
+#include "roi.h"
+
+motion_track_t *motion_track_create(const char *config_yaml);
+void motion_track_destroy(motion_track_t *mt);
+void motion_track_add_frame(motion_track_t *mt, image_t *img);
+roi_t motion_track_get_roi(motion_track_t *mt);
+void motion_track_set_roi(motion_track_t *mt, roi_t roi);
+
+#endif

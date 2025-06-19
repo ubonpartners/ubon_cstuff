@@ -96,7 +96,7 @@ def test_nvof(h264_file="/mldata/video/MOT20-01.264"):
         bitstream = f.read()
 
     # decode some video
-    frames = decoder.decode(bitstream) 
+    frames = decoder.decode(bitstream)
 
     # create an NVOF optical flow engine
     flow_engine = upyc.c_nvof(320, 320)
@@ -112,7 +112,7 @@ def test_nvof(h264_file="/mldata/video/MOT20-01.264"):
         costs, flow = flow_engine.run(frame) # returns np arrays with costs, flow vectors
         h,w=costs.shape
         d.clear()
-        
+
         for y in range(h):
             for x in range(w):
                 box=[x/w, y/h, (x+1)/w, (y+1)/h]
@@ -139,7 +139,7 @@ def test_motiondet(h264_file="/mldata/tracking/cevo_april25/video/generated_h264
         bitstream = f.read()
 
     # decode some video
-    frames = decoder.decode(bitstream) 
+    frames = decoder.decode(bitstream)
 
     d=stuff.Display(1280,720)
     last=None
@@ -155,6 +155,30 @@ def test_motiondet(h264_file="/mldata/tracking/cevo_april25/video/generated_h264
             d.show(arr, is_rgb=True)
             d.get_events(30)
         last=blurred
+
+def test_track(h264_file="/mldata/tracking/cevo_april25/video/generated_h264/INof_LD_Out_Light_FFcam_002.h264"):
+
+    decoder = upyc.c_decoder()
+    with open(h264_file, "rb") as f:
+        bitstream = f.read()
+
+    # decode some video
+    frames = decoder.decode(bitstream)
+
+    display=stuff.Display(1280,720)
+    track_shared=upyc.c_track_shared_state("/mldata/config/track/trackers/uc_test.yaml")
+    track_stream=upyc.c_track_stream(track_shared)
+    track_stream.run_on_images(frames)
+    track_results=track_stream.get_results()
+    for i,r in enumerate(track_results):
+        img=frames[i].to_numpy()
+        if 'track_dets' in r and r['track_dets'] is not None:
+            dets=r['track_dets']
+            display.clear()
+            for d in dets:
+                display.draw_box(d["box"], thickness=2, clr=(255, 255, 0, 0))
+        display.show(img, is_rgb=True)
+        display.get_events(10)
 
 args = argument_parser()
 
@@ -176,4 +200,3 @@ if args.test_motiondet is not None:
     test_motiondet(args.test_motiondet)
 
 print("completed")
-

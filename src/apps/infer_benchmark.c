@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
             }
             for(int threads=1;threads<=32;threads*=2)
             {
-                for(int cuda_nms=1;cuda_nms<=1;cuda_nms++)
+                for(int cuda_nms=0;cuda_nms<=1;cuda_nms++)
                 {
                     for(int model=0;model<2;model++)
                     {

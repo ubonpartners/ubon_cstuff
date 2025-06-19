@@ -18,6 +18,8 @@ typedef struct infer_job {
     image_t *img;
     roi_t roi;
     infer_thread_result_handle_t *handle;
+    void (*callback)(void *context, infer_thread_result_data_t *rd);
+    void *callback_context;
     struct infer_job *next;
 } infer_job_t;
 
@@ -67,11 +69,8 @@ static void *infer_thread_fn(void *arg)
     cuda_thread_init();
 
     // Pre‐allocate fixed‐size arrays on the stack for up to INFER_THREAD_MAX_BATCH jobs
-    image_t          *imgs[INFER_THREAD_MAX_BATCH];
     detections_t     *dets_arr[INFER_THREAD_MAX_BATCH];
-    infer_thread_result_handle_t *handles[INFER_THREAD_MAX_BATCH];
     infer_job_t      *jobs[INFER_THREAD_MAX_BATCH];
-    roi_t            rois[INFER_THREAD_MAX_BATCH];
 
     int max_batch=h->md->max_batch;
     if (max_batch>INFER_THREAD_MAX_BATCH) max_batch=INFER_THREAD_MAX_BATCH;
@@ -104,9 +103,6 @@ static void *infer_thread_fn(void *arg)
 
             // Keep track of each job’s pointers so we can call infer_batch
             jobs[count]    = job;
-            imgs[count]    = job->img;
-            rois[count]    = job->roi;
-            handles[count] = job->handle;
             count++;
         }
         pthread_mutex_unlock(&h->queue_mutex);
@@ -118,10 +114,12 @@ static void *infer_thread_fn(void *arg)
         //
 
         image_t *img_cropped[INFER_THREAD_MAX_BATCH];
+        roi_t inference_roi[INFER_THREAD_MAX_BATCH];
         for(int i=0;i<count;i++)
         {
-            img_cropped[i]=image_crop_roi(imgs[i], rois[i], &handles[i]->inference_roi);
-            h->stats.total_roi_area=roi_area(&handles[i]->inference_roi);
+            img_cropped[i]=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi[i]);
+            assert(img_cropped[i]!=0);
+            h->stats.total_roi_area=roi_area(&inference_roi[i]);
         }
         //display_image("crop", img_cropped[0]);
 
@@ -138,20 +136,32 @@ static void *infer_thread_fn(void *arg)
 
         for (int i = 0; i < count; ++i)
         {
-            detections_unmap_roi(dets_arr[i], handles[i]->inference_roi);
+            detections_unmap_roi(dets_arr[i], inference_roi[i]);
             //show_detections(dets_arr[i]);
         }
         // 5) Signal each job’s result handle, passing back its own detections_t*
         for (int i = 0; i < count; ++i) {
             destroy_image(img_cropped[i]);
-            destroy_image(imgs[i]);
-            infer_thread_result_handle_t *rh = handles[i];
-            pthread_mutex_lock(&rh->mutex);
-            rh->dets = dets_arr[i];
-            rh->dets->md=h->md; // attach the model description
-            rh->done = 1;
-            pthread_cond_signal(&rh->cond);
-            pthread_mutex_unlock(&rh->mutex);
+            destroy_image(jobs[i]->img);
+            dets_arr[i]->md=h->md; // attach the model description
+            if (jobs[i]->callback)
+            {
+                infer_thread_result_data_t d;
+                memset(&d, 0, sizeof(infer_thread_result_data_t));
+                d.dets=dets_arr[i];
+                d.inference_roi=inference_roi[i];
+                jobs[i]->callback(jobs[i]->callback_context, &d);
+            }
+            else
+            {
+                infer_thread_result_handle_t *rh = jobs[i]->handle;
+                pthread_mutex_lock(&rh->mutex);
+                rh->inference_roi=inference_roi[i];
+                rh->dets = dets_arr[i];
+                rh->done = 1;
+                pthread_cond_signal(&rh->cond);
+                pthread_mutex_unlock(&rh->mutex);
+            }
 
             // Free the job struct itself (we do NOT free img or dets here;
             //  - img memory is owned by the caller,
@@ -232,6 +242,32 @@ model_description_t *infer_thread_get_model_description(infer_thread_t *h)
     return h->md;
 }
 
+void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t roi, void (*callback)(void *context, infer_thread_result_data_t *rd), void *callback_context)
+{
+    if (!h || !img) return;
+    // Allocate and fill in a new job
+    infer_job_t *job = (infer_job_t *)malloc(sizeof(infer_job_t));
+    assert(job != NULL);
+    memset(job, 0, sizeof(infer_job_t));
+    job->img = image_reference(img);
+    job->roi = roi;
+    job->callback=callback;
+    job->callback_context=callback_context;
+    job->next = NULL;
+
+    // Enqueue the job
+    pthread_mutex_lock(&h->queue_mutex);
+    if (h->job_tail) {
+        h->job_tail->next = job;
+        h->job_tail = job;
+    } else {
+        // First job in the queue
+        h->job_head = h->job_tail = job;
+    }
+    pthread_cond_signal(&h->queue_cond);
+    pthread_mutex_unlock(&h->queue_mutex);
+}
+
 infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_t *img, roi_t roi)
 {
     if (!h || !img) return NULL;
@@ -239,14 +275,14 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
     // Allocate and initialize a new result handle
     infer_thread_result_handle_t *handle = (infer_thread_result_handle_t *)malloc(sizeof(infer_thread_result_handle_t));
     assert(handle != NULL);
+    memset(handle, 0, sizeof(infer_thread_result_handle_t));
     pthread_mutex_init(&handle->mutex, NULL);
     pthread_cond_init(&handle->cond, NULL);
-    handle->dets = NULL;
-    handle->done = 0;
 
     // Allocate and fill in a new job
     infer_job_t *job = (infer_job_t *)malloc(sizeof(infer_job_t));
     assert(job != NULL);
+    memset(job, 0, sizeof(infer_job_t));
     job->img = image_reference(img);
     job->roi = roi;
     job->handle = handle;
