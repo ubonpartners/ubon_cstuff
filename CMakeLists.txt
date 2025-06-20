@@ -65,6 +65,8 @@ enable_language(CUDA)
 set(PROJECT_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/track/bytetracker
+    /usr/include/eigen3
+    /usr/local/include/eigen3
     ${CUDA_INCLUDE_DIRS}
 )
 
@@ -83,7 +85,7 @@ if(DEFINED ENV{JETSON_SOC})
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
-        -lnvvpi -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lnvvpi -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
