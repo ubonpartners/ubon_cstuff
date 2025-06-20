@@ -8,6 +8,7 @@
 #include "nvcuvid.h"
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
+#include "log.h"
 
 #if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 struct simple_decoder
@@ -19,6 +20,8 @@ struct simple_decoder
     int target_width;
     int target_height;
     void *context;
+    uint64_t time;
+    uint64_t time_increment;
     //CUstream stream;
     CUvideodecoder decoder;
     CUvideoparser videoParser;
@@ -55,7 +58,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
             dec->out_height=dec->target_height;
         }
 
-        printf("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d\n",
+        log_debug("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d\n",
             dec->coded_width,dec->coded_height,
             pFormat->display_area.left,pFormat->display_area.top,
             pFormat->display_area.right,pFormat->display_area.bottom,
@@ -93,6 +96,11 @@ static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicPara
     return 1;
 }
 
+void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
+{
+    dec->time_increment=(uint64_t)(90000.0/fps);
+}
+
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
@@ -100,7 +108,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     CUdeviceptr decodedFrame=0;
     CUVIDPROCPARAMS videoProcessingParameters = {};
     videoProcessingParameters.progressive_frame = pDispInfo->progressive_frame;
-    videoProcessingParameters.second_field = pDispInfo->repeat_first_field + 1;
+    videoProcessingParameters.second_field =  (pDispInfo->repeat_first_field != 0);;
     videoProcessingParameters.top_field_first = pDispInfo->top_field_first;
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     videoProcessingParameters.output_stream = dec_img->stream;
@@ -112,8 +120,11 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     dec_img->stride_y=dec_img->stride_uv=pitch;
     image_t *img=image_convert(dec_img, IMAGE_FORMAT_YUV420_DEVICE);
     CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+    img->timestamp=dec->time;
+    dec->time+=dec->time_increment;
     dec->frame_callback(dec->context, img);
     destroy_image(img);
+    destroy_image(dec_img);
 
     return 1;
 }
@@ -132,7 +143,9 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->target_height=0;
     dec->out_width=1280;
     dec->out_height=720;
-    //CHECK_CUDA_CALL(cuStreamCreate(&dec->stream, CU_STREAM_DEFAULT));
+    dec->time_increment=90000/30;
+    dec->time=0;
+
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
     videoParserParams.CodecType = (codec==SIMPLE_DECODER_CODEC_H264) ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC;
@@ -152,9 +165,14 @@ void simple_decoder_destroy(simple_decoder_t *dec)
 {
     if (dec)
     {
-        //CHECK_CUDA_CALL(cuStreamDestroy(dec->stream));
-        CHECK_CUDA_CALL(cuvidDestroyVideoParser(dec->videoParser));
-        CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
+        if (dec->videoParser)
+        {
+            CHECK_CUDA_CALL(cuvidDestroyVideoParser(dec->videoParser));
+        }
+        if (dec->decoder)
+        {
+            CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
+        }
         free(dec);
     }
 }

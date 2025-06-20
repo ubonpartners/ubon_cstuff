@@ -553,7 +553,10 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         std::vector<std::vector<uint16_t>> keptPerBatch;
         keptPerBatch.reserve(nc);
         for (int cl = 0; cl < nc; ++cl)
+        {
+            //printf("%d %d kept %d\n",b,cl,(int)keptIndices[b * nc + cl].size());
             keptPerBatch.push_back(keptIndices[b * nc + cl]);
+        }
 
         cuda_nms_gather_kept_outputs(
             /*deviceOutputDev=*/ ((float*)inf->output_mem)+b*numBoxes*columns,

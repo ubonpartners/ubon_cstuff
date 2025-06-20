@@ -26,8 +26,6 @@ BYTETracker::BYTETracker(const char *yaml_config/*float new_track_thresh,
 	frame_id = 0;
 	last_time = 0;
 
-	cout << "Init ByteTrack!" << endl;
-
 }
 
 BYTETracker::~BYTETracker()

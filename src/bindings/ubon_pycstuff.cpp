@@ -277,7 +277,7 @@ static py::object convert_detections(detections_t *dets)
 
 class c_infer {
 private:
-    py::list convert_detections_batch(image_t** imgs, int num) {
+    py::list infer_and_convert_batch(image_t** imgs, int num) {
         std::vector<detections_t*> dets(num, nullptr);
         infer_batch(inf, imgs, dets.data(), num);
 
@@ -290,6 +290,7 @@ private:
             }
             all_results.append(results);
         }
+        //print_detection_stats();
         return all_results;
     }
 public:
@@ -309,7 +310,7 @@ public:
     py::list run(std::shared_ptr<c_image> image_obj) {
         image_t* img = image_obj->raw();
         image_t* img_arr[1] = { img };
-        py::list result = convert_detections_batch(img_arr, 1);
+        py::list result = infer_and_convert_batch(img_arr, 1);
         return result[0].cast<py::list>();  // return the first (and only) result
     }
 
@@ -319,7 +320,7 @@ public:
         for (int i = 0; i < num; ++i) {
             img_ptrs[i] = images[i]->raw();
         }
-        return convert_detections_batch(img_ptrs.data(), num);
+        return infer_and_convert_batch(img_ptrs.data(), num);
     }
 
     void configure(py::dict cfg_dict) {

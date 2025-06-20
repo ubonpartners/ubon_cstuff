@@ -408,6 +408,7 @@ image_t *image_convert(image_t *img, image_format_t format)
         //log_debug("convert direct");
         image_t *ret=c->convert_direct(img, format);
         //log_debug("ok");
+        ret->timestamp=img->timestamp;
         return ret;
     }
     else if (c->convert_intermediate!=IMAGE_FORMAT_NONE)
@@ -417,6 +418,7 @@ image_t *image_convert(image_t *img, image_format_t format)
         image_t *ret=image_convert(intermediate, format);
         destroy_image(intermediate);
         //log_debug("OK!");
+        ret->timestamp=img->timestamp;
         return ret;
     }
 

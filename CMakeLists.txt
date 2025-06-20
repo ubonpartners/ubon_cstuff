@@ -36,10 +36,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_COMPILER /usr/bin/gcc-11)
 set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 
-set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type")
-set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O1")
-set(CMAKE_C_FLAGS_DEBUG "-g3 -O1")
-set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O1")  # For CUDA debugging
+#set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type")
+set(CMAKE_CXX_FLAGS "-g -O2")
+#set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O1")
+#set(CMAKE_C_FLAGS_DEBUG "-g3 -O1")
+#set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O1")  # For CUDA debugging
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -x c++")  # treat .c files as C++
 
@@ -147,6 +148,7 @@ set(APP_MAIN_FILES
     ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
     ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
     ${CMAKE_SOURCE_DIR}/src/apps/run_tests.c
+    ${CMAKE_SOURCE_DIR}/src/apps/track_benchmark.c
     ${CMAKE_SOURCE_DIR}/src/apps/track_test.c
     ${CMAKE_SOURCE_DIR}/src/apps/warp_test.c
 )

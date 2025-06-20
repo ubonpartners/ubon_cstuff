@@ -24,7 +24,7 @@ static void track_result(void *context, track_results_t *r)
     printf("result type %d\n",r->result_type);
     if (r->track_dets!=0)
     {
-        show_detections(r->track_dets);
+        //show_detections(r->track_dets);
         image_t *img=image_reference(s->img);
         image_t *out_frame_rgb=draw_detections(r->track_dets, img);
         display_image("video", out_frame_rgb);
@@ -39,7 +39,7 @@ static void process_image(void *context, image_t *img)
     image_t *old_img=s->img;
     s->img=image_reference(img);
     destroy_image(old_img);
-    track_stream_run(s->ts, img, profile_time());
+    track_stream_run_frame_time(s->ts, img);
 }
 
 int main(int argc, char *argv[])
@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
     memset(&s, 0, sizeof(state_t));
     s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_test.yaml");
     s.ts=track_stream_create(s.tss, &s, track_result);
-    track_stream_set_minimum_frame_intervals(s.ts, 0.5, 10.0);
+    track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);
 
     if (argc>1)
     {

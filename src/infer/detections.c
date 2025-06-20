@@ -9,17 +9,49 @@
 #include "image_draw.h"
 #include "infer.h"
 #include "match.h"
+#include "log.h"
+
+typedef struct detection_stats
+{
+    uint64_t outstanding_detections;
+    uint64_t hwm_detections;
+    uint64_t reported_detections;
+} detection_stats_t;
+
+static detection_stats_t detectionstats={};
+
+void print_detection_stats()
+{
+    detection_stats_t *stats=&detectionstats;
+    printf("Detection Stats:\n");
+    printf("    HWM                %lu\n", stats->hwm_detections);
+    printf("    Outstanding        %lu\n", stats->outstanding_detections);
+}
 
 detection_t *detection_create()
 {
     detection_t *d=(detection_t *)malloc(sizeof(detection_t));
     memset(d, 0, sizeof(detection_t));
+    __atomic_add_fetch(&detectionstats.outstanding_detections, 1, __ATOMIC_RELAXED);
+    if (detectionstats.outstanding_detections>detectionstats.hwm_detections)
+    {
+        detectionstats.hwm_detections=detectionstats.outstanding_detections;
+        if (detectionstats.hwm_detections>=detectionstats.reported_detections+2000)
+        {
+            log_warn("Detections HWM %d",(int)detectionstats.hwm_detections);
+            detectionstats.reported_detections=detectionstats.hwm_detections;
+        }
+    }
+    d->marker=0xc0ffee;
     return d;
 }
 
-void detection_destroy(detection_t *det)
+void detection_destroy(detection_t *d)
 {
-    free(det);
+    __atomic_sub_fetch(&detectionstats.outstanding_detections, 1, __ATOMIC_RELAXED);
+    assert(d->marker==0xc0ffee);
+    d->marker=0xdeaddead;
+    free(d);
 }
 
 void detections_generate_overlap_masks(detections_t *dets)
@@ -44,6 +76,7 @@ detections_t *create_detections(int max_detections)
 void destroy_detections(detections_t *detections)
 {
     if (!detections) return;
+    for(int i=0;i<detections->num_detections;i++) detection_destroy(detections->det[i]);
     free(detections);
 }
 
@@ -90,30 +123,25 @@ float det_iou(detection_t *deta, detection_t *detb)
 void detections_nms_inplace(detections_t *dets, float iou_thr)
 {
     detections_sort_descending_conf(dets);
-    // NMS - set conf to 0 for 'suppressed' detections
-    for(int i=0;i<dets->num_detections;i++)
+
+    int num_detections=dets->num_detections;
+    for(int i=0;i<num_detections;i++)
     {
         detection_t *det=dets->det[i];
-        for(int j=i+1;j<dets->num_detections;j++)
+        int new_num_detections=i+1;
+        int cl=det->cl;
+        for(int j=i+1;j<num_detections;j++)
         {
             detection_t *det1=dets->det[j];
-            if ((det1->cl==det->cl)&&(det1->conf!=0))
-            {
-                if (det_iou(det, det1)>iou_thr) det1->conf=0;
-            }
+            bool kill=(det1->cl==cl)&&(det_iou(det, det1)>iou_thr);
+            if (!kill)
+                dets->det[new_num_detections++]=det1;
+            else
+                detection_destroy(det1);
         }
+        num_detections=new_num_detections;
     }
-    // delete detections where we set the confidence to 0
-    int num_out=0;
-    for(int i=0;i<dets->num_detections;i++)
-    {
-        detection_t *det=dets->det[i];
-        if (det->conf>0)
-            dets->det[num_out++]=det;
-        else
-            detection_destroy(det);
-    }
-    dets->num_detections=num_out;
+    dets->num_detections=num_detections;
 }
 
 static void draw_detection(detection_t *d, image_t *img)
@@ -557,12 +585,12 @@ int match_box_iou(
     assert(num_dets_b<=MAX_DETS);
     for(int i=0;i<num_dets_a;i++)
     {
-        detection_t *det=(detection_t *)&dets_a[i];
+        detection_t *det=dets_a[i];
         det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
     }
     for(int i=0;i<num_dets_b;i++)
     {
-        detection_t *det=(detection_t *)&dets_b[i];
+        detection_t *det=dets_b[i];
         det->overlap_mask=box_to_8x8_mask(det->x0, det->y0, det->x1, det->y1);
     }
 

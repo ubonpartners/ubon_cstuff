@@ -119,6 +119,8 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
 void track_stream_destroy(track_stream_t *ts)
 {
     if (!ts) return;
+    pthread_mutex_lock(&ts->run_mutex);
+    pthread_mutex_unlock(&ts->run_mutex);
     motion_track_destroy(ts->mt);
     delete ts->bytetracker;
     pthread_mutex_destroy(&ts->run_mutex);
@@ -179,9 +181,8 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     if (ts->frame_count==0) ts->last_run_time=time-10.0;
 
     assert(time>=ts->last_run_time);
-    time_delta=time-ts->last_run_time;
+    time_delta=time-ts->last_run_time+1e-7;
     ts->frame_count++;
-
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
         track_results_t r;

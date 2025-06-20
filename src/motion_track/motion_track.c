@@ -121,7 +121,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
             float fv=(float)v;
 
             float nf=mt->noise_floor[x+y*block_w];
-            float f=(fv<nf) ? 0.9f : 0.995f;
+            float f=(fv<nf) ? 0.8f : 0.995f;
             nf=nf*f+v*(1.0-f);
             mt->noise_floor[x+y*block_w]=nf;
 

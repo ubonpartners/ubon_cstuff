@@ -18,6 +18,7 @@ typedef struct detection detection_t;
 
 struct detection
 {
+    uint32_t marker;
     // main detection box. co-ords are normalized (0,0)-(1,1)
     // with respect to the original image not the detection ROI
     float x0,y0,x1,y1;
@@ -74,6 +75,7 @@ typedef struct detections
 
 detection_t *detection_create();
 void detection_destroy(detection_t *det);
+void print_detection_stats();
 
 detections_t *create_detections(int max_detections);
 detections_t *load_detections(const char *filename);

@@ -35,6 +35,7 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
             dst->width, dst->height,
             libyuv::kFilterBilinear
             );
+    dst->timestamp=src->timestamp;
     return dst;
 }
 
@@ -51,6 +52,7 @@ static image_t *image_scale_half(image_t *src)
         cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
         cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
     }
+    inter->timestamp=src->timestamp;
     return inter;
 }
 
@@ -64,7 +66,7 @@ static image_t *image_scale_nv12_device(image_t *src, int width, int height)
     ResizeNv12(dst->y, dst->stride_y, dst->width, dst->height,
         src->y, src->stride_y, src->width, src->height,
         0, &dst->stream);
-
+    dst->timestamp=src->timestamp;
     /*NppiSize srcSize = {src->width, src->height};
     NppiRect srcROI = {0, 0, src->width, src->height};
     NppiRect dstROI = {0, 0, dst->width, dst->height};
@@ -92,6 +94,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
         {
             image_t *inter=image_scale_half(src);
             image_t *ret=image_scale_yuv420_device(inter, width, height);
+            ret->timestamp=src->timestamp;
             destroy_image(inter);
             return ret;
         }
@@ -135,6 +138,7 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
                                 dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
                                 interpolationMode, nppStreamCtx));
     }
+    dst->timestamp=src->timestamp;
     return dst;
 }
 
@@ -156,7 +160,7 @@ static image_t *image_scale_rgb24_device(image_t *src, int width, int height)
 
     CHECK_NPPcall(nppiResize_8u_C3R_Ctx(src->rgb, src->stride_rgb, srcSize, srcROI,
         dst->rgb, dst->stride_rgb, dstSize, dstROI, interpolationMode, nppStreamCtx));
-
+    dst->timestamp=src->timestamp;
     return dst;
 }
 
@@ -168,6 +172,7 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
     image_t *scaled=image_scale(image_tmp, width, height);
     assert(scaled!=0);
     destroy_image(image_tmp);
+    scaled->timestamp=img->timestamp;
     return scaled;
 }
 
