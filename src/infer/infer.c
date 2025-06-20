@@ -20,7 +20,7 @@
 #include "cuda_kernels.h"
 #include "log.h"
 #include "cuda_nms.h"
-#include "yaml.h"
+#include "yaml_stuff.h"
 
 #define debugf if (0) printf
 

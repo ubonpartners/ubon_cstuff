@@ -11,7 +11,7 @@
 #include "ctpl_stl.h"
 #include "cuda_stuff.h"
 #include "BYTETracker.h"
-#include "yaml.h"
+#include "yaml_stuff.h"
 
 #define debugf if (0) log_debug
 

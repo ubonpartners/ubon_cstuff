@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <cassert>
 #include <cstring>
-#include "yaml.h"
+#include "yaml_stuff.h"
 #include "log.h"
 
 YAML::Node yaml_load(const char* input)

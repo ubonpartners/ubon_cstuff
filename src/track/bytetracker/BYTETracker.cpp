@@ -1,5 +1,5 @@
 #include "BYTETracker.h"
-#include "yaml.h"
+#include "yaml_stuff.h"
 #include <fstream>
 
 BYTETracker::BYTETracker(const char *yaml_config/*float new_track_thresh,
