@@ -137,6 +137,7 @@ __global__ static void doSuppressionKernel(
     const unsigned long long* __restrict__ maskWords, // [numBoxes × memStride]
     int                             numBoxes,
     int                             memStride,
+    int                             dynStride,
     int                             maxOut,
     int*            __restrict__    outKeepCount,      // scalar
     uint16_t*       __restrict__    outKeepIdx         // [maxOut]
@@ -144,7 +145,7 @@ __global__ static void doSuppressionKernel(
     extern __shared__ unsigned long long s_globalSuppress[];
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-    for (int w = 0; w < memStride; ++w) {
+    for (int w = 0; w < dynStride; ++w) {
         s_globalSuppress[w] = 0ULL;
     }
     int keepCnt = 0;
@@ -156,7 +157,7 @@ __global__ static void doSuppressionKernel(
                 outKeepIdx[keepCnt] = sortedIdx[i];
             }
             keepCnt++;
-            for (int w = wordIdx; w < memStride; ++w) {
+            for (int w = wordIdx; w < dynStride; ++w) {
                 s_globalSuppress[w] |= maskWords[i * memStride + w];
             }
         }
@@ -355,6 +356,7 @@ void cuda_nms_run(
                 ws->d_mask + c * ws->maxBoxes * memStride,
                 h_numCand,
                 memStride,
+                dynStride,
                 maxOutPerClass,
                 ws->d_keepCount + c,
                 ws->d_keptIdx + (size_t)c * maxOutPerClass);
