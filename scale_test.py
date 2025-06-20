@@ -1,15 +1,15 @@
 import numpy as np
 import ubon_pycstuff.ubon_pycstuff as upyc
-import cv2
+from PIL import Image
 import stuff
 
 
 def scale_test(jpeg_file):
     upyc.cuda_set_sync_mode(False, False)
-    for size in [(640,480), (352,288)]:
-        bgr_img = cv2.imread(jpeg_file)
-        bgr_img = cv2.resize(bgr_img, size, interpolation=cv2.INTER_AREA)
-        rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    for size in [(640, 480), (352, 288)]:
+        img = Image.open(jpeg_file).convert("RGB")
+        img = img.resize(size, Image.LANCZOS)
+        rgb_img = np.asarray(img)
 
         img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
         print("Image scale size",size)

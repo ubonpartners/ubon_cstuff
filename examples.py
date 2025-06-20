@@ -1,6 +1,6 @@
 import numpy as np
 import ubon_pycstuff.ubon_pycstuff as upyc
-import cv2
+from PIL import Image
 import stuff
 import time
 import os
@@ -38,8 +38,7 @@ def argument_parser():
     return args
 
 def basic_test(jpeg_file="/mldata/image/arrest.jpg"):
-    bgr_img = cv2.imread(jpeg_file)
-    rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    rgb_img = np.asarray(Image.open(jpeg_file).convert("RGB"))
 
     # copy image to C domain
     img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
@@ -48,15 +47,11 @@ def basic_test(jpeg_file="/mldata/image/arrest.jpg"):
     img_scaled = img.scale(1280, 720) # implicily will get copied to GPU and converted to YUV420
 
     # copy back and display
-    round_trip_bgr = cv2.cvtColor(img_scaled.to_numpy(), cv2.COLOR_RGB2BGR)
-
-    cv2.imshow("Round-trip image", round_trip_bgr)
-    cv2.waitKey(5000)
-    cv2.destroyAllWindows()
+    Image.fromarray(img_scaled.to_numpy()).show()
+    time.sleep(5)
 
 def basic_test_mono(jpeg_file="/mldata/image/arrest.jpg"):
-    bgr_img = cv2.imread(jpeg_file)
-    rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    rgb_img = np.asarray(Image.open(jpeg_file).convert("RGB"))
     # copy image to C domain
     img = upyc.c_image.from_numpy(rgb_img)
     img=img.convert(upyc.YUV420_DEVICE)
@@ -72,8 +67,7 @@ def basic_test_mono(jpeg_file="/mldata/image/arrest.jpg"):
     time.sleep(10)
 
 def test_inference(jpeg_file="/mldata/image/arrest.jpg", trt_model="/mldata/weights/trt/yolo11l-dpa-131224.trt"):
-    bgr_img = cv2.imread(jpeg_file)
-    rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    rgb_img = np.asarray(Image.open(jpeg_file).convert("RGB"))
     img = upyc.c_image.from_numpy(rgb_img) # will be RGB24_HOST
     print(img)
 

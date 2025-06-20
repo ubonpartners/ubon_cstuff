@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import av
 import numpy as np
-import cv2
+from skimage.transform import resize
 import ubon_pycstuff.ubon_pycstuff as upyc
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
@@ -56,8 +56,8 @@ def compare_decode():
     #v="/mldata/video/operahouse.264"#
     v="/mldata/video/MOT20-05.264"
     ref=decode_frame_ref(v, 0)
-    ref=cv2.resize(ref, (1280, 720), interpolation=cv2.INTER_LINEAR)
-    ref=cv2.resize(ref, (552, 360), interpolation=cv2.INTER_LINEAR)
+    ref = resize(ref, (720, 1280, 3), order=1, preserve_range=True).astype(np.uint8)
+    ref = resize(ref, (360, 552, 3), order=1, preserve_range=True).astype(np.uint8)
     decoder = upyc.c_decoder()
     with open(v, "rb") as f:
         bitstream = f.read()
