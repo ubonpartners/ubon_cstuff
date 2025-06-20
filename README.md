@@ -54,6 +54,10 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - sudo apt install libyaml-cpp-dev
 - sudo apt install pybind11-dev
 - sudo apt install libopenh264-dev
+- sudo apt install libsrtp2-dev
+- sudo apt install libpcap-dev
+- sudo apt install libeigen3-dev
+- sudo apt install libnvjpeg-dev-12-6
 - sudo apt install libnvvpi3 vpi3-dev vpi3-samples
 
 ---
