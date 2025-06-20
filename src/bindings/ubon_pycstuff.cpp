@@ -249,6 +249,26 @@ static py::list convert_roi(roi_t roi)
     return box;
 }
 
+static py::dict convert_model_description(model_description_t* desc) {
+    if (!desc) throw std::runtime_error("Failed to get model description");
+    py::dict d;
+    d["class_names"] = py::cast(desc->class_names);
+    d["person_attribute_names"] = py::cast(desc->person_attribute_names);
+    d["num_classes"] = desc->num_classes;
+    d["num_person_attributes"] = desc->num_person_attributes;
+    d["num_keypoints"] = desc->num_keypoints;
+    d["max_batch"] = desc->max_batch;
+    d["input_is_fp16"] = desc->input_is_fp16;
+    d["output_is_fp16"] = desc->output_is_fp16;
+    d["min_w"] = desc->min_w;
+    d["max_w"] = desc->max_w;
+    d["min_h"] = desc->min_h;
+    d["max_h"] = desc->max_h;
+    d["model_output_dims"] = py::make_tuple(desc->model_output_dims[0], desc->model_output_dims[1], desc->model_output_dims[2]);
+    d["engineInfo"] = desc->engineInfo;
+    return d;
+}
+
 static py::object convert_detections(detections_t *dets)
 {
     if (!dets)
@@ -330,32 +350,7 @@ public:
     }
 
     py::dict get_model_description() {
-    model_description_t* desc = infer_get_model_description(inf);
-        if (!desc) {
-            throw std::runtime_error("Failed to get model description");
-        }
-
-        py::dict d;
-        d["class_names"] = py::cast(desc->class_names);
-        d["person_attribute_names"] = py::cast(desc->person_attribute_names);
-        d["num_classes"] = desc->num_classes;
-        d["num_person_attributes"] = desc->num_person_attributes;
-        d["num_keypoints"] = desc->num_keypoints;
-        d["max_batch"] = desc->max_batch;
-        d["reid_vector_len"] = desc->reid_vector_len;
-        d["input_is_fp16"] = desc->input_is_fp16;
-        d["output_is_fp16"] = desc->output_is_fp16;
-        d["min_w"] = desc->min_w;
-        d["max_w"] = desc->max_w;
-        d["min_h"] = desc->min_h;
-        d["max_h"] = desc->max_h;
-        d["model_output_dims" ]=py::make_tuple(
-            desc->model_output_dims[0],
-            desc->model_output_dims[1],
-            desc->model_output_dims[2]
-         );
-        d["engineInfo"]=desc->engineInfo;
-        return d;
+        return convert_model_description(infer_get_model_description(inf));
     }
 
     infer_t* raw() { return inf; }
@@ -457,25 +452,7 @@ public:
     }
 
     py::dict get_model_description() {
-        model_description_t* desc = infer_thread_get_model_description(thread);
-        if (!desc) throw std::runtime_error("Failed to get model description");
-
-        py::dict d;
-        d["class_names"] = py::cast(desc->class_names);
-        d["person_attribute_names"] = py::cast(desc->person_attribute_names);
-        d["num_classes"] = desc->num_classes;
-        d["num_person_attributes"] = desc->num_person_attributes;
-        d["num_keypoints"] = desc->num_keypoints;
-        d["max_batch"] = desc->max_batch;
-        d["input_is_fp16"] = desc->input_is_fp16;
-        d["output_is_fp16"] = desc->output_is_fp16;
-        d["min_w"] = desc->min_w;
-        d["max_w"] = desc->max_w;
-        d["min_h"] = desc->min_h;
-        d["max_h"] = desc->max_h;
-        d["model_output_dims"] = py::make_tuple(desc->model_output_dims[0], desc->model_output_dims[1], desc->model_output_dims[2]);
-        d["engineInfo"] = desc->engineInfo;
-        return d;
+        return convert_model_description(infer_thread_get_model_description(thread));
     }
 };
 
@@ -666,9 +643,9 @@ class c_decoder {
         uint64_t dec_time;
         uint64_t dec_time_increment;
 
-        c_decoder() {
+        c_decoder(simple_decoder_codec_t codec) {
             // Create the decoder, register our static callback, pass `this` as context
-            dec = simple_decoder_create(this, &c_decoder::on_frame_static, SIMPLE_DECODER_CODEC_H264);
+            dec = simple_decoder_create(this, &c_decoder::on_frame_static, codec);
             dec_time=0;
             dec_time_increment=90000/30;
             if (!dec) {
@@ -798,6 +775,10 @@ public:
             track_shared_state_destroy(state);
     }
 
+    py::dict get_model_description() {
+        return  convert_model_description(track_shared_state_get_model_description(state));
+    }
+
     track_shared_state_t* get() const { return state; }
 
 private:
@@ -826,6 +807,10 @@ public:
     void run_on_images(const std::vector<std::shared_ptr<c_image>>& images) {
         for (const auto& img : images)
             track_stream_run_frame_time(stream, img->raw());
+    }
+
+    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps) {
+        track_stream_run_video_file(stream, file, codec, video_fps);
     }
 
     std::vector<py::dict> get_results() {
@@ -971,16 +956,23 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .export_values();
 
     py::class_<PyTrackSharedState, std::shared_ptr<PyTrackSharedState>>(m, "c_track_shared_state")
-        .def(py::init<const std::string&>());
+        .def(py::init<const std::string&>())
+        .def("get_model_description", &PyTrackSharedState::get_model_description);
 
     py::class_<PyTrackStream>(m, "c_track_stream")
         .def(py::init<std::shared_ptr<PyTrackSharedState>>(), py::arg("shared_state"))
         .def("set_frame_intervals", &PyTrackStream::set_frame_intervals)
         .def("run_on_images", &PyTrackStream::run_on_images)
+        .def("run_on_video_file", &PyTrackStream::run_on_video_file)
         .def("get_results", &PyTrackStream::get_results);
 
+    py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
+        .value("SIMPLE_DECODER_CODEC_H264", SIMPLE_DECODER_CODEC_H264)
+        .value("SIMPLE_DECODER_CODEC_H265", SIMPLE_DECODER_CODEC_H265)
+        .export_values();
+
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
-        .def(py::init<>())
+        .def(py::init<simple_decoder_codec_t>())
         .def("decode", &c_decoder::decode, py::arg("bitstream"));
 
     py::class_<c_nvof, std::shared_ptr<c_nvof>>(m, "c_nvof")

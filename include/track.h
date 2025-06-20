@@ -9,6 +9,7 @@ typedef struct track_results track_results_t;;
 
 #include "image.h"
 #include "detections.h"
+#include "simple_decoder.h"
 
 typedef enum result_type
 {
@@ -33,12 +34,16 @@ struct track_results
 
 track_shared_state_t *track_shared_state_create(const char *yaml_config);
 void track_shared_state_destroy(track_shared_state_t *tss);
+model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss);
 
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
 void track_stream_destroy(track_stream_t *ts);
+// most low-level run interface, can specify img and seperate time (img can be null to just advance time)
 void track_stream_run(track_stream_t *ts, image_t *img, double time);
-void track_stream_run_frame_time(track_stream_t *ts, image_t *img); // takes time from img->timestamp - be sure it's monotonic!
+// simple run interface which processes a whole .264 or .265 stream
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps);
+// run interface which takes time from img->timestamp - be sure it's monotonic!
+void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
 std::vector<track_results_t> track_stream_get_results(track_stream_t *ts);
-
 #endif

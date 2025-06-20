@@ -147,6 +147,7 @@ __global__ static void doSuppressionKernel(
         s_globalSuppress[w] = 0ULL;
     }
     int keepCnt = 0;
+
     for (int i = 0; i < numBoxes; ++i) {
         int wordIdx = i >> 6, bitIdx = i & 63;
         if ((s_globalSuppress[wordIdx] & (1ULL << bitIdx)) == 0ULL) {
@@ -154,7 +155,7 @@ __global__ static void doSuppressionKernel(
                 outKeepIdx[keepCnt] = sortedIdx[i];
             }
             keepCnt++;
-            for (int w = 0; w < memStride; ++w) {
+            for (int w = wordIdx; w < memStride; ++w) {
                 s_globalSuppress[w] |= maskWords[i * memStride + w];
             }
         }

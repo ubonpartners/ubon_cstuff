@@ -38,7 +38,7 @@ detection_t *detection_create()
         detectionstats.hwm_detections=detectionstats.outstanding_detections;
         if (detectionstats.hwm_detections>=detectionstats.reported_detections+2000)
         {
-            log_warn("Detections HWM %d",(int)detectionstats.hwm_detections);
+            log_debug("Detections HWM %d",(int)detectionstats.hwm_detections);
             detectionstats.reported_detections=detectionstats.hwm_detections;
         }
     }

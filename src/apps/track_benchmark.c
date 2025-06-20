@@ -176,3 +176,15 @@ int main(int argc, char *argv[]) {
         }
     }
 }
+
+/*
+Video                                  bc1.264 thr:    1 fps:  300 fps (nonskip):  271
+Video                                  bc1.264 thr:    2 fps:  321 fps (nonskip):  293
+Video                                  bc1.264 thr:    4 fps:  486 fps (nonskip):  437
+Video                                  bc1.264 thr:    8 fps:  631 fps (nonskip):  532
+Video                             MOT20-05.264 thr:    1 fps:  167 fps (nonskip):  150
+Video                             MOT20-05.264 thr:    2 fps:  245 fps (nonskip):  218
+Video                             MOT20-05.264 thr:    4 fps:  317 fps (nonskip):  275
+Video                             MOT20-05.264 thr:    8 fps:  366 fps (nonskip):  331
+
+*/
