@@ -10,6 +10,9 @@
 #include "cuda_stuff.h"
 #include "log.h"
 
+#define MAX_DECODE_W    3840
+#define MAX_DECODE_H    2160
+
 #if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 struct simple_decoder
 {
@@ -47,6 +50,12 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         dec->coded_width = pFormat->coded_width;
         dec->coded_height = pFormat->coded_height;
 
+        if ((pFormat->coded_width>MAX_DECODE_W)||(pFormat->coded_height>MAX_DECODE_H))
+        {
+            log_error("cuda decode cannot decode (too big) %dx%d",pFormat->coded_width,pFormat->coded_height);
+            return 0;
+        }
+
         if (dec->target_width==0)
         {
             dec->out_width=pFormat->display_area.right-pFormat->display_area.left;
@@ -68,12 +77,12 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.CodecType = pFormat->codec;
         decodeCreateInfo.ulWidth = pFormat->coded_width;
         decodeCreateInfo.ulHeight = pFormat->coded_height;
-        decodeCreateInfo.ulTargetWidth = dec->out_width;//pFormat->coded_width;
-        decodeCreateInfo.ulTargetHeight = dec->out_height;//pFormat->coded_height;
-        decodeCreateInfo.ulMaxWidth = 1920;
-        decodeCreateInfo.ulMaxHeight = 1088;
-        decodeCreateInfo.ulNumDecodeSurfaces = 8;
-        decodeCreateInfo.ulNumOutputSurfaces = 2;
+        decodeCreateInfo.ulTargetWidth = dec->out_width;
+        decodeCreateInfo.ulTargetHeight = dec->out_height;
+        decodeCreateInfo.ulMaxWidth = pFormat->coded_width;
+        decodeCreateInfo.ulMaxHeight = pFormat->coded_height;
+        decodeCreateInfo.ulNumDecodeSurfaces = 1+pFormat->min_num_decode_surfaces;
+        decodeCreateInfo.ulNumOutputSurfaces = 1;
         decodeCreateInfo.display_area.left=pFormat->display_area.left;
         decodeCreateInfo.display_area.top=pFormat->display_area.top;
         decodeCreateInfo.display_area.right=pFormat->display_area.right;
@@ -81,7 +90,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.ChromaFormat = pFormat->chroma_format;
         decodeCreateInfo.OutputFormat = cudaVideoSurfaceFormat_NV12;
         decodeCreateInfo.bitDepthMinus8 = pFormat->bit_depth_luma_minus8;
-        decodeCreateInfo.DeinterlaceMode = cudaVideoDeinterlaceMode_Adaptive;
+        decodeCreateInfo.DeinterlaceMode = cudaVideoDeinterlaceMode_Weave;
         decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUVID;
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
@@ -108,7 +117,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     CUdeviceptr decodedFrame=0;
     CUVIDPROCPARAMS videoProcessingParameters = {};
     videoProcessingParameters.progressive_frame = pDispInfo->progressive_frame;
-    videoProcessingParameters.second_field =  (pDispInfo->repeat_first_field != 0);;
+    videoProcessingParameters.second_field =  (pDispInfo->repeat_first_field != 0);
     videoProcessingParameters.top_field_first = pDispInfo->top_field_first;
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     videoProcessingParameters.output_stream = dec_img->stream;
@@ -149,7 +158,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
     videoParserParams.CodecType = (codec==SIMPLE_DECODER_CODEC_H264) ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC;
-    videoParserParams.ulMaxNumDecodeSurfaces = 8;//
+    videoParserParams.ulMaxNumDecodeSurfaces = 4;//
     videoParserParams.ulClockRate = 1000;
     videoParserParams.ulErrorThreshold = 100;
     videoParserParams.ulMaxDisplayDelay = 0;

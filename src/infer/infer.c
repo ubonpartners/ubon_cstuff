@@ -728,7 +728,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        log_debug("Infer reallocate output memory [%d bytes]\n",max_output_size);
+        log_debug("Infer reallocate output memory [%d bytes, sz %dx%dx%d]\n",max_output_size,num,infer_h,infer_w);
         if (inf->output_mem)
         {
             CHECK_CUDART_CALL(cudaFree(inf->output_mem));

@@ -11,6 +11,7 @@
 #include "ctpl_stl.h"
 #include "cuda_stuff.h"
 #include "BYTETracker.h"
+#include "simple_decoder.h"
 #include "yaml.h"
 
 #define debugf if (0) log_debug
@@ -22,6 +23,7 @@ struct track_shared_state
     int num_worker_threads;
     float motiontrack_min_roi;
     infer_thread_t *infer_thread;
+    model_description_t *md;
     ctpl::thread_pool *thread_pool;
 };
 
@@ -42,6 +44,7 @@ struct track_stream
     double min_time_delta_full_roi;
     roi_t motion_roi;
     roi_t inference_roi;
+    roi_t tracked_object_roi;
     detections_t *inference_detections;
     //
     std::vector<track_results_t> track_results;
@@ -84,10 +87,16 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     config.nms_thr=yaml_base["nms_thresh"].as<float>();
     config.set_nms_thr=true;
     tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml, &config);
+    tss->md=infer_thread_get_model_description(tss->infer_thread);
     free((void*)inference_yaml);
 
     // done
     return tss;
+}
+
+model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss)
+{
+    return tss->md;
 }
 
 void track_shared_state_destroy(track_shared_state_t *tss)
@@ -113,6 +122,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->bytetracker=new BYTETracker(tss->config_yaml);
     ts->min_time_delta_process=0.0;
     ts->min_time_delta_full_roi=120.0;
+    ts->tracked_object_roi=ROI_ZERO;
     return ts;
 }
 
@@ -150,6 +160,25 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     r.motion_roi=ts->motion_roi;
     r.inference_roi=ts->inference_roi;
 
+    if (r.track_dets->num_detections!=0)
+    {
+        float x0=1.0;
+        float x1=0.0;
+        float y0=1.0;
+        float y1=0.0;
+        for(int i=0;i<r.track_dets->num_detections;i++)
+        {
+            x0=std::min(x0, r.track_dets->det[i]->x0);
+            y0=std::min(y0, r.track_dets->det[i]->y0);
+            x1=std::min(x1, r.track_dets->det[i]->x1);
+            y1=std::min(y1, r.track_dets->det[i]->y1);
+        }
+        ts->tracked_object_roi.box[0]=x0;
+        ts->tracked_object_roi.box[1]=y0;
+        ts->tracked_object_roi.box[2]=x1;
+        ts->tracked_object_roi.box[3]=y1;
+    }
+
     process_results(ts, &r);
     pthread_mutex_unlock(&ts->run_mutex);
 }
@@ -185,6 +214,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     ts->frame_count++;
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
+        if (img!=0) destroy_image(img);
         track_results_t r;
         memset(&r, 0, sizeof(track_results_t));
         r.result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
@@ -230,7 +260,11 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     // now we are definitely doing a full run
     ts->last_run_time=time;
     ts->motion_roi=motion_roi;
-    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, motion_roi, infer_done_callback, ts);
+
+    roi_t expanded_roi=motion_roi;
+    if (roi_area(&ts->tracked_object_roi)>0) expanded_roi=roi_union(expanded_roi, ts->tracked_object_roi);
+
+    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
     destroy_image(image_scaled);
 }
 
@@ -247,6 +281,35 @@ void track_stream_run_frame_time(track_stream_t *ts, image_t *img)
     assert(img!=0);
     double time=img->timestamp/90000.0;
     track_stream_run(ts, img, time);
+}
+
+static void track_run_video_process_image(void *context, image_t *img)
+{
+    track_stream_t *ts=(track_stream_t *)context;
+    if (img!=0) track_stream_run_frame_time(ts, img);
+}
+
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps)
+{
+    FILE *input = fopen(file, "rb");
+    if (!input)
+    {
+        log_error("Failed to open input file %s", input);
+        return;
+    }
+
+    simple_decoder_t *decoder = simple_decoder_create(ts, track_run_video_process_image, codec);
+    simple_decoder_set_framerate(decoder, video_fps);
+
+    uint8_t buffer[4096];
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0)
+    {
+        simple_decoder_decode(decoder, buffer, bytes_read);
+    }
+
+    simple_decoder_destroy(decoder);
+    fclose(input);
 }
 
 std::vector<track_results_t> track_stream_get_results(track_stream_t *ts)

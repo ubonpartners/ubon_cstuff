@@ -76,6 +76,7 @@ static void allocate_image_device_mem(image_t *img, int size)
     __atomic_add_fetch(&memstats.total_device_allocations, 1, __ATOMIC_RELAXED);
     atomic_max_u64(&memstats.hwm_device_mem, memstats.outstanding_device_mem);
     atomic_max_u64(&memstats.hwm_device_allocations, memstats.outstanding_device_allocations);
+    //printf("%d OUTST %5.2fMB\n",(int)memstats.hwm_device_allocations,(float)(memstats.outstanding_device_mem/(1024*1024.0)));
     if (async_cuda_mem)
     {
         CHECK_CUDART_CALL(cudaMallocAsync((void**)&img->device_mem, (size_t)size, img->stream));
