@@ -104,6 +104,7 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     if (!tss) return;
     tss->thread_pool->stop();
     delete tss->thread_pool;
+    infer_thread_destroy(tss->infer_thread);
     free((void *)tss->config_yaml);
     free(tss);
 }
@@ -212,6 +213,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     assert(time>=ts->last_run_time);
     time_delta=time-ts->last_run_time+1e-7;
     ts->frame_count++;
+    //printf("time %f delta %f min %f skip %d\n",time,time_delta,ts->min_time_delta_process,(time_delta<ts->min_time_delta_process));
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
         if (img!=0) destroy_image(img);
@@ -251,6 +253,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
         r.inference_roi=ROI_ZERO;
         r.track_dets=0;
         r.inference_dets=0;
+        ts->last_run_time=time;
 
         process_results(ts, &r);
         pthread_mutex_unlock(&ts->run_mutex);

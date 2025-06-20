@@ -81,8 +81,8 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.ulTargetHeight = dec->out_height;
         decodeCreateInfo.ulMaxWidth = pFormat->coded_width;
         decodeCreateInfo.ulMaxHeight = pFormat->coded_height;
-        decodeCreateInfo.ulNumDecodeSurfaces = 1+pFormat->min_num_decode_surfaces;
-        decodeCreateInfo.ulNumOutputSurfaces = 1;
+        decodeCreateInfo.ulNumDecodeSurfaces = 2+pFormat->min_num_decode_surfaces;
+        decodeCreateInfo.ulNumOutputSurfaces = 2;//1;
         decodeCreateInfo.display_area.left=pFormat->display_area.left;
         decodeCreateInfo.display_area.top=pFormat->display_area.top;
         decodeCreateInfo.display_area.right=pFormat->display_area.right;

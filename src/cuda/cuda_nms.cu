@@ -3,6 +3,7 @@
 // suppression and feature gathering, all using fp16 and uint16_t for internal storage.
 
 #include "cuda_nms.h"
+#include "cuda_stuff.h"
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <cub/cub.cuh>
@@ -223,16 +224,14 @@ CudaNMSHandle cuda_nms_allocate_workspace(
     ws->stream         = stream;
     ws->maxMaskStride  = (maxBoxes + 63) / 64;
 
-    CUDA_CHECK(cudaMalloc(&ws->d_corners,        sizeof(__half)    * maxBoxes * 4));
-    CUDA_CHECK(cudaMalloc(&ws->d_sortedIdx,      sizeof(uint16_t) * maxBoxes * maxClasses));
-    CUDA_CHECK(cudaMalloc(&ws->d_mask,
-        sizeof(unsigned long long) * maxBoxes * ws->maxMaskStride * maxClasses));
-    CUDA_CHECK(cudaMalloc(&ws->d_keepCount,      sizeof(int)       * maxClasses));
-    CUDA_CHECK(cudaMalloc(&ws->d_keptIdx,        sizeof(uint16_t) * maxClasses * maxOutPerClass));
-
-    CUDA_CHECK(cudaMalloc(&ws->d_numCand,        sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&ws->d_filteredIdx,    sizeof(uint16_t) * maxBoxes));
-    CUDA_CHECK(cudaMalloc(&ws->d_filteredScores, sizeof(__half)    * maxBoxes));
+    ws->d_corners=(__half *)cuda_malloc(sizeof(__half)    * maxBoxes * 4);
+    ws->d_sortedIdx=(uint16_t *)cuda_malloc(sizeof(uint16_t) * maxBoxes * maxClasses);
+    ws->d_mask=(unsigned long long *)cuda_malloc(sizeof(unsigned long long) * maxBoxes * ws->maxMaskStride * maxClasses);
+    ws->d_keepCount=(int *)cuda_malloc(sizeof(int)       * maxClasses);
+    ws->d_keptIdx=(uint16_t *)cuda_malloc(sizeof(uint16_t) * maxClasses * maxOutPerClass);
+    ws->d_numCand=(int *)cuda_malloc(sizeof(int));
+    ws->d_filteredIdx=(uint16_t *)cuda_malloc(sizeof(uint16_t) * maxBoxes);
+    ws->d_filteredScores=(__half *)cuda_malloc(sizeof(__half)    * maxBoxes);
 
     // Get required CUB temp size for fp16-key, uint16_t-value sort:
     ws->cubTempBytes = 0;
@@ -243,7 +242,7 @@ CudaNMSHandle cuda_nms_allocate_workspace(
         maxBoxes,
         0, sizeof(__half)*8,
         stream);
-    CUDA_CHECK(cudaMalloc(&ws->d_cubTemp, ws->cubTempBytes));
+    ws->d_cubTemp=cuda_malloc(ws->cubTempBytes);
 
     return (CudaNMSHandle)ws;
 }
@@ -254,15 +253,15 @@ CudaNMSHandle cuda_nms_allocate_workspace(
 void cuda_nms_free_workspace(CudaNMSHandle handle) {
     if (!handle) return;
     auto* ws = (CudaNMSWorkspace_t*)handle;
-    CUDA_CHECK(cudaFree(ws->d_corners));
-    CUDA_CHECK(cudaFree(ws->d_sortedIdx));
-    CUDA_CHECK(cudaFree(ws->d_mask));
-    CUDA_CHECK(cudaFree(ws->d_keepCount));
-    CUDA_CHECK(cudaFree(ws->d_keptIdx));
-    CUDA_CHECK(cudaFree(ws->d_numCand));
-    CUDA_CHECK(cudaFree(ws->d_filteredIdx));
-    CUDA_CHECK(cudaFree(ws->d_filteredScores));
-    CUDA_CHECK(cudaFree(ws->d_cubTemp));
+    cuda_free(ws->d_corners);
+    cuda_free(ws->d_sortedIdx);
+    cuda_free(ws->d_mask);
+    cuda_free(ws->d_keepCount);
+    cuda_free(ws->d_keptIdx);
+    cuda_free(ws->d_numCand);
+    cuda_free(ws->d_filteredIdx);
+    cuda_free(ws->d_filteredScores);
+    cuda_free(ws->d_cubTemp);
     std::free(ws);
 }
 

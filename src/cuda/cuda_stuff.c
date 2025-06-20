@@ -7,8 +7,11 @@
 #include <cassert>
 #include "cuda_stuff.h"
 #include "pthread.h"
+#include "misc.h"
 
 static bool cuda_inited=false;
+static allocation_tracker_t cuda_alloc_tracker;
+static allocation_tracker_t cuda_alloc_host_tracker;
 
 NppStreamContext nppStreamCtx;
 
@@ -91,6 +94,9 @@ void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends
 static void do_cuda_init()
 {
     log_debug("Cuda init");
+
+    allocation_tracker_register(&cuda_alloc_tracker, "cuda alloc");
+    allocation_tracker_register(&cuda_alloc_host_tracker, "cuda alloc host");
 
     // Set the CUDA device
     int device=0;
@@ -212,4 +218,34 @@ void cuda_thread_init()
 
     log_debug("CUDA context initialized on thread %lu (context: %p)",
               (unsigned long)pthread_self(), (void*)ctx);
+}
+
+void *cuda_malloc(size_t size)
+{
+    void *ptr=0;
+    CHECK_CUDART_CALL(cudaMalloc(&ptr, size));
+    track_alloc(&cuda_alloc_tracker, size);
+    return ptr;
+}
+
+void *cuda_malloc_host(size_t size)
+{
+    void *ptr=0;
+    CHECK_CUDART_CALL(cudaMalloc(&ptr, size));
+    track_alloc(&cuda_alloc_host_tracker, size);
+    return ptr;
+}
+
+void cuda_free(void *ptr)
+{
+    if (ptr==0) return;
+    CHECK_CUDART_CALL(cudaFree(ptr));
+    track_free(&cuda_alloc_tracker, 0);
+}
+
+void cuda_free_host(void *ptr)
+{
+    if (ptr==0) return;
+    CHECK_CUDART_CALL(cudaFreeHost(ptr));
+    track_free(&cuda_alloc_host_tracker, 0);
 }

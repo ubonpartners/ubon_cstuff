@@ -173,6 +173,10 @@ int main(int argc, char *argv[]) {
                 << "\n";
 
             std::cout << oss.str();
+
+            char *s=allocation_tracker_stats();
+            printf("%s\n",s);
+            free(s);
         }
     }
 }

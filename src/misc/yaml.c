@@ -65,3 +65,11 @@ int yaml_get_int_value(YAML::Node node, int dv)
     }
     return dv;
 }
+
+bool yaml_get_bool_value(YAML::Node node, bool dv)
+{
+    if (node && node.IsDefined()) {
+        return node.as<bool>();
+    }
+    return dv;
+}

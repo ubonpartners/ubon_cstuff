@@ -20,6 +20,7 @@ struct motion_track
     int block_w, block_h;
     float *noise_floor;
     float mad_delta;
+    bool blur;
     image_t *ref;
     image_t *in_img;
     roi_t roi;
@@ -35,6 +36,7 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->mad_delta=yaml_get_float_value(yaml_base["motiontrack_mad_delta"], 24.0);
     mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);
     mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);
+    mt->blur=yaml_get_bool_value(yaml_base["motiontrack_blur"], true);
     return mt;
 }
 
@@ -64,6 +66,16 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     image_t *image_scaled=image_scale_convert(img, IMAGE_FORMAT_YUV420_DEVICE, scale_w, scale_h);
     image_t *ref=mt->ref;
+
+    if (mt->blur)
+    {
+        image_t *image_blurred=image_blur(image_scaled);
+        if (image_blurred)
+        {
+            destroy_image(image_scaled);
+            image_scaled=image_blurred;
+        }
+    }
 
     if (ref==0 || image_scaled->width!=ref->width || image_scaled->height!=ref->height)
     {

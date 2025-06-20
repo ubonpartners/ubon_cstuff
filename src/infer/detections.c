@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <mutex>
 #include <float.h>  // for FLT_MIN
 #include "assert.h"
 #include "detections.h"
@@ -10,45 +11,28 @@
 #include "infer.h"
 #include "match.h"
 #include "log.h"
+#include "misc.h"
 
-typedef struct detection_stats
+static std::once_flag initFlag;
+static allocation_tracker_t detection_allocation_tracker;
+
+static void detection_init()
 {
-    uint64_t outstanding_detections;
-    uint64_t hwm_detections;
-    uint64_t reported_detections;
-} detection_stats_t;
-
-static detection_stats_t detectionstats={};
-
-void print_detection_stats()
-{
-    detection_stats_t *stats=&detectionstats;
-    printf("Detection Stats:\n");
-    printf("    HWM                %lu\n", stats->hwm_detections);
-    printf("    Outstanding        %lu\n", stats->outstanding_detections);
+    allocation_tracker_register(&detection_allocation_tracker, "detections");
 }
 
 detection_t *detection_create()
 {
     detection_t *d=(detection_t *)malloc(sizeof(detection_t));
     memset(d, 0, sizeof(detection_t));
-    __atomic_add_fetch(&detectionstats.outstanding_detections, 1, __ATOMIC_RELAXED);
-    if (detectionstats.outstanding_detections>detectionstats.hwm_detections)
-    {
-        detectionstats.hwm_detections=detectionstats.outstanding_detections;
-        if (detectionstats.hwm_detections>=detectionstats.reported_detections+2000)
-        {
-            log_debug("Detections HWM %d",(int)detectionstats.hwm_detections);
-            detectionstats.reported_detections=detectionstats.hwm_detections;
-        }
-    }
+    track_alloc(&detection_allocation_tracker, 1);
     d->marker=0xc0ffee;
     return d;
 }
 
 void detection_destroy(detection_t *d)
 {
-    __atomic_sub_fetch(&detectionstats.outstanding_detections, 1, __ATOMIC_RELAXED);
+    track_free(&detection_allocation_tracker, 1);
     assert(d->marker==0xc0ffee);
     d->marker=0xdeaddead;
     free(d);
@@ -65,6 +49,7 @@ void detections_generate_overlap_masks(detections_t *dets)
 
 detections_t *create_detections(int max_detections)
 {
+    std::call_once(initFlag, detection_init);
     int sz=sizeof(detections_t)+max_detections*sizeof(detection_t *);
     detections_t *dets=(detections_t *)malloc(sz);
     if (!dets) return 0;

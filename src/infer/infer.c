@@ -396,12 +396,9 @@ void infer_destroy(infer_t *inf)
     if (inf->ec) delete inf->ec;
     if (inf->engine) delete inf->engine;
     if (inf->runtime) delete inf->runtime;
-    if (inf->output_mem)
-    {
-        CHECK_CUDART_CALL(cudaFree(inf->output_mem));
-    }
+    cuda_free(inf->output_mem);
     inf->output_mem=0;
-    if (inf->output_mem_host) free(inf->output_mem_host);
+    cuda_free_host(inf->output_mem_host);
     inf->output_mem_host=0;
     if (inf->md.engineInfo) free((void*)inf->md.engineInfo);
     free(inf);
@@ -729,12 +726,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     if (max_output_size>inf->output_size)
     {
         log_debug("Infer reallocate output memory [%d bytes, sz %dx%dx%d]\n",max_output_size,num,infer_h,infer_w);
-        if (inf->output_mem)
-        {
-            CHECK_CUDART_CALL(cudaFree(inf->output_mem));
-        }
-        if (inf->output_mem_host) free(inf->output_mem_host);
-        CHECK_CUDART_CALL(cudaMalloc(&inf->output_mem, max_output_size));
+        cuda_free(inf->output_mem);
+        cuda_free_host(inf->output_mem_host);
+        inf->output_mem=cuda_malloc(max_output_size);
         inf->output_mem_host=0;
         inf->output_size=max_output_size;
     }
@@ -760,7 +754,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
     }
     else
     {
-        if (inf->output_mem_host==0) inf->output_mem_host=malloc(inf->output_size);
+        if (inf->output_mem_host==0) inf->output_mem_host=cuda_malloc_host(inf->output_size);
         CHECK_CUDART_CALL(cudaMemcpyAsync(inf->output_mem_host, inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream));
         CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
         float *p=(float *)inf->output_mem_host;
