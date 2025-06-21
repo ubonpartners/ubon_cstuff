@@ -48,7 +48,6 @@ struct image
     uint8_t *u;
     uint8_t *v;
     uint8_t *rgb;
-    volatile int reference_count;
     int stride_y, stride_uv, stride_rgb;
     cudaStream_t stream; // any outstanding work on this surface will put a depency on this stream
     void *device_mem;

@@ -38,6 +38,7 @@ struct track_stream
     uint32_t frame_count;
     motion_track_t *mt;
     BYTETracker *bytetracker;
+    image_format_t stream_image_format;
     //
     double last_run_time;
     double min_time_delta_process;
@@ -45,7 +46,7 @@ struct track_stream
     roi_t motion_roi;
     roi_t inference_roi;
     roi_t tracked_object_roi;
-    detections_t *inference_detections;
+    detection_list_t *inference_detections;
     //
     std::vector<track_results_t> track_results;
 };
@@ -124,7 +125,13 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->min_time_delta_process=0.0;
     ts->min_time_delta_full_roi=120.0;
     ts->tracked_object_roi=ROI_ZERO;
+    ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;//IMAGE_FORMAT_RGB24_DEVICE;
     return ts;
+}
+
+image_format_t track_stream_get_stream_image_format(track_stream_t *ts)
+{
+    return ts->stream_image_format;
 }
 
 void track_stream_destroy(track_stream_t *ts)
@@ -152,7 +159,7 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     memset(&r, 0, sizeof(track_results_t));
 
     motion_track_set_roi(ts->mt, ts->inference_roi);
-    //show_detections(ts->inference_detections);
+    //detection_list_show(ts->inference_detections);
 
     r.result_type=TRACK_FRAME_TRACKED_ROI;
     r.time=ts->last_run_time;
@@ -234,7 +241,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
                          tss->max_width, tss->max_height, &scale_w, &scale_h,
                          10, 8, 8, false);
 
-    image_t *image_scaled=image_scale_convert(img, IMAGE_FORMAT_YUV420_DEVICE, scale_w, scale_h);
+    image_t *image_scaled=image_scale_convert(img, ts->stream_image_format, scale_w, scale_h);
     destroy_image(img);
     motion_track_add_frame(ts->mt, image_scaled);
 

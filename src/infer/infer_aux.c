@@ -10,6 +10,7 @@
 #include <assert.h>
 #include "infer_aux.h"
 #include "solvers.h"
+#include "trt_stuff.h"
 #include <cuda_fp16.h> // for __half
 
 using namespace nvinfer1;
@@ -24,19 +25,9 @@ struct infer_aux {
 
 enum { TRT_OUTPUT_BUFFER_COUNT=1 };
 
-static class Logger : public nvinfer1::ILogger
-{
-public:
-    void log(Severity severity, const char* msg) noexcept
-    {
-        if ((severity == Severity::kERROR) || (severity == Severity::kINTERNAL_ERROR))
-            log_error("[TRT] %s\n",msg);
-        if (severity == Severity::kWARNING)
-            log_warn("[TRT] %s\n",msg);
-    }
-} trt_Logger;
-
 infer_aux_t* infer_aux_create(const char* model_trt) {
+    trt_init();
+
     // Load serialized engine
     FILE* f = fopen(model_trt, "rb");
     if (!f) { perror("fopen"); return nullptr; }
@@ -44,11 +35,13 @@ infer_aux_t* infer_aux_create(const char* model_trt) {
     size_t sz = ftell(f);
     rewind(f);
     void* data = malloc(sz);
-    fread(data, 1, sz, f);
+    assert(sz==fread(data, 1, sz, f));
     fclose(f);
 
     infer_aux_t* inf = (infer_aux_t*)calloc(1, sizeof(*inf));
     inf->runtime = createInferRuntime(trt_Logger);
+    assert(inf->runtime!=0);
+    inf->runtime->setGpuAllocator(&trt_allocator);
     inf->engine  = inf->runtime->deserializeCudaEngine(data, sz);
     free(data);
     assert(inf->engine);

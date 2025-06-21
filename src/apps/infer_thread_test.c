@@ -40,15 +40,15 @@ static void frame_callback(void *context, image_t *img)
     infer_thread_wait_result(ha, &da);
     infer_thread_wait_result(hb, &db);
 
-    detections_t *all_dets=detections_join(da.dets, db.dets);
-    image_t *out_frame=draw_detections(all_dets, img);
+    detection_list_t *all_dets=detection_list_join(da.dets, db.dets);
+    image_t *out_frame=detection_list_draw(all_dets, img);
 
     // uncommend to print detections
-    //show_detections(all_dets);
+    //detection_list_show(all_dets);
 
-    destroy_detections(all_dets);
-    destroy_detections(da.dets);
-    destroy_detections(db.dets);
+    detection_list_destroy(all_dets);
+    detection_list_destroy(da.dets);
+    detection_list_destroy(db.dets);
 
     display_image("video", out_frame);
     destroy_image(out_frame);

@@ -21,6 +21,7 @@
 #include "log.h"
 #include "cuda_nms.h"
 #include "yaml_stuff.h"
+#include "trt_stuff.h"
 
 #define debugf if (0) printf
 
@@ -62,18 +63,6 @@ struct infer
     const char *output_tensor_name;
     model_description_t md;
 };
-
-static class Logger : public nvinfer1::ILogger
-{
-public:
-    void log(Severity severity, const char* msg) noexcept
-    {
-        if ((severity == Severity::kERROR) || (severity == Severity::kINTERNAL_ERROR))
-            log_error("[TRT] %s\n",msg);
-        if (severity == Severity::kWARNING)
-            log_warn("[TRT] %s\n",msg);
-    }
-} trt_Logger;
 
 // Platform specific changes
 static void create_exec_context(infer_t *inf)
@@ -237,6 +226,8 @@ model_description_t *infer_get_model_description(infer_t *inf)
 
 infer_t *infer_create(const char *model, const char *yaml_config)
 {
+    trt_init();
+
     infer_t *inf=(infer_t *)malloc(sizeof(infer_t));
     memset(inf, 0, sizeof(infer_t));
 
@@ -300,6 +291,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
     inf->runtime = createInferRuntime(trt_Logger);
     assert(inf->runtime!=0);
+    inf->runtime->setGpuAllocator(&trt_allocator);
 
     inf->engine = inf->runtime->deserializeCudaEngine(engineData, model_size);
     assert(inf->engine!=0);
@@ -404,9 +396,9 @@ void infer_destroy(infer_t *inf)
     free(inf);
 }
 
-static detections_t *process_detections(infer_t *inf, float *p, int rows, int row_stride)
+static detection_list_t *process_detections(infer_t *inf, float *p, int rows, int row_stride)
 {
-    detections_t *dets=create_detections(inf->max_detections); // output post-NMS detections
+    detection_list_t *dets=detection_list_create(inf->max_detections); // output post-NMS detections
 
     int num_classes=inf->md.num_classes;
     int num_attributes=inf->md.num_person_attributes;
@@ -422,13 +414,13 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
         }
         if (num!=0)
         {
-            detections_t *temp_dets=create_detections(num); // will hold pre-NMS detections for 1 class
+            detection_list_t *temp_dets=detection_list_create(num); // will hold pre-NMS detections for 1 class
             for(int i=0;i<rows;i++)
             {
                 float conf=p[(4+cl)*row_stride+i];
                 if (conf>inf->det_thr)
                 {
-                    detection_t *det=detection_add_end(temp_dets);
+                    detection_t *det=detection_list_add_end(temp_dets);
                     assert(det!=0);
                     if (det)
                     {
@@ -449,9 +441,9 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
                     }
                 }
             }
-            detections_nms_inplace(temp_dets, inf->nms_thr);
-            for(int i=0;i<temp_dets->num_detections;i++) detection_append_copy(dets, temp_dets->det[i]);
-            destroy_detections(temp_dets);
+            detection_list_nms_inplace(temp_dets, inf->nms_thr);
+            for(int i=0;i<temp_dets->num_detections;i++) detection_list_append_copy(dets, temp_dets->det[i]);
+            detection_list_destroy(temp_dets);
         }
     }
 
@@ -506,7 +498,7 @@ static detections_t *process_detections(infer_t *inf, float *p, int rows, int ro
     return dets;
 }
 
-static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int numBoxes, detections_t **dets)
+static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int numBoxes, detection_list_t **dets)
 {
     if (numBoxes>inf->nms_max_boxes)
     {
@@ -566,7 +558,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         float* ptr = hostGathered.data();
         int num_dets=0;
         for(int cl=0;cl<nc;cl++) num_dets+=keptIndices[b*nc+cl].size();
-        dets[b]=create_detections((num_dets<8) ? 8 : num_dets);
+        dets[b]=detection_list_create((num_dets<8) ? 8 : num_dets);
         int num_person_detections=0;
         int num_face_detections=0;
         for(int cl=0;cl<nc;cl++)
@@ -574,7 +566,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
             int n=keptIndices[b*nc+cl].size();
             for(int i=0;i<n;i++)
             {
-                detection_t *det=detection_add_end(dets[b]);
+                detection_t *det=detection_list_add_end(dets[b]);
                 assert(det!=0);
                 float cx=ptr[0];
                 float cy=ptr[1];
@@ -635,7 +627,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
     }
 }
 
-void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
+void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int num)
 {
     // check
     for(int i=0;i<num;i++)
@@ -772,7 +764,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     for(int i=0;i<num;i++)
     {
-        detections_scale_add2(dets[i], 1.0/image_widths[i],
+        detection_list_scale_add2(dets[i], 1.0/image_widths[i],
                                        1.0/image_heights[i],
                                        offs_x[i],
                                        offs_y[i]);
@@ -780,17 +772,17 @@ void infer_batch(infer_t *inf, image_t **img_list, detections_t **dets, int num)
 
     for(int i=0;i<num;i++)
     {
-        detections_generate_overlap_masks(dets[i]);
-        if (inf->do_fuse_face_person) fuse_face_person(dets[i]);
+        detection_list_generate_overlap_masks(dets[i]);
+        if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i]);
     }
 
     destroy_image(inf_image);
     for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
 }
 
-detections_t *infer(infer_t *inf, image_t *img)
+detection_list_t *infer(infer_t *inf, image_t *img)
 {
-    detections_t *ret[1];
+    detection_list_t *ret[1];
     image_t *images[1];
     images[0]=img;
     infer_batch(inf, images, ret, 1);

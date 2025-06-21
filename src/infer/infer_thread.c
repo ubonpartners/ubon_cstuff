@@ -32,7 +32,7 @@ typedef struct infer_job {
 struct infer_thread_result_handle {
     pthread_mutex_t mutex;
     pthread_cond_t cond;
-    detections_t *dets;
+    detection_list_t *dets;
     roi_t inference_roi;
     int done;
 };
@@ -69,7 +69,7 @@ static void *infer_thread_fn(void *arg)
     cuda_thread_init();
 
     // Pre‐allocate fixed‐size arrays on the stack for up to INFER_THREAD_MAX_BATCH jobs
-    detections_t     *dets_arr[INFER_THREAD_MAX_BATCH];
+    detection_list_t     *dets_arr[INFER_THREAD_MAX_BATCH];
     infer_job_t      *jobs[INFER_THREAD_MAX_BATCH];
 
     int max_batch=h->md->max_batch;
@@ -109,8 +109,8 @@ static void *infer_thread_fn(void *arg)
 
         // 4) Now call infer_batch(...) on the batch of `count` images
         //    We assume `infer_batch` has this prototype:
-        //      void infer_batch(infer_t *inf, image_t **imgs, detections_t **dets_out, int num);
-        //    and that it will allocate + return one detections_t* per input image.
+        //      void infer_batch(infer_t *inf, image_t **imgs, detection_list_t **dets_out, int num);
+        //    and that it will allocate + return one detection_list_t* per input image.
         //
 
         image_t *img_cropped[INFER_THREAD_MAX_BATCH];
@@ -136,10 +136,10 @@ static void *infer_thread_fn(void *arg)
 
         for (int i = 0; i < count; ++i)
         {
-            detections_unmap_roi(dets_arr[i], inference_roi[i]);
-            //show_detections(dets_arr[i]);
+            detection_list_unmap_roi(dets_arr[i], inference_roi[i]);
+            //detection_list_show(dets_arr[i]);
         }
-        // 5) Signal each job’s result handle, passing back its own detections_t*
+        // 5) Signal each job’s result handle, passing back its own detection_list_t*
         for (int i = 0; i < count; ++i) {
             destroy_image(img_cropped[i]);
             destroy_image(jobs[i]->img);

@@ -28,8 +28,8 @@ struct track_results
                                      // less than skip_thr then inference/tracking will be skipped. In this
                                      // case inference_roi will be (0,0,0,0) and track_dets/inference_dets 0
     roi_t inference_roi;             // ROI that was used for inference (likely larger than motion_roi)
-    detections_t *track_dets;        // tracker output
-    detections_t *inference_dets;    // raw detection output (for debug)
+    detection_list_t *track_dets;        // tracker output
+    detection_list_t *inference_dets;    // raw detection output (for debug)
 };
 
 track_shared_state_t *track_shared_state_create(const char *yaml_config);
@@ -38,6 +38,8 @@ model_description_t *track_shared_state_get_model_description(track_shared_state
 
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
+// returns the preferred image format for this stream
+image_format_t track_stream_get_stream_image_format(track_stream_t *ts);
 void track_stream_destroy(track_stream_t *ts);
 // most low-level run interface, can specify img and seperate time (img can be null to just advance time)
 void track_stream_run(track_stream_t *ts, image_t *img, double time);

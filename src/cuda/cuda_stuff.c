@@ -8,9 +8,11 @@
 #include "cuda_stuff.h"
 #include "pthread.h"
 #include "misc.h"
+#include "memory_stuff.h"
 
 static bool cuda_inited=false;
 static allocation_tracker_t cuda_alloc_tracker;
+static allocation_tracker_t cuda_alloc_async_tracker;
 static allocation_tracker_t cuda_alloc_host_tracker;
 
 NppStreamContext nppStreamCtx;
@@ -83,7 +85,7 @@ void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends
     {
         CHECK_CUDART_CALL(cudaEventSynchronize(cs.events[index])); // should rarely happen
         cs.event_not_ready++;
-        log_debug("cuda event was not ready %d/%d",cs.event_not_ready,cs.event_ct);
+        log_warn("cuda event was not ready %d/%d",cs.event_not_ready,cs.event_ct);
     }
 
     CHECK_CUDART_CALL(cudaEventRecord(cs.events[index], stream_depends_on));
@@ -95,8 +97,9 @@ static void do_cuda_init()
 {
     log_debug("Cuda init");
 
-    allocation_tracker_register(&cuda_alloc_tracker, "cuda alloc");
-    allocation_tracker_register(&cuda_alloc_host_tracker, "cuda alloc host");
+    allocation_tracker_register(&cuda_alloc_tracker, "cuda alloc", true);
+    allocation_tracker_register(&cuda_alloc_async_tracker, "cuda async alloc", true);
+    allocation_tracker_register(&cuda_alloc_host_tracker, "cuda alloc host", true);
 
     // Set the CUDA device
     int device=0;
@@ -224,15 +227,23 @@ void *cuda_malloc(size_t size)
 {
     void *ptr=0;
     CHECK_CUDART_CALL(cudaMalloc(&ptr, size));
-    track_alloc(&cuda_alloc_tracker, size);
+    track_alloc_table(&cuda_alloc_tracker, size, ptr);
+    return ptr;
+}
+
+void *cuda_malloc_async(size_t size, cudaStream_t stream)
+{
+    void *ptr=0;
+    CHECK_CUDART_CALL(cudaMallocAsync(&ptr, size, stream));
+    track_alloc_table(&cuda_alloc_async_tracker, size, ptr);
     return ptr;
 }
 
 void *cuda_malloc_host(size_t size)
 {
     void *ptr=0;
-    CHECK_CUDART_CALL(cudaMalloc(&ptr, size));
-    track_alloc(&cuda_alloc_host_tracker, size);
+    CHECK_CUDART_CALL(cudaMallocHost(&ptr, size));
+    track_alloc_table(&cuda_alloc_host_tracker, size, ptr);
     return ptr;
 }
 
@@ -240,12 +251,19 @@ void cuda_free(void *ptr)
 {
     if (ptr==0) return;
     CHECK_CUDART_CALL(cudaFree(ptr));
-    track_free(&cuda_alloc_tracker, 0);
+    track_free_table(&cuda_alloc_tracker, ptr);
+}
+
+void cuda_free_async(void *ptr, cudaStream_t stream)
+{
+    if (ptr==0) return;
+    CHECK_CUDART_CALL(cudaFreeAsync(ptr, stream));
+    track_free_table(&cuda_alloc_async_tracker, ptr);
 }
 
 void cuda_free_host(void *ptr)
 {
     if (ptr==0) return;
     CHECK_CUDART_CALL(cudaFreeHost(ptr));
-    track_free(&cuda_alloc_host_tracker, 0);
+    track_free_table(&cuda_alloc_host_tracker, ptr);
 }

@@ -23,6 +23,7 @@ struct simple_decoder
     int target_width;
     int target_height;
     void *context;
+    image_format_t output_format;
     uint64_t time;
     uint64_t time_increment;
     //CUstream stream;
@@ -91,7 +92,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.OutputFormat = cudaVideoSurfaceFormat_NV12;
         decodeCreateInfo.bitDepthMinus8 = pFormat->bit_depth_luma_minus8;
         decodeCreateInfo.DeinterlaceMode = cudaVideoDeinterlaceMode_Weave;
-        decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUVID;
+        decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUDA;//cudaVideoCreate_PreferCUVID;
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
     }
@@ -127,7 +128,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     dec_img->u=(uint8_t*)decodedFrame+pitch*dec->out_height;
     dec_img->v=dec_img->u+1;
     dec_img->stride_y=dec_img->stride_uv=pitch;
-    image_t *img=image_convert(dec_img, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *img=image_convert(dec_img, dec->output_format);
     CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
     img->timestamp=dec->time;
     dec->time+=dec->time_increment;
@@ -154,6 +155,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->out_height=720;
     dec->time_increment=90000/30;
     dec->time=0;
+    dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
 
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
@@ -168,6 +170,11 @@ simple_decoder_t *simple_decoder_create(void *context,
     videoParserParams.pfnDisplayPicture = HandlePictureDisplay;
     CHECK_CUDA_CALL(cuvidCreateVideoParser(&dec->videoParser, &videoParserParams));
     return dec;
+}
+
+void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
+{
+    dec->output_format=fmt;
 }
 
 void simple_decoder_destroy(simple_decoder_t *dec)

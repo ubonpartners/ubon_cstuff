@@ -16,6 +16,7 @@
 #include "misc.h"
 #include "log.h"
 #include "profile.h"
+#include "memory_stuff.h"
 
 typedef struct state {
     track_stream_t *ts;
@@ -41,8 +42,8 @@ static void track_result(void *context, track_results_t *r) {
     if (r->result_type == TRACK_FRAME_TRACKED_ROI || r->result_type == TRACK_FRAME_TRACKED_FULL_REFRESH) {
         s->tracked_frames_nonskip++;
     }
-    if (r->track_dets != 0) destroy_detections(r->track_dets);
-    if (r->inference_dets != 0) destroy_detections(r->inference_dets);
+    if (r->track_dets != 0) detection_list_destroy(r->track_dets);
+    if (r->inference_dets != 0) detection_list_destroy(r->inference_dets);
 }
 
 static void process_image(void *context, image_t *img) {
@@ -66,6 +67,7 @@ static void *run_track_worker(void *arg) {
     }
 
     simple_decoder_t *decoder = simple_decoder_create(&s, process_image, SIMPLE_DECODER_CODEC_H264);
+    simple_decoder_set_output_format(decoder, track_stream_get_stream_image_format(s.ts));
     uint8_t buffer[4096];
 
     while (keep_running) {
@@ -159,22 +161,35 @@ int main(int argc, char *argv[]) {
 
     for(int tf=0;tf<2;tf++)
     {
-        for(int th=0;th<4;th++)
+        for(int th=0;th<5;th++)
         {
             config.filename=(tf==0) ? "/mldata/video/bc1.264" : "/mldata/video/MOT20-05.264";
             config.duration_sec=10;
             config.num_threads=1<<th;
             run_one_test(&config);
 
+            auto format_size = [](double bytes) -> std::string {
+                double mb = bytes / 1e6;
+                char buf[32];
+                if (mb >= 1000.0)
+                    std::snprintf(buf, sizeof(buf), "%.2fGB", mb / 1000.0);
+                else
+                    std::snprintf(buf, sizeof(buf), "%.1fMB", mb);
+                return std::string(buf);
+            };
+
             oss << "Video " << std::setw(40) << get_last_path_part(config.filename)
                 << " thr: " << std::setw(4) << config.num_threads
                 << " fps: " << std::setw(4) << config.fps
                 << " fps (nonskip): " << std::setw(4) << config.fps_nonskip
+                << " ImgMem: " << std::setw(8) << format_size(allocation_tracker_get_mem_HWM("image device alloc"))
+                << " TRTMem: " << std::setw(8) << format_size(allocation_tracker_get_mem_HWM("trt alloc"))
                 << "\n";
 
             std::cout << oss.str();
 
             char *s=allocation_tracker_stats();
+            allocation_tracker_reset();
             printf("%s\n",s);
             free(s);
         }

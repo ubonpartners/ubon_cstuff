@@ -16,5 +16,6 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 void simple_decoder_set_framerate(simple_decoder_t *dec, double fps);
 void simple_decoder_destroy(simple_decoder_t *dec);
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *data, int data_size);
+void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt);
 
 #endif

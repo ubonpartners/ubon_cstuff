@@ -56,7 +56,7 @@ struct detection
     float reid[REID_MAX_VECTOR_LEN];
 };
 
-typedef struct detections
+typedef struct detection_list
 {
     // model description is defined in infer.h
     // this lets you get the class names list, attribute list, etc
@@ -69,30 +69,30 @@ typedef struct detections
     detection_t **face_dets;   // points into the 'det' array above
     // must be last!
     detection_t *det[1];
-} detections_t;
+} detection_list_t;
 
 #include "image.h"
 
 detection_t *detection_create();
 void detection_destroy(detection_t *det);
-void print_detection_stats();
 
-detections_t *create_detections(int max_detections);
-detections_t *load_detections(const char *filename);
-void destroy_detections(detections_t *detections);
-detection_t *detection_add_end(detections_t *detections);
-void detection_append_copy(detections_t *detections, detection_t *det);
-void detections_nms_inplace(detections_t *detections, float iou_thr);
-void detections_sort_descending_conf(detections_t *detections);
-void detections_scale(detections_t *dets, float sx, float sy);
-void detections_scale_add(detections_t *dets, float sx, float sy, float dx, float dy);
-void detections_scale_add2(detections_t *dets, float sx, float sy, float dx, float dy);
-void detections_unmap_roi(detections_t *dets, roi_t roi);
-detections_t *detections_join(detections_t *dets1, detections_t *dets2);
-image_t *draw_detections(detections_t *dets, image_t *img);
-void show_detections(detections_t *dets);
-void detections_generate_overlap_masks(detections_t *dets);
-void fuse_face_person(detections_t *dets);
+detection_list_t *detection_list_create(int max_detections);
+detection_list_t *detection_list_load(const char *filename);
+void detection_list_destroy(detection_list_t *detections);
+detection_t *detection_list_add_end(detection_list_t *detections);
+void detection_list_append_copy(detection_list_t *detections, detection_t *det);
+void detection_list_nms_inplace(detection_list_t *detections, float iou_thr);
+void detections_list_sort_descending_conf(detection_list_t *detections);
+void detection_list_scale(detection_list_t *dets, float sx, float sy);
+void detection_list_scale_add(detection_list_t *dets, float sx, float sy, float dx, float dy);
+void detection_list_scale_add2(detection_list_t *dets, float sx, float sy, float dx, float dy);
+void detection_list_unmap_roi(detection_list_t *dets, roi_t roi);
+detection_list_t *detection_list_join(detection_list_t *dets1, detection_list_t *dets2);
+image_t *detection_list_draw(detection_list_t *dets, image_t *img);
+void detection_list_show(detection_list_t *dets);
+void detection_list_generate_overlap_masks(detection_list_t *dets);
+void detection_list_fuse_face_person(detection_list_t *dets);
+const char *detection_list_get_classname(detection_list_t *dets, int cl);
 
 int match_detections_greedy(
     detection_t        **dets_a,

@@ -11,7 +11,7 @@ public:
 	~BYTETracker();
 
 	// vector<STrack> update(int* num_dets, float* Boxes, float* Scores, int* Classes, int batch_num, int max_det_per_batch);
-	detections_t *update(detections_t *dets, double rtp_time);
+	detection_list_t *update(detection_list_t *dets, double rtp_time);
 
 	vector<STrack> removed_stracks;
 	std::unordered_set<int> removed_track_ids;

@@ -36,9 +36,11 @@ void destroy_cuda_stream(cudaStream_t s);
 void cuda_set_sync_mode(bool force_sync, bool force_default_stream);
 void cuda_thread_init();
 
+void *cuda_malloc_async(size_t size, cudaStream_t stream);
 void *cuda_malloc(size_t size);
 void *cuda_malloc_host(size_t size);
 void cuda_free(void *p);
+void cuda_free_async(void *ptr, cudaStream_t stream);
 void cuda_free_host(void *p);
 
 #endif

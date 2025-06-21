@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(uboncstuff LANGUAGES C CXX CUDA)
 message("")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 if(DEFINED ENV{JETSON_SOC})
     message(STATUS, "Enabling Orin Nano = UBONCSTUFF_PLATFORM=1")
 else()
@@ -36,11 +38,21 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_COMPILER /usr/bin/gcc-11)
 set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 
-#set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type")
-set(CMAKE_CXX_FLAGS "-g -O2")
-#set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O1")
-#set(CMAKE_C_FLAGS_DEBUG "-g3 -O1")
-#set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O1")  # For CUDA debugging
+# Use built-in CMake flags for different build types
+# use cmake -DCMAKE_BUILD_TYPE=Debug
+# or cmake -DCMAKE_BUILD_TYPE=Release
+
+set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
+set(CMAKE_C_FLAGS_DEBUG  "-O1 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
+set(CMAKE_CUDA_FLAGS_DEBUG "-O1 -G -g")
+
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
+set(CMAKE_C_FLAGS_RELEASE "-O2 -g")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --use_fast_math")
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -x c++")  # treat .c files as C++
 
@@ -117,6 +129,7 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/c_tests/*.c
     ${CMAKE_SOURCE_DIR}/src/cuda/*.c
     ${CMAKE_SOURCE_DIR}/src/decode/*.c
+    ${CMAKE_SOURCE_DIR}/src/detections/*.c
     ${CMAKE_SOURCE_DIR}/src/image/*.c
     ${CMAKE_SOURCE_DIR}/src/infer/*.c
     ${CMAKE_SOURCE_DIR}/src/log/*.c

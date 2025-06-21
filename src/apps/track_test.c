@@ -24,9 +24,9 @@ static void track_result(void *context, track_results_t *r)
     printf("result type %d\n",r->result_type);
     if (r->track_dets!=0)
     {
-        //show_detections(r->track_dets);
+        //detection_list_show(r->track_dets);
         image_t *img=image_reference(s->img);
-        image_t *out_frame_rgb=draw_detections(r->track_dets, img);
+        image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
         display_image("video", out_frame_rgb);
         destroy_image(out_frame_rgb);
         destroy_image(img);

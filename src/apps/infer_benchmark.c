@@ -108,15 +108,15 @@ static void *benchmark_thread(void *p)
         if (display && 1)//profile_time()-last_display_time>1)
         {
             last_display_time=profile_time();
-            image_t *out_frame=draw_detections(d.dets, img);
-            show_detections(d.dets);
+            image_t *out_frame=detection_list_draw(d.dets, img);
+            detection_list_show(d.dets);
             //printf("img_cnt %d img %p frame %p\n",img_cnt,img,out_frame);
             display_image("test", out_frame);
             //usleep(5000000);
             destroy_image(out_frame);
         }
         total_detections += d.dets->num_detections;
-        destroy_detections(d.dets);
+        detection_list_destroy(d.dets);
         n++;
     }
     tc->num_inferences = n;

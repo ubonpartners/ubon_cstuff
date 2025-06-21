@@ -8,21 +8,23 @@
 #include <mutex>
 #include <stdint.h>
 #include "misc.h"
+#include "memory_stuff.h"
 
 static bool async_cuda_mem=true;
+static bool pinned_host_mem=false; // true is very very slow
 static std::once_flag initFlag;
 static bool image_inited=false;
 
 static allocation_tracker_t image_alloc_device_tracker;
 static allocation_tracker_t image_alloc_host_tracker;
-
+static block_allocator_t *image_allocator=0;
 
 static void image_mem_init()
 {
     allocation_tracker_register(&image_alloc_device_tracker, "image device alloc");
     allocation_tracker_register(&image_alloc_host_tracker, "image host host");
+    image_allocator=block_allocator_create("image allocator", sizeof(image_t));
 }
-
 
 static void allocate_image_device_mem(image_t *img, int size)
 {
@@ -31,11 +33,11 @@ static void allocate_image_device_mem(image_t *img, int size)
 
     if (async_cuda_mem)
     {
-        CHECK_CUDART_CALL(cudaMallocAsync((void**)&img->device_mem, (size_t)size, img->stream));
+        img->device_mem=cuda_malloc_async((size_t)size, img->stream);
     }
     else
     {
-        CHECK_CUDART_CALL(cudaMalloc((void**)&img->device_mem, size));
+        img->device_mem=cuda_malloc((size_t)size);
     }
 }
 
@@ -43,9 +45,10 @@ static void allocate_image_host_mem(image_t *img, int size)
 {
     track_alloc(&image_alloc_host_tracker, size);
     img->host_mem_size=size;
-    //CHECK_CUDART_CALL(cudaMallocHost(&img->host_mem, size));
-    img->host_mem=malloc(size);
-    //print_image_mem_stats(&memstats);
+    if (pinned_host_mem)
+        img->host_mem=cuda_malloc_host(size);
+    else
+        img->host_mem=malloc(size);
 }
 
 static void free_image_mem(image_t *img)
@@ -53,19 +56,22 @@ static void free_image_mem(image_t *img)
     if (img->host_mem)
     {
         cudaStreamSynchronize(img->stream);
-        free(img->host_mem);
+        if (pinned_host_mem)
+            cuda_free_host(img->host_mem);
+        else
+            free(img->host_mem);
         track_free(&image_alloc_host_tracker, img->host_mem_size);
     }
     if (img->device_mem)
     {
         if (async_cuda_mem)
         {
-            cudaFreeAsync((void*)img->device_mem, img->stream);
+            cuda_free_async((void*)img->device_mem, img->stream);
         }
         else
         {
             cudaStreamSynchronize(img->stream);
-            cudaFree((void*)img->device_mem);
+            cuda_free(img->device_mem);
         }
         track_free(&image_alloc_device_tracker, img->device_mem_size);
     }
@@ -176,16 +182,25 @@ static void allocate_image_surfaces(image_t *img)
     }
 }
 
+static void image_free_callback(void *context, void *block)
+{
+    image_t *img=(image_t *)block;
+    image_t *referenced_surface=img->referenced_surface;
+    free_image_mem(img);
+    destroy_cuda_stream(img->stream);
+    if (referenced_surface) destroy_image(referenced_surface);
+}
+
 image_t *create_image_no_surface_memory(int width, int height, image_format_t fmt)
 {
-    image_t *img=(image_t *)malloc(sizeof(image_t));
+    image_t *img=(image_t *)block_alloc(image_allocator);
     if (!img) return 0;
     memset(img, 0, sizeof(image_t));
     img->width=width;
     img->height=height;
     img->format=fmt;
-    img->reference_count=1;
     img->stream=create_cuda_stream();
+    block_set_free_callback(img, 0, image_free_callback);
     return img;
 }
 
@@ -199,36 +214,26 @@ image_t *create_image(int width, int height, image_format_t fmt)
 
 image_t *image_reference(image_t *img)
 {
-    if (img==0) return 0;
-    assert(img->reference_count>0);
-    __sync_fetch_and_add(&img->reference_count, 1);
-    return img;
+    return (image_t*)block_reference(img);
 }
 
 void destroy_image(image_t *img)
 {
-    if (!img) return;
-    int reference_count=__sync_fetch_and_add(&img->reference_count, -1);
-    if (reference_count>1) return;
-    image_t *referenced_surface=img->referenced_surface;
-    free_image_mem(img);
-    destroy_cuda_stream(img->stream);
-    free(img);
-    if (referenced_surface) destroy_image(referenced_surface);
+    block_free(img);
 }
 
 void image_sync(image_t *img)
 {
     if (!img) return;
-    assert(img->reference_count>0);
+    block_check(img);
     //log_debug("synchronize %dx%d %s",img->width,img->height,image_format_name(img->format));
     cudaStreamSynchronize(img->stream);
 }
 
 void image_add_dependency(image_t *img, image_t *depends_on)
 {
-    assert(img->reference_count>0);
-    assert(depends_on->reference_count>0);
+    block_check(img);
+    block_check(depends_on);
     cuda_stream_add_dependency(img->stream, depends_on->stream);
 }
 

@@ -26,7 +26,7 @@ typedef struct infer_thread_stats
 typedef struct infer_thread_result_data
 {
     // resulting detections (must be freed with detection_destroy..)
-    detections_t *dets;
+    detection_list_t *dets;
     roi_t inference_roi; // actual used roi WRT original image
 } infer_thread_result_data_t;
 

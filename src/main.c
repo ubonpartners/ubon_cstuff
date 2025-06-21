@@ -8,7 +8,6 @@
 #include "webcam.h"
 #include "infer.h"
 #include "jpeg.h"
-#include "dataset.h"
 #include "nvof.h"
 #include "misc.h"
 #include "c_tests.h"
@@ -19,16 +18,16 @@ static nvof_t *v=0;
 static void frame_callback(void *context, image_t *img)
 {
     display_t *d=(display_t *)context;
-    detections_t *dets=infer(inf, img);
+    detection_list_t *dets=infer(inf, img);
     image_t *blurred=image_blur(img);
-    image_t *out_frame_rgb=draw_detections(dets, blurred);
+    image_t *out_frame_rgb=detection_list_draw(dets, blurred);
     destroy_image(blurred);
 
     nvof_execute(v, img);
 
     display_image("video", out_frame_rgb);
     destroy_image(out_frame_rgb);
-    destroy_detections(dets);
+    detection_list_destroy(dets);
 }
 
 int main(int argc, char *argv[])
@@ -43,13 +42,13 @@ int main(int argc, char *argv[])
     for(int i=0;i<num;i++)
     {
         image_t *im=dataset_get_image(ds,i);
-        detections_t *gts=dataset_get_gts(ds, i);
-        //image_t *im2=draw_detections(gts,im);
+        detection_list_t *gts=dataset_get_gts(ds, i);
+        //image_t *im2=detection_list_draw(gts,im);
         //display_image("this",im2);
         //usleep(1000000*10);
         destroy_image(im);
         //destroy_image(im2);
-        destroy_detections(gts);
+        detection_list_destroy(gts);
     }*/
 
     //inf=infer_create("/mldata/weights/trt/yolo11l-dpa-131224.trt", "/mldata/config/train/train_attr.yaml");
@@ -84,11 +83,11 @@ int main(int argc, char *argv[])
         while(1)
         {
             image_t *i=webcam_capture(w);
-            detections_t *dets=infer(inf, i);
-            image_t *out=draw_detections(dets, i);
+            detection_list_t *dets=infer(inf, i);
+            image_t *out=detection_list_draw(dets, i);
             display_image("infer", out);
             destroy_image(out);
-            destroy_detections(dets);
+            detection_list_destroy(dets);
             destroy_image(i);
         }
     }

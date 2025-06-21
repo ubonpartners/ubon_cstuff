@@ -269,7 +269,7 @@ static py::dict convert_model_description(model_description_t* desc) {
     return d;
 }
 
-static py::object convert_detections(detections_t *dets)
+static py::object convert_detections(detection_list_t *dets)
 {
     if (!dets)
         return py::none();  // <-- return Python None if dets is null
@@ -287,6 +287,8 @@ static py::object convert_detections(detections_t *dets)
         box.append(det->x1);
         box.append(det->y1);
         item["box"] = box;
+        assert(det->num_pose_points==0 || det->num_pose_points==17);
+        assert(det->num_face_points==0 || det->num_face_points==5);
         if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
         if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
         if (det->num_attr>0) item["attrs"]=convert_attributes(det->attr, det->num_attr);
@@ -298,7 +300,7 @@ static py::object convert_detections(detections_t *dets)
 class c_infer {
 private:
     py::list infer_and_convert_batch(image_t** imgs, int num) {
-        std::vector<detections_t*> dets(num, nullptr);
+        std::vector<detection_list_t*> dets(num, nullptr);
         infer_batch(inf, imgs, dets.data(), num);
 
         py::list all_results;
@@ -306,7 +308,7 @@ private:
             py::list results;
             if (dets[i]) {
                 results=convert_detections(dets[i]);
-                destroy_detections(dets[i]);
+                detection_list_destroy(dets[i]);
             }
             all_results.append(results);
         }
@@ -422,7 +424,7 @@ public:
                     item["attrs"] = convert_attributes(det->attr, det->num_attr);
                 detections.append(item);
             }
-            destroy_detections(result_data.dets);
+            detection_list_destroy(result_data.dets);
         }
         result["detections"] = detections;
         return result;

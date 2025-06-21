@@ -32,7 +32,7 @@ BYTETracker::~BYTETracker()
 {
 }
 
-detections_t *BYTETracker::update(detections_t *dets, double rtp_time)
+detection_list_t *BYTETracker::update(detection_list_t *dets, double rtp_time)
 {
 	// rtp time is microseconds
 
@@ -261,10 +261,10 @@ detections_t *BYTETracker::update(detections_t *dets, double rtp_time)
 		}
 	}
 
-	detections_t *out_dets=create_detections(output_stracks.size());
+	detection_list_t *out_dets=detection_list_create(output_stracks.size());
 	for (int i = 0; i < (int)output_stracks.size(); i++)
 	{
-        detection_t *det=detection_add_end(out_dets);
+        detection_t *det=detection_list_add_end(out_dets);
         float x=output_stracks[i].tlwh[0];
         float y=output_stracks[i].tlwh[1];
         float w=output_stracks[i].tlwh[2];
