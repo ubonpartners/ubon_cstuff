@@ -34,13 +34,11 @@ void cuda_half_to_float(void * d_input, void* h_output, int size);
 void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
 void cuda_convert_fp32_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
 void cuda_downsample_2x2(const uint8_t* d_src, int src_stride, uint8_t* d_dst, int dst_stride, int width, int height, cudaStream_t stream);
-void cuda_interleave_uv(const uint8_t* d_u, const uint8_t* d_v,
-int src_stride_uv,
-    uint8_t* d_dst,
-    int dest_stride_uv,
-    int width,
-    int height,
-    cudaStream_t stream);
+void cuda_interleave_uv(const uint8_t* d_u, const uint8_t* d_v,int src_stride_uv,
+    uint8_t* d_dst,int dest_stride_uv,int width,int height,cudaStream_t stream);
+void cuda_deinterleave_uv(
+    const uint8_t* d_src,int src_stride_uv,uint8_t* d_u, uint8_t* d_v,
+    int dst_stride_uv,int width,int height,cudaStream_t stream);
 void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream);
 void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
 uint8_t *out, int stride_out, int width, int height, cudaStream_t stream);
@@ -54,6 +52,20 @@ void cuda_warp_yuv420_to_planar_float(
     const float *h_matrices,
     bool use_rgb24,
     bool use_fp16,
+    cudaStream_t stream);
+void cuda_generate_motion_mask(
+    const uint8_t* d_Y,
+    const uint8_t* d_U,
+    const uint8_t* d_V,
+    int stride_y,
+    int stride_uv,
+    float* d_noise_floor,
+    int block_w,
+    int block_h,
+    float mad_delta,
+    float alpha,
+    float beta,
+    uint8_t* d_row_masks,
     cudaStream_t stream);
 } // extern "C"
 // nvidia code

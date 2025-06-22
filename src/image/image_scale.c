@@ -168,6 +168,7 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
 {
     assert(img->format!=inter);
     image_t *image_tmp=image_convert(img, inter);
+    image_check(image_tmp);
     assert(image_tmp!=0);
     image_t *scaled=image_scale(image_tmp, width, height);
     assert(scaled!=0);
@@ -178,6 +179,7 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
 
 image_t *image_scale(image_t *img, int width, int height)
 {
+    image_check(img);
     if (img->width==width && img->height==height)
     {
         return image_reference(img);

@@ -178,12 +178,17 @@ int main(int argc, char *argv[]) {
                 return std::string(buf);
             };
 
+            double app_curr=get_cuda_mem(false, false, false);
+            double app_hwm=get_cuda_mem(false, true, true);
+
             oss << "Video " << std::setw(40) << get_last_path_part(config.filename)
                 << " thr: " << std::setw(4) << config.num_threads
                 << " fps: " << std::setw(4) << config.fps
                 << " fps (nonskip): " << std::setw(4) << config.fps_nonskip
                 << " ImgMem: " << std::setw(8) << format_size(allocation_tracker_get_mem_HWM("image device alloc"))
                 << " TRTMem: " << std::setw(8) << format_size(allocation_tracker_get_mem_HWM("trt alloc"))
+                << " Cuda HWM: " << std::setw(8) << format_size(app_hwm)
+                << " Cuda Curr: " << std::setw(8) << format_size(app_curr)
                 << "\n";
 
             std::cout << oss.str();
@@ -205,5 +210,16 @@ Video                             MOT20-05.264 thr:    1 fps:  167 fps (nonskip)
 Video                             MOT20-05.264 thr:    2 fps:  245 fps (nonskip):  218
 Video                             MOT20-05.264 thr:    4 fps:  317 fps (nonskip):  275
 Video                             MOT20-05.264 thr:    8 fps:  366 fps (nonskip):  331
+==
+Video                                  bc1.264 thr:    1 fps:  302 fps (nonskip):  256 ImgMem:    7.8MB TRTMem:  246.6MB
+Video                                  bc1.264 thr:    2 fps:  305 fps (nonskip):  279 ImgMem:   12.5MB TRTMem:  246.6MB
+Video                                  bc1.264 thr:    4 fps:  424 fps (nonskip):  374 ImgMem:   27.8MB TRTMem:  246.6MB
+Video                                  bc1.264 thr:    8 fps:  581 fps (nonskip):  481 ImgMem:   52.6MB TRTMem:  246.6MB
+Video                                  bc1.264 thr:   16 fps:  656 fps (nonskip):  460 ImgMem:   99.3MB TRTMem:  246.6MB
+Video                             MOT20-05.264 thr:    1 fps:  230 fps (nonskip):  157 ImgMem:    7.6MB TRTMem:  246.6MB
+Video                             MOT20-05.264 thr:    2 fps:  324 fps (nonskip):  220 ImgMem:   14.8MB TRTMem:  246.6MB
+Video                             MOT20-05.264 thr:    4 fps:  460 fps (nonskip):  316 ImgMem:   29.7MB TRTMem:  246.6MB
+Video                             MOT20-05.264 thr:    8 fps:  588 fps (nonskip):  404 ImgMem:   56.9MB TRTMem:  246.6MB
+Video                             MOT20-05.264 thr:   16 fps:  641 fps (nonskip):  453 ImgMem:  102.6MB TRTMem:  246.6MB
 
 */

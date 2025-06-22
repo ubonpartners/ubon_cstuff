@@ -19,6 +19,7 @@ typedef struct allocation_tracker
 allocation_table_t *allocation_table_create();
 void allocation_table_insert(allocation_table_t *table, void *ptr, size_t size);
 size_t allocation_table_remove(allocation_table_t *table, void *ptr);
+void allocation_table_check_ptr(allocation_table_t *table, void *ptr);
 
 static inline void track_alloc(allocation_tracker_t *t, size_t sz)
 {
@@ -34,6 +35,11 @@ static inline void track_alloc_table(allocation_tracker_t *t, size_t sz, void *p
 {
     allocation_table_insert(t->allocation_table, p, sz);
     track_alloc(t, sz);
+}
+
+static inline void track_check(allocation_tracker_t *t, void *p)
+{
+    if (t->allocation_table) allocation_table_check_ptr(t->allocation_table, p);
 }
 
 static inline void track_free(allocation_tracker_t *t, size_t sz)

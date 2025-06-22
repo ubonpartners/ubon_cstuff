@@ -316,6 +316,54 @@ void cuda_interleave_uv(
     );
 }
 
+static __global__ void deinterleave_uv_kernel(
+    const uint8_t* __restrict__ src,   // interleaved UV source
+    int src_stride_uv,
+    uint8_t* __restrict__ u,           // separate U plane destination
+    uint8_t* __restrict__ v,           // separate V plane destination
+    int dst_stride_uv,
+    int width,
+    int height)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;  // pixel index in row
+    int y = blockIdx.y * blockDim.y + threadIdx.y;  // row index
+
+    if (x < width && y < height) {
+        int src_idx = y * src_stride_uv + 2 * x;
+        uint8_t u_val = src[src_idx];
+        uint8_t v_val = src[src_idx + 1];
+
+        u[y * dst_stride_uv + x] = u_val;
+        v[y * dst_stride_uv + x] = v_val;
+    }
+}
+
+void cuda_deinterleave_uv(
+    const uint8_t* d_src,
+    int src_stride_uv,
+    uint8_t* d_u, uint8_t* d_v,
+    int dst_stride_uv,
+    int width,
+    int height,
+    cudaStream_t stream)
+{
+    // launch configuration matches interleave version
+    dim3 block(32, 8);
+    dim3 grid((width  + block.x - 1) / block.x,
+              (height + block.y - 1) / block.y);
+
+    deinterleave_uv_kernel<<<grid, block, 0, stream>>>(
+        d_src,
+        src_stride_uv,
+        d_u,
+        d_v,
+        dst_stride_uv,
+        width,
+        height
+    );
+}
+
+
 static __global__ void rgb24_to_planar_fp_kernel(
     const uint8_t* __restrict__ rgb24, int src_stride_bytes, int src_width, int src_height,
     void *dst,  // [R|G|B] planar FP16 or FP32 interleaved in one buffer

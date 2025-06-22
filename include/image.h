@@ -77,6 +77,8 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
 // destroy image reduces the ref count by one but the surface will remain
 // until the ref count is zero.
 void destroy_image(image_t *img);
+// run checks on an image (ref count valid, memory still valid)
+void image_check(image_t *img);
 image_t *image_reference(image_t *img);
 // block & wait for all outstanding generating 'img' to be completed
 void image_sync(image_t *img);

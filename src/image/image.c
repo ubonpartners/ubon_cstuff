@@ -48,7 +48,9 @@ static void allocate_image_host_mem(image_t *img, int size)
     if (pinned_host_mem)
         img->host_mem=cuda_malloc_host(size);
     else
-        img->host_mem=malloc(size);
+    {
+        img->host_mem=memalign(256, ((size+4095)&(~4095)));//malloc(size);
+    }
 }
 
 static void free_image_mem(image_t *img)
@@ -86,13 +88,14 @@ static void allocate_image_surfaces(image_t *img)
     {
         case IMAGE_FORMAT_YUV420_HOST:
         {
-            int round=(img->width+31)&(~31);
-            allocate_image_host_mem(img, round*img->height*3/2);
+            int round_w=(img->width+127)&(~127);
+            int round_h=((img->height+15)&(~15));
+            allocate_image_host_mem(img, round_w*round_h*3/2);
             img->y=(uint8_t *)img->host_mem;
-            img->u=img->y+img->width*img->height;
-            img->v=img->u+((img->width*img->height)>>2);
-            img->stride_y=img->width;
-            img->stride_uv=img->width/2;
+            img->u=img->y+(round_w*round_h);
+            img->v=img->u+((round_w*round_h)>>2);
+            img->stride_y=round_w;
+            img->stride_uv=round_w/2;
             break;
         }
         case IMAGE_FORMAT_RGB24_HOST:
@@ -187,7 +190,7 @@ static void image_free_callback(void *context, void *block)
     image_t *img=(image_t *)block;
     image_t *referenced_surface=img->referenced_surface;
     free_image_mem(img);
-    destroy_cuda_stream(img->stream);
+    destroy_cuda_stream_pool(img->stream);
     if (referenced_surface) destroy_image(referenced_surface);
 }
 
@@ -199,7 +202,7 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
     img->width=width;
     img->height=height;
     img->format=fmt;
-    img->stream=create_cuda_stream();
+    img->stream=create_cuda_stream_pool();
     block_set_free_callback(img, 0, image_free_callback);
     return img;
 }
@@ -210,6 +213,11 @@ image_t *create_image(int width, int height, image_format_t fmt)
     image_t *ret=create_image_no_surface_memory(width, height, fmt);
     allocate_image_surfaces(ret);
     return ret;
+}
+
+void image_check(image_t *img)
+{
+    block_check(img);
 }
 
 image_t *image_reference(image_t *img)

@@ -22,17 +22,31 @@
         } \
     } while (0)
 
-static image_t *image_convert_nv12_to_yuv420_npp(image_t *src, image_format_t format)
+static image_t *image_convert_nv12_to_yuv420(image_t *src, image_format_t format)
 {
-    image_t *dst=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
-    NppiSize roi={src->width, src->height};
-    Npp8u *pSrc[2]={src->y, src->u};
-    Npp8u *pDst[3]={dst->y, dst->u, dst->v};
-    int aDstStep[3]={dst->stride_y, dst->stride_uv, dst->stride_uv};
-    image_add_dependency(dst, src); // don't run this until 'src' is ready
-    NppStreamContext nppStreamCtx=get_nppStreamCtx();
-    nppStreamCtx.hStream=dst->stream;
-    CHECK_NPPcall(nppiNV12ToYUV420_8u_P2P3R_Ctx(pSrc, src->stride_y, pDst, aDstStep, roi, nppStreamCtx));
+    image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
+    image_add_dependency(dst, src);
+
+    int width = src->width;
+    int height = src->height;
+    int uv_width = width / 2;
+    int uv_height = height / 2;
+
+    // Copy Y-plane
+    CHECK_CUDART_CALL(cudaMemcpy2DAsync(
+        dst->y, dst->stride_y,
+        src->y, src->stride_y,
+        width, height,
+        cudaMemcpyDeviceToDevice,
+        dst->stream
+    ));
+
+    // Deinterleave U (Cb) and V (Cr) from NV12 format
+    // into separate planes
+
+    cuda_deinterleave_uv(src->u, src->stride_uv,
+        dst->u, dst->v, dst->stride_uv,
+        uv_width, uv_height, dst->stream);
     return dst;
 }
 
@@ -322,7 +336,7 @@ typedef struct image_conversion_method
 } image_conversion_method_t;
 
 static image_conversion_method_t direct_methods[] = {
-    {IMAGE_FORMAT_NV12_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_nv12_to_yuv420_npp, IMAGE_FORMAT_NONE, 100},
+    {IMAGE_FORMAT_NV12_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_nv12_to_yuv420, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_NV12_DEVICE, image_convert_yuv420_to_nv12_device, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_YUV420_HOST, IMAGE_FORMAT_YUV420_DEVICE, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_YUV420_HOST, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
@@ -397,9 +411,9 @@ void image_conversion_init()
 
 image_t *image_convert(image_t *img, image_format_t format)
 {
-    //log_debug("convert %s->%s\n",image_format_name(img->format),image_format_name(format));
-
+    image_check(img);
     if (format==img->format) return image_reference(img);
+    //log_debug("convert %s->%s",image_format_name(img->format),image_format_name(format));
 
     image_conversion_method_t *c=conversion_table[img->format][format];
 

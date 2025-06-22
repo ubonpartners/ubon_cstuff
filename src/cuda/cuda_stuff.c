@@ -24,16 +24,24 @@ NppStreamContext get_nppStreamCtx()
 
 // Maximum number of CUDA events for the circular buffer.
 // Use a power-of-two value to enable efficient indexing.
-#define NUM_EVENTS 128
+#define NUM_EVENTS  128
+#define NUM_STREAMS 128
 
 // Structure to hold context for CUDA stream dependency management.
 typedef struct cuda_stuff_context {
     bool force_default_stream;
     bool force_sync;
+    cudaStream_t stream;
+    CUmemoryPool defaultPool;
+    CUmemoryPool appPool;      // cuda memory pool we use for our allocations
     pthread_mutex_t lock;       // Mutex to protect concurrent access.
+    pthread_mutex_t stream_lock;       // Mutex to protect concurrent access.
     uint32_t event_ct;          // Event counter for circular buffer indexing.
     uint32_t event_not_ready;
+    uint32_t stream_ct;
+    uint32_t stream_not_ready;
     cudaEvent_t events[NUM_EVENTS]; // Pre-created CUDA events.
+    cudaStream_t streams[NUM_STREAMS];
 } cuda_stuff_context_t;
 
 static cuda_stuff_context_t cs;
@@ -83,9 +91,9 @@ void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends
     //log_debug("Add cuda dependency for index %d\n",index);
     if (cudaEventQuery(cs.events[index])!=cudaSuccess)
     {
-        CHECK_CUDART_CALL(cudaEventSynchronize(cs.events[index])); // should rarely happen
         cs.event_not_ready++;
         log_warn("cuda event was not ready %d/%d",cs.event_not_ready,cs.event_ct);
+        CHECK_CUDART_CALL(cudaEventSynchronize(cs.events[index])); // should rarely happen
     }
 
     CHECK_CUDART_CALL(cudaEventRecord(cs.events[index], stream_depends_on));
@@ -97,19 +105,57 @@ static void do_cuda_init()
 {
     log_debug("Cuda init");
 
+    // --------------------------------------------------
+    // Register allocation trackers
+    // --------------------------------------------------
+
     allocation_tracker_register(&cuda_alloc_tracker, "cuda alloc", true);
     allocation_tracker_register(&cuda_alloc_async_tracker, "cuda async alloc", true);
     allocation_tracker_register(&cuda_alloc_host_tracker, "cuda alloc host", true);
 
-    // Set the CUDA device
-    int device=0;
+    // --------------------------------------------------
+    // Initialize Driver API context (Pool A is the default)
+    // --------------------------------------------------
+
+    CHECK_CUDA_CALL(cuInit(0));
+    CUdevice cuDev;
+    CHECK_CUDA_CALL(cuDeviceGet(&cuDev, 0));
+    CUcontext cuCtx;
+    CHECK_CUDA_CALL(cuCtxCreate(&cuCtx, 0, cuDev));
+
+    // --------------------------------------------------
+    // Bind device for Runtime API
+    // --------------------------------------------------
+
+    int device = 0;
     CHECK_CUDART_CALL(cudaSetDevice(device));
 
-    // Retrieve device properties to populate the NPP stream context.
+    // --------------------------------------------------
+    // Get default pool and
+    // Create cuda memory pool for our cudaMalloc/cudaMallocAsync
+    // --------------------------------------------------
+
+    CHECK_CUDA_CALL(cuDeviceGetDefaultMemPool(&cs.defaultPool, cuDev));
+
+     {
+      CUmemPoolProps props = {};
+      props.allocType     = CU_MEM_ALLOCATION_TYPE_PINNED;
+      props.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+      props.location.id   = device;
+      props.handleTypes   = CU_MEM_HANDLE_TYPE_NONE;
+
+      CHECK_CUDA_CALL(cuMemPoolCreate(&cs.appPool, &props));
+      // Make it the default for cudaMallocAsync/cudaFreeAsync
+      //CHECK_CUDART_CALL(cudaDeviceSetMemPool(device, (cudaMemPool_t)&cs.appPool));
+    }
+
+    // --------------------------------------------------
+    // Build your NPP stream context
+    // --------------------------------------------------
+
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);
 
-    // Zero out context and set device attributes.
     memset(&nppStreamCtx, 0, sizeof(nppStreamCtx));
     nppStreamCtx.hStream = 0; // Using default stream; consider cudaStreamCreate() if needed.
     nppStreamCtx.nCudaDeviceId = device;
@@ -119,8 +165,12 @@ static void do_cuda_init()
     nppStreamCtx.nCudaDevAttrComputeCapabilityMajor = prop.major;
     nppStreamCtx.nCudaDevAttrComputeCapabilityMinor = prop.minor;
 
-    // Initialize mutex.
+    // --------------------------------------------------
+    // Initialize your event pool and mutex (unchanged)
+    // --------------------------------------------------
+
     assert(0==pthread_mutex_init(&cs.lock, NULL));
+    assert(0==pthread_mutex_init(&cs.stream_lock, NULL));
 
     // Create a pool of CUDA events for dependency tracking.
     for(int i=0;i<NUM_EVENTS;i++)
@@ -129,8 +179,9 @@ static void do_cuda_init()
     cs.force_sync=false;
     cs.force_default_stream=false;
 
-    cudaStream_t ret = 0;
-    CHECK_CUDART_CALL(cudaStreamCreate(&ret));
+    CHECK_CUDART_CALL(cudaStreamCreate(&cs.stream));
+    for(int i=0;i<NUM_EVENTS;i++)
+        CHECK_CUDART_CALL(cudaStreamCreate(&cs.streams[i]));
 
     cuda_inited=true;
 }
@@ -184,6 +235,20 @@ void destroy_cuda_stream(cudaStream_t stream)
     CHECK_CUDART_CALL(cudaStreamDestroy(stream));
 }
 
+cudaStream_t create_cuda_stream_pool()
+{
+    uint32_t prev=__sync_fetch_and_add(&cs.stream_ct, 1);
+    int index=prev&(NUM_STREAMS-1);
+    //pthread_mutex_unlock(&cs.lock);
+    return cs.streams[index];
+}
+
+void destroy_cuda_stream_pool(cudaStream_t stream)
+{
+    // don't need to do anything!
+    // it's perfectly ok if the pool wrapps and a stream gets used by two things
+}
+
 void cuda_thread_init()
 {
     // Ensure global init
@@ -226,7 +291,8 @@ void cuda_thread_init()
 void *cuda_malloc(size_t size)
 {
     void *ptr=0;
-    CHECK_CUDART_CALL(cudaMalloc(&ptr, size));
+    CHECK_CUDART_CALL(cudaMallocFromPoolAsync(&ptr, size, cs.appPool, cs.stream));
+    CHECK_CUDART_CALL(cudaStreamSynchronize(cs.stream));
     track_alloc_table(&cuda_alloc_tracker, size, ptr);
     return ptr;
 }
@@ -234,7 +300,7 @@ void *cuda_malloc(size_t size)
 void *cuda_malloc_async(size_t size, cudaStream_t stream)
 {
     void *ptr=0;
-    CHECK_CUDART_CALL(cudaMallocAsync(&ptr, size, stream));
+    CHECK_CUDART_CALL(cudaMallocFromPoolAsync(&ptr, size, cs.appPool, stream));
     track_alloc_table(&cuda_alloc_async_tracker, size, ptr);
     return ptr;
 }
@@ -247,16 +313,31 @@ void *cuda_malloc_host(size_t size)
     return ptr;
 }
 
+void cuda_malloc_check(void *ptr)
+{
+    if (ptr==0) return;
+    track_check(&cuda_alloc_tracker, ptr);
+}
+
+void cuda_malloc_async_check(void *ptr)
+{
+    if (ptr==0) return;
+    track_check(&cuda_alloc_async_tracker, ptr);
+}
+
 void cuda_free(void *ptr)
 {
     if (ptr==0) return;
-    CHECK_CUDART_CALL(cudaFree(ptr));
+    track_check(&cuda_alloc_tracker, ptr);
+    CHECK_CUDART_CALL(cudaFreeAsync(ptr, cs.stream));
+    CHECK_CUDART_CALL(cudaStreamSynchronize(cs.stream));
     track_free_table(&cuda_alloc_tracker, ptr);
 }
 
 void cuda_free_async(void *ptr, cudaStream_t stream)
 {
     if (ptr==0) return;
+    track_check(&cuda_alloc_async_tracker, ptr);
     CHECK_CUDART_CALL(cudaFreeAsync(ptr, stream));
     track_free_table(&cuda_alloc_async_tracker, ptr);
 }
@@ -264,6 +345,23 @@ void cuda_free_async(void *ptr, cudaStream_t stream)
 void cuda_free_host(void *ptr)
 {
     if (ptr==0) return;
+    track_check(&cuda_alloc_host_tracker, ptr);
     CHECK_CUDART_CALL(cudaFreeHost(ptr));
     track_free_table(&cuda_alloc_host_tracker, ptr);
+}
+
+double get_cuda_mem(bool default_pool, bool hwm, bool reset)
+{
+    size_t used=0;
+    uint64_t zero=0;
+
+    CHECK_CUDA_CALL(cuMemPoolGetAttribute(default_pool ? cs.defaultPool : cs.appPool,
+        hwm ? CU_MEMPOOL_ATTR_USED_MEM_HIGH : CU_MEMPOOL_ATTR_USED_MEM_CURRENT, &used));
+
+    if (reset)
+    {
+        CHECK_CUDA_CALL(cuMemPoolSetAttribute(default_pool ? cs.defaultPool : cs.appPool, CU_MEMPOOL_ATTR_USED_MEM_HIGH, &zero));
+
+    }
+    return (double)used;
 }

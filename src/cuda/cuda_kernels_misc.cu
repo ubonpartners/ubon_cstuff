@@ -85,6 +85,9 @@ void compute_4x4_mad_mask(uint8_t *a, int stride_a, uint8_t *b, int stride_b,
     dim3 gridDim((width + blockDim.x - 1) / blockDim.x,
                  (height + blockDim.y - 1) / blockDim.y);
 
+    assert((stride_a&3)==0);
+    assert((stride_b&3)==0);
+
     kernel_block_mad_4x4<<<gridDim, blockDim, 0, stream>>>(
         a, stride_a,
         b, stride_b,
@@ -310,6 +313,106 @@ void cuda_warp_yuv420_to_planar_float(
         CHECK_CUDA(cudaDestroyTextureObject(texV[i]));
     }
     free(texY); free(texU); free(texV);
+}
+
+__global__ void compute_motion_bytemask(
+    const uint8_t* __restrict__ Y,
+    const uint8_t* __restrict__ U,
+    const uint8_t* __restrict__ V,
+    int stride_y,
+    int stride_uv,
+    float* __restrict__ noise_floor,
+    int block_w,
+    int block_h,
+    float mad_delta,
+    float alpha,
+    float beta,
+    uint8_t* __restrict__ row_masks)
+{
+    int tx = threadIdx.x;  // 0 .. bytes_per_row-1
+    int y  = threadIdx.y;  // 0 .. block_h-1
+
+    int bytes_per_row = (block_w + 7) >> 3;
+    if (tx >= bytes_per_row || y >= block_h) return;
+
+    int base_x = tx * 8;
+    uint8_t byte_mask = 0;
+
+    #pragma unroll
+    for (int bit = 0; bit < 8; ++bit) {
+        int x = base_x + bit;
+        if (x < block_w) {
+            int yy = y * 2;
+            int xx = x * 2;
+            uint8_t v0 = Y[xx     + (yy    ) * stride_y];
+            uint8_t v1 = Y[xx + 1 + (yy    ) * stride_y];
+            uint8_t v2 = Y[xx     + (yy+1) * stride_y];
+            uint8_t v3 = Y[xx + 1 + (yy+1) * stride_y];
+            uint8_t v4 = U[x + y * stride_uv];
+            uint8_t v5 = V[x + y * stride_uv];
+
+            uint8_t vmax = v0;
+            vmax = vmax < v1 ? v1 : vmax;
+            vmax = vmax < v2 ? v2 : vmax;
+            vmax = vmax < v3 ? v3 : vmax;
+            vmax = vmax < v4 ? v4 : vmax;
+            vmax = vmax < v5 ? v5 : vmax;
+            float fv = float(vmax);
+
+            int idx = y * block_w + x;
+            float nf = noise_floor[idx];
+            float coeff = (fv < nf) ? alpha : beta;
+            nf = nf * coeff + fv * (1.0f - coeff);
+            noise_floor[idx] = nf;
+
+            bool motion = (fv > nf + mad_delta);
+            byte_mask |= static_cast<uint8_t>(motion ? (1u << (7-bit)) : 0u);
+        }
+    }
+
+    row_masks[y * 8 + tx] = byte_mask;
+}
+
+void cuda_generate_motion_mask(
+    const uint8_t* d_Y,
+    const uint8_t* d_U,
+    const uint8_t* d_V,
+    int stride_y,
+    int stride_uv,
+    float* d_noise_floor,
+    int block_w,
+    int block_h,
+    float mad_delta,
+    float alpha,
+    float beta,
+    uint8_t* d_row_masks,
+    cudaStream_t stream = 0)
+{
+    assert(block_w > 0 && block_w <= 64);
+    assert(block_h > 0 && block_h <= 64);
+
+    int bytes_per_row = (block_w + 7) >> 3;
+    size_t total_bytes = size_t(block_h) * bytes_per_row;
+
+    cudaError_t err = cudaMemsetAsync(d_row_masks, 0, total_bytes, stream);
+    if (err != cudaSuccess) {
+        // handle error
+    }
+
+    dim3 threads(bytes_per_row, block_h);
+    compute_motion_bytemask<<<1, threads, 0, stream>>>(
+        d_Y, d_U, d_V,
+        stride_y, stride_uv,
+        d_noise_floor,
+        block_w, block_h,
+        mad_delta,
+        alpha, beta,
+        d_row_masks);
+
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        // handle error
+    }
 }
 
 } // extern "C"

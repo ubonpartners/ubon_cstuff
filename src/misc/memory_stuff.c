@@ -101,6 +101,15 @@ size_t allocation_table_remove(allocation_table_t *table, void *ptr)
     return sz;
 }
 
+void allocation_table_check_ptr(allocation_table_t *table, void *ptr)
+{
+    if (!table || !ptr) return;
+    auto* t = reinterpret_cast<allocation_table*>(table);
+    std::lock_guard<std::mutex> lk(t->mutex);
+    auto it = t->map.find(ptr);
+    assert(it != t->map.end());
+}
+
 void allocation_tracker_register(allocation_tracker_t *t, const char *name, bool use_table)
 {
     if (use_table) t->allocation_table=allocation_table_create();

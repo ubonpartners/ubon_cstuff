@@ -59,6 +59,7 @@ struct infer
     int inf_limit_max_batch;
     int max_detections;
     int detection_attribute_size;
+    size_t max_output_tensor_bytes;
     const char *input_tensor_name;
     const char *output_tensor_name;
     model_description_t md;
@@ -376,6 +377,19 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             inf->md.num_classes,inf->md.num_person_attributes,inf->md.num_keypoints);
     }
 
+    auto input_dims = nvinfer1::Dims4{inf->md.max_batch, 3, inf->md.max_h, inf->md.max_w};
+    assert(true==inf->ec->setInputShape(inf->input_tensor_name, input_dims));
+    assert(0==inf->ec->inferShapes(0,0));
+    Dims outputDims = inf->ec->getTensorShape(inf->output_tensor_name);
+    size_t max_output_bytes=(inf->md.output_is_fp16 ? 2 : 4)*outputDims.d[0]*outputDims.d[1]*outputDims.d[2];
+    log_debug("Max output bytes %dx%dx%d (%d) %ld\n",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2],
+        outputDims.nbDims,max_output_bytes);
+
+    inf->max_output_tensor_bytes=max_output_bytes;
+    inf->output_mem=cuda_malloc(inf->max_output_tensor_bytes);
+    inf->output_mem_host=cuda_malloc_host(inf->max_output_tensor_bytes);
+    inf->output_size=inf->max_output_tensor_bytes;
+
     return inf;
 }
 
@@ -633,6 +647,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     for(int i=0;i<num;i++)
     {
         assert(img_list[i]!=0);
+        image_check(img_list[i]);
     }
     // step 0: split into 'max batch' pieces
     int max_batch=std::min(inf->inf_limit_max_batch, inf->max_batch);
@@ -717,7 +732,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        log_debug("Infer reallocate output memory [%d bytes, sz %dx%dx%d]\n",max_output_size,num,infer_h,infer_w);
+        log_debug("Infer reallocate output memory [%d > %d bytes, sz %dx%dx%d]\n",max_output_size,(int)inf->output_size,num,infer_h,infer_w);
         cuda_free(inf->output_mem);
         cuda_free_host(inf->output_mem_host);
         inf->output_mem=cuda_malloc(max_output_size);
@@ -760,6 +775,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         }
     }
 
+    destroy_image(inf_image);
+    for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
+
     // map detections to the original image
 
     for(int i=0;i<num;i++)
@@ -775,9 +793,6 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         detection_list_generate_overlap_masks(dets[i]);
         if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i]);
     }
-
-    destroy_image(inf_image);
-    for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
 }
 
 detection_list_t *infer(infer_t *inf, image_t *img)

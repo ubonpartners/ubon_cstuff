@@ -125,7 +125,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->min_time_delta_process=0.0;
     ts->min_time_delta_full_roi=120.0;
     ts->tracked_object_roi=ROI_ZERO;
-    ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;//IMAGE_FORMAT_RGB24_DEVICE;
+    ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     return ts;
 }
 
@@ -242,8 +242,12 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
                          10, 8, 8, false);
 
     image_t *image_scaled=image_scale_convert(img, ts->stream_image_format, scale_w, scale_h);
+    image_check(img);
+    image_check(image_scaled);
+    image_check(img);
     destroy_image(img);
     motion_track_add_frame(ts->mt, image_scaled);
+    image_check(image_scaled);
 
     roi_t motion_roi=motion_track_get_roi(ts->mt);
     if (roi_area(&motion_roi)<tss->motiontrack_min_roi)

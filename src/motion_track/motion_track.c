@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <stdio.h>
 #include "image.h"
+#include "cuda_stuff.h"
+#include "cuda_kernels.h"
 #include "motion_track.h"
 #include "display.h"
 #include "roi.h"
@@ -21,6 +23,8 @@ struct motion_track
     float *noise_floor;
     float mad_delta;
     bool blur;
+    float *noise_floor_device;
+    uint8_t *row_masks_device, *row_masks_host;
     image_t *ref;
     image_t *in_img;
     roi_t roi;
@@ -37,12 +41,20 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);
     mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);
     mt->blur=yaml_get_bool_value(yaml_base["motiontrack_blur"], true);
+    mt->noise_floor_device=(float *)cuda_malloc(64*64*4);
+    mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
+    mt->row_masks_host=(uint8_t *)cuda_malloc_host(8*64);
+    CHECK_CUDART_CALL(cudaMemset(mt->noise_floor_device, 0, 64*64*4));
+    CHECK_CUDART_CALL(cudaMemset(mt->row_masks_device, 0, 64*8));
     return mt;
 }
 
 void motion_track_destroy(motion_track_t *mt)
 {
     if (!mt) return;
+    cuda_free(mt->noise_floor_device);
+    cuda_free(mt->row_masks_device);
+    cuda_free_host(mt->row_masks_host);
     if (mt->ref) destroy_image(mt->ref);
     if (mt->in_img) destroy_image(mt->in_img);
     if (mt->noise_floor) free(mt->noise_floor);
@@ -59,6 +71,12 @@ static int count_trailing_zeros(uint64_t x) {
 
 void motion_track_add_frame(motion_track_t *mt, image_t *img)
 {
+    if (mt->mad_delta==0)
+    {
+        mt->roi=ROI_ONE;
+        return;
+    }
+
     int scale_w, scale_h;
     determine_scale_size(img->width, img->height,
                          mt->max_width, mt->max_height, &scale_w, &scale_h,
@@ -66,6 +84,9 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     image_t *image_scaled=image_scale_convert(img, IMAGE_FORMAT_YUV420_DEVICE, scale_w, scale_h);
     image_t *ref=mt->ref;
+
+    assert((scale_w&7)==0);
+    assert((scale_h&7)==0);
 
     if (mt->blur)
     {
@@ -94,6 +115,9 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         mt->roi.box[2]=1.0;
         mt->roi.box[3]=1.0;
 
+        CHECK_CUDART_CALL(cudaMemset(mt->noise_floor_device, 0, 64*64*4));
+        CHECK_CUDART_CALL(cudaMemset(mt->row_masks_device, 0, 64*8));
+
         mt->in_img=image_scaled;
         mt->block_w=image_scaled->width/8;
         mt->block_h=image_scaled->height/8;
@@ -103,46 +127,40 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         return;
     }
 
-
     image_t *mad_img=image_mad_4x4(mt->ref, image_scaled);
-    image_t *mad_img_host=image_convert(mad_img, IMAGE_FORMAT_YUV420_HOST);
-
-    //display_image("MAD", mad_img);
-    //display_image("REF", mt->ref);
-    destroy_image(mad_img);
-    image_sync(mad_img_host);
+    assert(mad_img!=0);
+    assert(mad_img->format==IMAGE_FORMAT_YUV420_DEVICE);
 
     int block_w=mt->block_w;
     int block_h=mt->block_h;
     assert(block_w<=64);
+    assert(mad_img->width==2*block_w && mad_img->height==2*block_h);
     float mad_delta=mt->mad_delta;
+    float alpha=0.8f;
+    float beta=0.95;
+
+    cuda_generate_motion_mask(
+        mad_img->y, mad_img->u, mad_img->v, mad_img->stride_y, mad_img->stride_uv,
+        mt->noise_floor_device,
+        block_w,block_h,
+        mad_delta,alpha, beta,
+        mt->row_masks_device,
+        mad_img->stream);
+
+    CHECK_CUDART_CALL(cudaMemcpyAsync(mt->row_masks_host, mt->row_masks_device, 64*8, cudaMemcpyDeviceToHost, mad_img->stream));
+    CHECK_CUDART_CALL(cudaStreamSynchronize(mad_img->stream));
+    destroy_image(mad_img);
+
+    uint64_t *mp=(uint64_t *)mt->row_masks_host;
     uint64_t v_mask=0;
     uint64_t h_mask=0;
     for(int y=0;y<block_h;y++)
     {
-        uint64_t mask=0;
-        for(int x=0;x<block_w;x++)
-        {
-            uint8_t v0=mad_img_host->y[(x*2+0)+(y*2+0)*mad_img_host->stride_y];
-            uint8_t v1=mad_img_host->y[(x*2+1)+(y*2+0)*mad_img_host->stride_y];
-            uint8_t v2=mad_img_host->y[(x*2+0)+(y*2+1)*mad_img_host->stride_y];
-            uint8_t v3=mad_img_host->y[(x*2+1)+(y*2+1)*mad_img_host->stride_y];
-            uint8_t v4=mad_img_host->u[x+y*mad_img_host->stride_uv];
-            uint8_t v5=mad_img_host->v[x+y*mad_img_host->stride_uv];
-            uint8_t v=std::max(std::max(std::max(v0,v1), std::max(v2,v3)), std::max(v4,v5));
-            float fv=(float)v;
-
-            float nf=mt->noise_floor[x+y*block_w];
-            float f=(fv<nf) ? 0.8f : 0.995f;
-            nf=nf*f+v*(1.0-f);
-            mt->noise_floor[x+y*block_w]=nf;
-
-            bool motion=fv>nf+mad_delta;
-            mask=(mask<<1)+(motion ? 1 : 0);
-        }
+        uint64_t mask=__builtin_bswap64(mp[y])>>(64-block_w);
         h_mask|=mask;
         v_mask=(v_mask<<1)+((mask==0) ? 0 : 1);
     }
+
     roi_t roi={0};
     if (h_mask!=0 && v_mask!=0)
     {
@@ -154,9 +172,9 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         roi.box[1]=roi_t/image_scaled->height;
         roi.box[2]=roi_r/image_scaled->width;
         roi.box[3]=roi_b/image_scaled->height;
+        //printf("%.3f %.3f %.3f %.3f\n",roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
     }
 
-    destroy_image(mad_img_host);
     mt->in_img=image_scaled;
     mt->roi=roi;
 }

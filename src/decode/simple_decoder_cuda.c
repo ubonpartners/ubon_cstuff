@@ -27,6 +27,7 @@ struct simple_decoder
     uint64_t time;
     uint64_t time_increment;
     //CUstream stream;
+    CUvideoctxlock vidlock;
     CUvideodecoder decoder;
     CUvideoparser videoParser;
     CUVIDEOFORMAT videoFormat;
@@ -91,6 +92,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.ChromaFormat = pFormat->chroma_format;
         decodeCreateInfo.OutputFormat = cudaVideoSurfaceFormat_NV12;
         decodeCreateInfo.bitDepthMinus8 = pFormat->bit_depth_luma_minus8;
+        decodeCreateInfo.vidLock = dec->vidlock;
         decodeCreateInfo.DeinterlaceMode = cudaVideoDeinterlaceMode_Weave;
         decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUDA;//cudaVideoCreate_PreferCUVID;
 
@@ -114,27 +116,47 @@ void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
-    image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
+
     CUdeviceptr decodedFrame=0;
-    CUVIDPROCPARAMS videoProcessingParameters = {};
+    CUVIDPROCPARAMS videoProcessingParameters = {0};
     videoProcessingParameters.progressive_frame = pDispInfo->progressive_frame;
     videoProcessingParameters.second_field =  (pDispInfo->repeat_first_field != 0);
     videoProcessingParameters.top_field_first = pDispInfo->top_field_first;
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
-    videoProcessingParameters.output_stream = dec_img->stream;
     unsigned int pitch;
-    CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
-    dec_img->y=(uint8_t*)decodedFrame;
-    dec_img->u=(uint8_t*)decodedFrame+pitch*dec->out_height;
-    dec_img->v=dec_img->u+1;
-    dec_img->stride_y=dec_img->stride_uv=pitch;
-    image_t *img=image_convert(dec_img, dec->output_format);
-    CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
-    img->timestamp=dec->time;
-    dec->time+=dec->time_increment;
-    dec->frame_callback(dec->context, img);
-    destroy_image(img);
-    destroy_image(dec_img);
+
+    if (1) {
+        image_t *dec_img=create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
+        videoProcessingParameters.output_stream = dec_img->stream;
+        CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
+        CHECK_CUDART_CALL(cudaMemcpy2D(
+            dec_img->y, dec_img->stride_y,
+            (void*)decodedFrame, pitch,
+            dec_img->width, (dec_img->height*3)/2,
+            cudaMemcpyDeviceToDevice
+        ));
+        CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+        dec_img->timestamp=dec->time;
+        dec->time+=dec->time_increment;
+        dec->frame_callback(dec->context, dec_img);
+        destroy_image(dec_img);
+    }
+    else {
+        image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
+        videoProcessingParameters.output_stream = dec_img->stream;
+        CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
+        dec_img->y=(uint8_t*)decodedFrame;
+        dec_img->u=(uint8_t*)decodedFrame+pitch*dec->out_height;
+        dec_img->v=dec_img->u+1;
+        dec_img->stride_y=dec_img->stride_uv=pitch;
+        image_t *img=image_convert(dec_img, dec->output_format);
+        CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+        img->timestamp=dec->time;
+        dec->time+=dec->time_increment;
+        dec->frame_callback(dec->context, img);
+        destroy_image(img);
+        destroy_image(dec_img);
+    }
 
     return 1;
 }
@@ -156,6 +178,8 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->time_increment=90000/30;
     dec->time=0;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
+
+    CHECK_CUDA_CALL(cuvidCtxLockCreate(&dec->vidlock, get_CUcontext()));
 
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
@@ -189,6 +213,7 @@ void simple_decoder_destroy(simple_decoder_t *dec)
         {
             CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
         }
+        CHECK_CUDA_CALL(cuvidCtxLockDestroy(dec->vidlock));
         free(dec);
     }
 }
