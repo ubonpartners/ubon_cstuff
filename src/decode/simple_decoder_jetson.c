@@ -42,4 +42,17 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
 
     return;
 }
+
+void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
+{
+    (void)dec; (void)fps;
+    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
+
+void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
+{
+    (void)dec; (void)fmt;
+    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
+
 #endif //(UBONCSTUFF_PLATFORM == 1)

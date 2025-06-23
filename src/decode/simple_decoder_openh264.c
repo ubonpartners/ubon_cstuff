@@ -138,3 +138,15 @@ void __attribute__((weak)) simple_decoder_decode(simple_decoder_t *dec, uint8_t 
         dec->bitstream_buffer_fullness-=pos;
     }
 }
+
+void __attribute__((weak)) simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
+{
+    (void)dec; (void)fps;
+    printf("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
+
+void __attribute__((weak)) simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
+{
+    (void)dec; (void)fmt;
+    printf("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
