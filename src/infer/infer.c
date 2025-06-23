@@ -9,6 +9,7 @@
 #include <iostream>
 #include <fstream>
 #include <cuda_runtime_api.h>
+#include <cuda_fp16.h>
 #include <unistd.h>
 #include "NvInfer.h"
 #include "image.h"
@@ -39,7 +40,8 @@ struct infer
     cudaStream_t stream;
     CudaNMSHandle nms;
     int nms_max_boxes;
-    void *output_mem_host;
+    void *output_mem_host_fp32;
+    void *output_mem_host_fp16;
     int person_class_index, face_class_index;
     int max_batch;
     int min_w, min_h;
@@ -386,9 +388,9 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         outputDims.nbDims,max_output_bytes);
 
     inf->max_output_tensor_bytes=max_output_bytes;
-    inf->output_mem=cuda_malloc(inf->max_output_tensor_bytes);
+    /*inf->output_mem=cuda_malloc(inf->max_output_tensor_bytes);
     inf->output_mem_host=cuda_malloc_host(inf->max_output_tensor_bytes);
-    inf->output_size=inf->max_output_tensor_bytes;
+    inf->output_size=inf->max_output_tensor_bytes;*/
 
     return inf;
 }
@@ -404,8 +406,8 @@ void infer_destroy(infer_t *inf)
     if (inf->runtime) delete inf->runtime;
     cuda_free(inf->output_mem);
     inf->output_mem=0;
-    cuda_free_host(inf->output_mem_host);
-    inf->output_mem_host=0;
+    if (inf->output_mem_host_fp32!=0) cuda_free_host(inf->output_mem_host_fp32);
+    if (inf->output_mem_host_fp16!=0) cuda_free_host(inf->output_mem_host_fp16);
     if (inf->md.engineInfo) free((void*)inf->md.engineInfo);
     free(inf);
 }
@@ -736,9 +738,11 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     {
         log_debug("Infer reallocate output memory [%d > %d bytes, sz %dx%dx%d]\n",max_output_size,(int)inf->output_size,num,infer_h,infer_w);
         cuda_free(inf->output_mem);
-        cuda_free_host(inf->output_mem_host);
+        if (inf->output_mem_host_fp32!=0) cuda_free_host(inf->output_mem_host_fp32);
+        if (inf->output_mem_host_fp16!=0) cuda_free_host(inf->output_mem_host_fp16);
         inf->output_mem=cuda_malloc(max_output_size);
-        inf->output_mem_host=0;
+        inf->output_mem_host_fp32=0;
+        inf->output_mem_host_fp16=0;
         inf->output_size=max_output_size;
     }
     assert(true==inf->ec->setTensorAddress(inf->output_tensor_name, inf->output_mem));
@@ -763,10 +767,31 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     }
     else
     {
-        if (inf->output_mem_host==0) inf->output_mem_host=cuda_malloc_host(inf->output_size);
-        CHECK_CUDART_CALL(cudaMemcpyAsync(inf->output_mem_host, inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost,inf->stream));
+        if (inf->output_mem_host_fp32==0)
+        {
+            if (inf->md.output_is_fp16)
+            {
+                // fp16 case: allocate one buffer to copy output mem to and
+                // another buffer for fp16->fp32 conversion
+                inf->output_mem_host_fp16=cuda_malloc_host(inf->output_size);
+                inf->output_mem_host_fp32=cuda_malloc_host(inf->output_size*2);
+            }
+            else
+            {
+                inf->output_mem_host_fp32=cuda_malloc_host(inf->output_size);
+            }
+        }
+        CHECK_CUDART_CALL(cudaMemcpyAsync(inf->md.output_is_fp16 ? inf->output_mem_host_fp16 : inf->output_mem_host_fp32,
+                          inf->output_mem, inf->output_size, cudaMemcpyDeviceToHost, inf->stream));
         CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
-        float *p=(float *)inf->output_mem_host;
+        if (inf->md.output_is_fp16)
+        {
+            size_t num_fp16 = inf->output_size / sizeof(__half);
+            __half* out_fp16 = (__half*)inf->output_mem_host_fp16;
+            float* out_fp32 = (float*)inf->output_mem_host_fp32;
+            for (size_t i = 0; i < num_fp16; ++i) out_fp32[i] = __half2float(out_fp16[i]);
+        }
+        float *p=(float *)inf->output_mem_host_fp32;
         for(int i=0;i<num;i++)
         {
             dets[i]=process_detections(inf,
