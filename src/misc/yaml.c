@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cassert>
 #include <cstring>
+#include <stdio.h>
 #include "yaml_stuff.h"
 #include "log.h"
 
@@ -15,6 +16,7 @@ YAML::Node yaml_load(const char* input)
     auto has_yaml_extension = [](const std::string& path) {
         return path.size() >= 5 && (
             path.compare(path.size() - 5, 5, ".yaml") == 0 ||
+            path.compare(path.size() - 5, 5, ".json") == 0 ||
             (path.size() >= 4 && path.compare(path.size() - 4, 4, ".yml") == 0)
         );
     };

@@ -37,6 +37,10 @@ void track_shared_state_destroy(track_shared_state_t *tss);
 model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss);
 
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
+// min_process sets minimum time (in seconds) between successive frames where inference is run
+// i.e. specifies the maximum framerate to run the inference at
+// min_full_ROI is an interval that specifies how often to ignore the motiontracker and run on the whole frame
+// - this is useful to stop things getting "stuck".
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
 // returns the preferred image format for this stream
 image_format_t track_stream_get_stream_image_format(track_stream_t *ts);
@@ -47,5 +51,8 @@ void track_stream_run(track_stream_t *ts, image_t *img, double time);
 void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps);
 // run interface which takes time from img->timestamp - be sure it's monotonic!
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
+// if you do not provide a result callback then the results are cumulated into a vector
+// (one entry per frame) and can be retrieved with the below
 std::vector<track_results_t> track_stream_get_results(track_stream_t *ts);
+
 #endif
