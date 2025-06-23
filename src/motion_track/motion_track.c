@@ -38,8 +38,10 @@ motion_track_t *motion_track_create(const char *yaml_config)
     YAML::Node yaml_base=yaml_load(yaml_config);
 
     mt->mad_delta=yaml_get_float_value(yaml_base["motiontrack_mad_delta"], 24.0);
-    mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);
-    mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);
+    mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);    // must be <=64*8 = 512
+    mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);  // must be <=512
+    assert(mt->max_width>=64 && mt->max_width<=512 && ((mt->max_width&7)==0));
+    assert(mt->max_height>=64 && mt->max_height<=512 && ((mt->max_height&7)==0));
     mt->blur=yaml_get_bool_value(yaml_base["motiontrack_blur"], true);
     mt->noise_floor_device=(float *)cuda_malloc(64*64*4);
     mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
