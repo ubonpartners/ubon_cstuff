@@ -280,7 +280,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
     inf->md=md;
     //infer_build("/mldata/weights/onnx/yolo11l-dpa-131224.onnx", "/mldata/weights/trt/yolo11l-dpa-131224.trt");
-
+    log_debug("Loading TRT model %s",model);
     FILE* model_file = fopen(model, "rb");
     assert(model_file!=0);
     fseek(model_file, 0, SEEK_END);
@@ -534,6 +534,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
     cuda_nms_run(
         inf->nms,
         (float *)inf->output_mem,
+        inf->md.output_is_fp16,
         num,
         numBoxes,
         inf->md.num_classes,
@@ -563,6 +564,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
 
         cuda_nms_gather_kept_outputs(
             /*deviceOutputDev=*/ ((float*)inf->output_mem)+b*numBoxes*columns,
+            /*is_fp16*/         inf->md.output_is_fp16,
             /*numBoxes=*/       numBoxes,
             /*rowSize=*/        columns,
             /*keptIndices=*/    keptPerBatch,

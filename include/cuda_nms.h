@@ -102,6 +102,7 @@ CudaNMSHandle cuda_nms_allocate_workspace(
 void cuda_nms_run(
     CudaNMSHandle                 handle,
     const float*                  all_data,
+    bool                          data_is_fp16,
     int                           batch_size,
     int                           numBoxes,
     int                           numClasses,
@@ -115,6 +116,7 @@ void cuda_nms_run(
 
 void cuda_nms_gather_kept_outputs(
     const float*                             deviceOutputDev,   // [ rowSize × numBoxes ], on device
+    bool                                     data_is_fp16,
     int                                      numBoxes,
     int                                      rowSize,
     const std::vector<std::vector<uint16_t>>&     keptIndices,

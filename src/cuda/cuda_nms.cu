@@ -13,6 +13,7 @@
 #include <vector>
 #include <cmath>      // for std::isfinite
 #include <cstdint>    // for uint16_t
+#include <cuda_fp16.h>
 
 //-------------------------------------------------------------------------------------------------
 // Macro for CUDA error checking
@@ -53,6 +54,28 @@ __global__ static void filterAndCollectKernel(
     }
 }
 
+__global__ static void filterAndCollectKernelFP16(
+    const __half*    __restrict__ all_data,      // [ (4+numClasses) × numBoxes ]
+    int                         numBoxes,
+    int                         classIdx,
+    float                       thr,
+    int*            __restrict__ d_numCand,       // scalar per-class
+    uint16_t*       __restrict__ d_filteredIdx,   // [numBoxes]
+    __half*         __restrict__ d_filteredScores // [numBoxes]
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= numBoxes) return;
+    // load fp16, convert to float
+    float s = __half2float(all_data[(4 + classIdx) * (size_t)numBoxes + tid]);
+    if (s >= thr) {
+        int pos = atomicAdd(d_numCand, 1);
+        if (pos < numBoxes) {
+            d_filteredIdx[pos]    = static_cast<uint16_t>(tid);
+            d_filteredScores[pos] = __float2half_rn(s);
+        }
+    }
+}
+
 //-------------------------------------------------------------------------------------------------
 // Kernel A: Convert (cx,cy,w,h) → (x1,y1,x2,y2), storing in fp16
 //-------------------------------------------------------------------------------------------------
@@ -67,6 +90,29 @@ __global__ static void centerToCornerKernel(
     float cy = in_centers[1 * numBoxes + idx];
     float w  = in_centers[2 * numBoxes + idx];
     float h  = in_centers[3 * numBoxes + idx];
+
+    float x1 = cx - 0.5f * w;
+    float y1 = cy - 0.5f * h;
+    float x2 = cx + 0.5f * w;
+    float y2 = cy + 0.5f * h;
+
+    out_corners[idx * 4 + 0] = __float2half_rn(x1);
+    out_corners[idx * 4 + 1] = __float2half_rn(y1);
+    out_corners[idx * 4 + 2] = __float2half_rn(x2);
+    out_corners[idx * 4 + 3] = __float2half_rn(y2);
+}
+
+__global__ static void centerToCornerKernelFP16(
+    const __half*  __restrict__ in_centers,  // [4 × numBoxes] in fp16
+    __half*        __restrict__ out_corners, // [numBoxes × 4]
+    int                      numBoxes ) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numBoxes) return;
+
+    float cx = __half2float(in_centers[0 * numBoxes + idx]);
+    float cy = __half2float(in_centers[1 * numBoxes + idx]);
+    float w  = __half2float(in_centers[2 * numBoxes + idx]);
+    float h  = __half2float(in_centers[3 * numBoxes + idx]);
 
     float x1 = cx - 0.5f * w;
     float y1 = cy - 0.5f * h;
@@ -184,6 +230,22 @@ __global__ static void gatherFeaturesKernel(
     dst[k * rowSize + r] = src[r * numBoxes + box];
 }
 
+__global__ static void gatherFeaturesKernelFP16(
+    const __half*       __restrict__ src,        // [rowSize × numBoxes] in fp16
+    const uint16_t*     __restrict__ keptIdx,    // [totalKept]
+    int                             numBoxes,
+    int                             rowSize,
+    int                             totalKept,
+    float*          __restrict__    dst         // [totalKept × rowSize], always float
+) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    int r = blockIdx.y * blockDim.y + threadIdx.y;
+    if (k >= totalKept || r >= rowSize) return;
+    int box = keptIdx[k];
+    float v = __half2float(src[r * numBoxes + box]);
+    dst[k * rowSize + r] = v;
+}
+
 //-------------------------------------------------------------------------------------------------
 // Workspace struct with new buffers for GPU filtering/sorting
 //-------------------------------------------------------------------------------------------------
@@ -272,6 +334,7 @@ void cuda_nms_free_workspace(CudaNMSHandle handle) {
 void cuda_nms_run(
     CudaNMSHandle                     handle,
     const float*                      all_data,       // [batch × rowSize × numBoxes]
+    bool                              data_is_fp16,
     int                               batch_size,
     int                               numBoxes,
     int                               numClasses,
@@ -296,21 +359,41 @@ void cuda_nms_run(
 
     for (int b = 0; b < batch_size; ++b) {
         const float* srcBatch = all_data + (size_t)b * rowSize * numBoxes;
-
+        const float*  srcFloat = all_data  + (size_t)b * rowSize * numBoxes;
+        const __half* srcHalf  = reinterpret_cast<const __half*>(all_data)
+                                   + (size_t)b * rowSize * numBoxes;
         // 1) Convert centers → corners
         int t1 = 256, b1 = (numBoxes + t1 - 1) / t1;
-        centerToCornerKernel<<<b1, t1, 0, stream>>>(srcBatch, ws->d_corners, numBoxes);
+        //centerToCornerKernel<<<b1, t1, 0, stream>>>(srcBatch, ws->d_corners, numBoxes);
+        if (!data_is_fp16) {
+            centerToCornerKernel<<<b1,t1,0,stream>>>(srcFloat, ws->d_corners, numBoxes);
+        } else {
+            centerToCornerKernelFP16<<<b1,t1,0,stream>>>(srcHalf, ws->d_corners, numBoxes);
+        }
         CUDA_CHECK(cudaGetLastError());
 
         // 2) Per-class filtering, sorting, suppression
         for (int c = 0; c < numClasses; ++c) {
             CUDA_CHECK(cudaMemsetAsync(ws->d_numCand, 0, sizeof(int), stream));
             int t2 = 256, b2 = (numBoxes + t2 - 1) / t2;
-            filterAndCollectKernel<<<b2, t2, 0, stream>>>(
+            /*filterAndCollectKernel<<<b2, t2, 0, stream>>>(
                 srcBatch, numBoxes, c, scoreThreshold,
                 ws->d_numCand,
                 ws->d_filteredIdx,
-                ws->d_filteredScores);
+                ws->d_filteredScores);*/
+            if (!data_is_fp16) {
+                filterAndCollectKernel<<<b2,t2,0,stream>>>(
+                    srcFloat, numBoxes, c, scoreThreshold,
+                    ws->d_numCand,
+                    ws->d_filteredIdx,
+                    ws->d_filteredScores);
+            } else {
+                filterAndCollectKernelFP16<<<b2,t2,0,stream>>>(
+                    srcHalf, numBoxes, c, scoreThreshold,
+                    ws->d_numCand,
+                    ws->d_filteredIdx,
+                    ws->d_filteredScores);
+            }
             CUDA_CHECK(cudaGetLastError());
 
             CUDA_CHECK(cudaMemcpyAsync(
@@ -393,6 +476,7 @@ void cuda_nms_run(
 //-------------------------------------------------------------------------------------------------
 void cuda_nms_gather_kept_outputs(
     const float*                          deviceOutputDev,   // [rowSize × numBoxes]
+    bool                                  data_is_fp16,
     int                                   numBoxes,
     int                                   rowSize,
     const std::vector<std::vector<uint16_t>>& keptIndices,
@@ -419,9 +503,20 @@ void cuda_nms_gather_kept_outputs(
     dim3 blockDim(TILE_X, TILE_Y);
     dim3 gridDim((totalKept + TILE_X - 1) / TILE_X,
                  (rowSize   + TILE_Y - 1) / TILE_Y);
-    gatherFeaturesKernel<<<gridDim, blockDim>>>(
+    /*gatherFeaturesKernel<<<gridDim, blockDim>>>(
         deviceOutputDev, d_keptFlat,
-        numBoxes, rowSize, totalKept, d_gathered);
+        numBoxes, rowSize, totalKept, d_gathered);*/
+    const float*  srcFloat = deviceOutputDev;
+    const __half* srcHalf  = reinterpret_cast<const __half*>(deviceOutputDev);
+    if (!data_is_fp16) {
+        gatherFeaturesKernel<<<gridDim, blockDim>>>(
+            srcFloat, d_keptFlat,
+            numBoxes, rowSize, totalKept, d_gathered);
+    } else {
+        gatherFeaturesKernelFP16<<<gridDim, blockDim>>>(
+            srcHalf, d_keptFlat,
+            numBoxes, rowSize, totalKept, d_gathered);
+    }
     CUDA_CHECK(cudaGetLastError());
 
     hostGathered.resize((size_t)totalKept * rowSize);
