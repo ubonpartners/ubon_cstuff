@@ -1,6 +1,7 @@
 Makefile
 /build
 ubon_pycstuff/build/
+ubon_pycstuff/build_debug/
 trt_timing_cache.dat
 ubon_pycstuff/*.so
 _skbuild/
