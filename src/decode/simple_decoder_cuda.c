@@ -94,7 +94,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.bitDepthMinus8 = pFormat->bit_depth_luma_minus8;
         decodeCreateInfo.vidLock = dec->vidlock;
         decodeCreateInfo.DeinterlaceMode = cudaVideoDeinterlaceMode_Weave;
-        decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUDA;//cudaVideoCreate_PreferCUVID;
+        decodeCreateInfo.ulCreationFlags = cudaVideoCreate_PreferCUVID;
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
     }
@@ -125,7 +125,9 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
-    if (1) {
+    if (IMAGE_FORMAT_NV12_DEVICE==dec->output_format) {
+        // cuda decoder outpute NV12. If we are also asking for NV12 then we need to copy it.
+        // Sadly, the copy is needed as the data only stays valid inside the map video
         image_t *dec_img=create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
         videoProcessingParameters.output_stream = dec_img->stream;
         CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
@@ -142,6 +144,8 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         destroy_image(dec_img);
     }
     else {
+        // for other output formats we can wrap the cuda output in an image structure and call convert
+        // the convert effectively 'copies' the data
         image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
         videoProcessingParameters.output_stream = dec_img->stream;
         CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
