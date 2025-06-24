@@ -97,7 +97,7 @@ if(DEFINED ENV{JETSON_SOC})
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
-        -lnvvpi -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lnvvpi -lnvidia-ml -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
