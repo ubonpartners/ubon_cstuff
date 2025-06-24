@@ -258,16 +258,20 @@ image_t *load_jpeg(const char *file)
     uint8_t *mem=(uint8_t*)malloc(sz);
     if (mem)
     {
-        fread(mem, 1, sz, f);
-        ret=decode_jpeg_nvjpeg(mem,sz);
-        if (ret==0)
+        if (sz!=fread(mem, 1, sz, f))
+            log_error("Could not read jpeg file %s",file);
+        else
         {
-            //log_error("NVJPEG could not decode jpeg %s", file);
-            // failed; try libjpeg (e.g. nvjpeg can't seem to code CMMY)
-            ret=decode_jpeg(mem, sz);
+            ret=decode_jpeg_nvjpeg(mem,sz);
             if (ret==0)
             {
-                log_error("Could not decode jpeg %s", file);
+                //log_error("NVJPEG could not decode jpeg %s", file);
+                // failed; try libjpeg (e.g. nvjpeg can't seem to code CMMY)
+                ret=decode_jpeg(mem, sz);
+                if (ret==0)
+                {
+                    log_error("Could not decode jpeg %s", file);
+                }
             }
         }
         free(mem);
