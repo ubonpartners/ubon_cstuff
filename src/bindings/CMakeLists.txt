@@ -17,7 +17,7 @@ else()
     set(ARCH_LIBS
         pthread cuda cudart cublas nvinfer nvonnxparser openh264 pcap srtp2
         nvcuvid nppc nppisu nppig nppicc nppif nppidei jpeg SDL2 yuv
-        nvidia-opticalflow yaml-cpp nvjpeg # etc
+        nvidia-opticalflow yaml-cpp nvjpeg nvidia-ml
     )
 endif()
 

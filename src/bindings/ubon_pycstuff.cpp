@@ -21,6 +21,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "infer_aux.h"
 #include "jpeg.h"
 #include "track.h"
+#include "motion_track.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -836,6 +837,44 @@ private:
     std::shared_ptr<PyTrackSharedState> shared_state;  // Shared ownership to keep it alive
 };
 
+class c_motion_tracker {
+public:
+    motion_track_t* mt;
+
+    c_motion_tracker(const std::string& config_yaml) {
+        mt = motion_track_create(config_yaml.c_str());
+        if (!mt) {
+            throw std::runtime_error("Failed to create motion_track_t");
+        }
+    }
+
+    ~c_motion_tracker() {
+        if (mt) {
+            motion_track_destroy(mt);
+        }
+    }
+
+    void add_frame(std::shared_ptr<c_image> img) {
+        motion_track_add_frame(mt, img->raw());
+    }
+
+    std::vector<float> get_roi() {
+        roi_t roi = motion_track_get_roi(mt);
+        return std::vector<float>(roi.box, roi.box + 4);
+    }
+
+    void set_roi(const std::vector<float>& roi_vec) {
+        if (roi_vec.size() != 4) {
+            throw std::runtime_error("ROI must be a list of 4 floats");
+        }
+        roi_t roi;
+        for (int i = 0; i < 4; ++i) {
+            roi.box[i] = roi_vec[i];
+        }
+        motion_track_set_roi(mt, roi);
+    }
+};
+
 PYBIND11_MODULE(ubon_pycstuff, m) {
     //std::cout << "ubon_pycstuff bindings loaded for version" << ubon_cstuff_get_version() << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
@@ -984,6 +1023,12 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     py::class_<c_pcap_decoder, std::shared_ptr<c_pcap_decoder>>(m, "c_pcap_decoder")
         .def(py::init<const std::string&>(), py::arg("filename"))
         .def("get_frame", &c_pcap_decoder::get_frame, "Get the next decoded frame (returns c_image or None)");
+
+    py::class_<c_motion_tracker, std::shared_ptr<c_motion_tracker>>(m, "c_motion_tracker")
+        .def(py::init<const std::string&>(), py::arg("config_yaml"))
+        .def("add_frame", &c_motion_tracker::add_frame, "Add image frame to tracker")
+        .def("get_roi", &c_motion_tracker::get_roi, "Get current ROI as list of 4 floats")
+        .def("set_roi", &c_motion_tracker::set_roi, py::arg("roi"), "Set ROI from list of 4 floats");
 
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",
