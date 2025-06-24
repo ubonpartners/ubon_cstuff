@@ -83,8 +83,8 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
         decodeCreateInfo.ulTargetHeight = dec->out_height;
         decodeCreateInfo.ulMaxWidth = pFormat->coded_width;
         decodeCreateInfo.ulMaxHeight = pFormat->coded_height;
-        decodeCreateInfo.ulNumDecodeSurfaces = 2+pFormat->min_num_decode_surfaces;
-        decodeCreateInfo.ulNumOutputSurfaces = 2;//1;
+        decodeCreateInfo.ulNumDecodeSurfaces = pFormat->min_num_decode_surfaces;
+        decodeCreateInfo.ulNumOutputSurfaces = 1;
         decodeCreateInfo.display_area.left=pFormat->display_area.left;
         decodeCreateInfo.display_area.top=pFormat->display_area.top;
         decodeCreateInfo.display_area.right=pFormat->display_area.right;
@@ -98,7 +98,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
     }
-    return 1;
+    return pFormat->min_num_decode_surfaces; // override the parser DPB size; who knew!
 }
 
 static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicParams)
@@ -125,6 +125,16 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
+    /* typedef enum cuvidDecodeStatus_enum
+{
+    cuvidDecodeStatus_Invalid         = 0,   // Decode status is not valid
+    cuvidDecodeStatus_InProgress      = 1,   // Decode is in progress
+    cuvidDecodeStatus_Success         = 2,   // Decode is completed without any errors
+    // 3 to 7 enums are reserved for future use
+    cuvidDecodeStatus_Error           = 8,   // Decode is completed with an error (error is not concealed)
+    cuvidDecodeStatus_Error_Concealed = 9,   // Decode is completed with an error and error is concealed
+} cuvidDecodeStatus;*/
+
     if (IMAGE_FORMAT_NV12_DEVICE==dec->output_format) {
         // cuda decoder outpute NV12. If we are also asking for NV12 then we need to copy it.
         // Sadly, the copy is needed as the data only stays valid inside the map video
@@ -149,6 +159,14 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
         videoProcessingParameters.output_stream = dec_img->stream;
         CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
+
+        CUVIDGETDECODESTATUS decodeStatus;
+        CHECK_CUDA_CALL(cuvidGetDecodeStatus(dec->decoder, pDispInfo->picture_index, &decodeStatus));
+        if (decodeStatus.decodeStatus!=cuvidDecodeStatus_Success)
+        {
+            log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
+        }
+
         dec_img->y=(uint8_t*)decodedFrame;
         dec_img->u=(uint8_t*)decodedFrame+pitch*dec->out_height;
         dec_img->v=dec_img->u+1;
@@ -188,7 +206,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
     videoParserParams.CodecType = (codec==SIMPLE_DECODER_CODEC_H264) ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC;
-    videoParserParams.ulMaxNumDecodeSurfaces = 4;//
+    videoParserParams.ulMaxNumDecodeSurfaces = 8;//
     videoParserParams.ulClockRate = 1000;
     videoParserParams.ulErrorThreshold = 100;
     videoParserParams.ulMaxDisplayDelay = 0;
