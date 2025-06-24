@@ -18,12 +18,14 @@
 #include "profile.h"
 #include "memory_stuff.h"
 #include "infer_thread.h"
+#include "display.h"
 
 typedef struct state {
     track_stream_t *ts;
-    uint32_t tracked_frames;
-    uint32_t tracked_frames_nonskip;
-    uint32_t decoded_macroblocks;
+    uint64_t tracked_frames;
+    uint64_t tracked_frames_nonskip;
+    uint64_t decoded_macroblocks;
+    uint64_t decoded_frames;
 } state_t;
 
 typedef struct test_clip
@@ -50,9 +52,12 @@ static volatile int keep_running = 1;
 
 static void track_result(void *context, track_results_t *r) {
     state_t *s = (state_t *)context;
-    if (r->result_type!=TRACK_FRAME_SKIP_FRAMERATE) s->tracked_frames++;
-    if (r->result_type == TRACK_FRAME_TRACKED_ROI || r->result_type == TRACK_FRAME_TRACKED_FULL_REFRESH) {
-        s->tracked_frames_nonskip++;
+    if (keep_running)
+    {
+        if (r->result_type!=TRACK_FRAME_SKIP_FRAMERATE) s->tracked_frames++;
+        if (r->result_type == TRACK_FRAME_TRACKED_ROI || r->result_type == TRACK_FRAME_TRACKED_FULL_REFRESH) {
+            s->tracked_frames_nonskip++;
+        }
     }
     if (r->track_dets != 0) detection_list_destroy(r->track_dets);
     if (r->inference_dets != 0) detection_list_destroy(r->inference_dets);
@@ -60,8 +65,16 @@ static void track_result(void *context, track_results_t *r) {
 
 static void process_image(void *context, image_t *img) {
     state_t *s = (state_t *)context;
-    s->decoded_macroblocks+=(img->width * img->height) / (16 * 16);
-    track_stream_run_frame_time(s->ts, img);
+    if (keep_running)
+    {
+        s->decoded_macroblocks+=(img->width * img->height) / (16 * 16);
+        s->decoded_frames++;
+        //track_stream_run_frame_time(s->ts, img);
+    }
+    if (1)
+    {
+        //display_image("Test", img);
+    }
 }
 
 static void *run_track_worker(void *arg) {
@@ -137,6 +150,7 @@ static void run_one_test(test_config_t *config)
     pthread_t *threads = (pthread_t*)malloc(sizeof(pthread_t) * config->num_threads);
     thread_args_t *args = (thread_args_t*)malloc(sizeof(thread_args_t) * config->num_threads);
     keep_running = 1;
+    double start_time = profile_time();
     unsigned int total_tracked = 0;
     unsigned int total_tracked_nonskip = 0;
     uint64_t total_decoded_macroblocks = 0;
@@ -158,6 +172,7 @@ static void run_one_test(test_config_t *config)
 
     sleep((unsigned int)config->duration_sec);
     keep_running = 0;
+    double elapsed = profile_time()-start_time;
 
     for (int i = 0; i < config->num_threads; ++i) {
         pthread_join(threads[i], NULL);
@@ -168,6 +183,7 @@ static void run_one_test(test_config_t *config)
     config->fps=avg_fps;
     config->fps_nonskip=avg_fps_nonskipped;
     config->mbps=((double)total_decoded_macroblocks)/config->duration_sec;
+    //printf("MACROS %f SEC %d / %f rate %f 720; %f\n", (double)total_decoded_macroblocks, config->duration_sec, elapsed, config->mbps, config->mbps/3600.0);
     //printf("%40s: %.2f (total) %.2f (nonskip)\n", config->filename, avg_fps, avg_fps_nonskipped);
 
     track_shared_state_destroy(shared_state);
@@ -242,6 +258,13 @@ int main(int argc, char *argv[]) {
     test_config_t config[64];
     for(int i=0;i<64;i++) config[i]=dconfig;
     int nconfig;
+
+    {
+        config[nconfig].testset="Single test UK OF 1512p H265";
+        config[nconfig].input_clip = &clips[12];
+        config[nconfig].num_threads=1;
+        sprintf(config[nconfig++].name, "%s",clips[12].friendly_name);
+    }
 
     for(int i=0;i<14;i++)
     {

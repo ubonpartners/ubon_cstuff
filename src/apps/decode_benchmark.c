@@ -20,8 +20,10 @@ static uint64_t combine_hash(uint64_t total, uint32_t frame_hash) {
 
 struct ThreadResult {
     double fps;
+    double mbps;
     bool compute_hash;
     uint64_t decoded_frames;
+    uint64_t decoded_macroblocks;
     uint64_t total_hash;
 };
 
@@ -33,6 +35,7 @@ static void process_image(void *context, image_t *img) {
         out->total_hash = combine_hash(out->total_hash, hash);
     }
     out->decoded_frames+=1;
+    out->decoded_macroblocks += (img->width * img->height) / (16 * 16);
 }
 
 static void do_decode(const char *filename, bool is_h265, ThreadResult *out, int num_iters, bool compute_hash) {
@@ -56,17 +59,20 @@ static void do_decode(const char *filename, bool is_h265, ThreadResult *out, int
     auto start = std::chrono::high_resolution_clock::now();
     for(int i=0;i<num_iters;i++)
     {
+        fseek(input, 0, SEEK_SET);
         while (true) {
             size_t bytes = fread(buffer.data(), 1, buf_size, input);
             if (bytes == 0) break;
             simple_decoder_decode(decoder, buffer.data(), bytes);
         }
+         // Reset file pointer for next iteratio
     }
     simple_decoder_destroy(decoder);
     auto end = std::chrono::high_resolution_clock::now();
 
     double secs = std::chrono::duration<double>(end - start).count();
     out->fps = out->decoded_frames / secs;
+    out->mbps = (double)out->decoded_macroblocks / secs;
 
     fclose(input);
 }
@@ -81,6 +87,8 @@ typedef struct test
 } test_t;
 
 static test_t tests[]={
+    {"UK office 1512p H265", "/mldata/video/UKof_LD_Indoor_Light_OHcam_004.265", 1, 3, false},
+    {"UK office 1512p H265", "/mldata/video/mot_test.265", 1, 3, false},
     {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 1,   10, true},
     {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 8,   10, true},
     {"INof 720p, H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 1,   10, true},
@@ -112,7 +120,8 @@ int main(int argc, char *argv[]) {
     // Print header
     hdr       << std::setw(30) << "Name"
               << std::setw(8) << "Threads"
-              << std::setw(10) << "FPS"
+              << std::setw(12) << "FPS"
+              << std::setw(12) << "FPS(@720p)"
               << std::setw(18) << "Hash"
               << std::endl;
 
@@ -141,8 +150,10 @@ int main(int argc, char *argv[]) {
         uint64_t ref_hash = results[0].total_hash;
         bool all_match = true;
         double total_fps = 0;
+        double total_mbps = 0;
         for (auto &r : results) {
             total_fps += r.fps;
+            total_mbps +=r.mbps;
             if (r.total_hash != ref_hash) all_match = false;
         }
 
@@ -152,11 +163,11 @@ int main(int argc, char *argv[]) {
 
         if (results[0].compute_hash)
         {
-            oss << std::setw(10) << "N/A";
+            oss << std::setw(12) << "N/A" << std::setw(12) << "N/A";
             oss << "        " << (all_match ? "OK" : "MISMATCH") << ":0x"
                 << std::hex << ref_hash << std::dec;
         } else {
-            oss << std::setw(10) << std::fixed << std::setprecision(2) << total_fps;
+            oss << std::setw(10) << std::fixed << std::setw(12) << (int)total_fps << std::setw(12) << (int)(total_mbps/3600.0);
             oss << std::setw(18) << "N/A";
         }
         oss << "\n";
