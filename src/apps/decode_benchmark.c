@@ -47,27 +47,12 @@ static void do_decode(const char *filename, bool is_h265, ThreadResult *out, int
         return;
     }
     out->compute_hash = compute_hash;
-    simple_decoder_t *decoder = simple_decoder_create(out,
-                                                      process_image,
-                                                      is_h265 ? SIMPLE_DECODER_CODEC_H265
-                                                              : SIMPLE_DECODER_CODEC_H264);
-
-    // Read & decode full file
-    const size_t buf_size = 4096;
-    std::vector<uint8_t> buffer(buf_size);
 
     auto start = std::chrono::high_resolution_clock::now();
     for(int i=0;i<num_iters;i++)
     {
-        fseek(input, 0, SEEK_SET);
-        while (true) {
-            size_t bytes = fread(buffer.data(), 1, buf_size, input);
-            if (bytes == 0) break;
-            simple_decoder_decode(decoder, buffer.data(), bytes);
-        }
-         // Reset file pointer for next iteratio
+        decode_file(filename, out, process_image, 0);
     }
-    simple_decoder_destroy(decoder);
     auto end = std::chrono::high_resolution_clock::now();
 
     double secs = std::chrono::duration<double>(end - start).count();

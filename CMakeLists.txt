@@ -160,6 +160,7 @@ endforeach()
 set(APP_MAIN_FILES
     ${CMAKE_SOURCE_DIR}/src/main.c
     ${CMAKE_SOURCE_DIR}/src/apps/decode_benchmark.c
+    ${CMAKE_SOURCE_DIR}/src/apps/decode_file.c
     ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
     ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
     ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c

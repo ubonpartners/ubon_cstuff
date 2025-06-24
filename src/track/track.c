@@ -252,7 +252,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     roi_t motion_roi=motion_track_get_roi(ts->mt);
     if (roi_area(&motion_roi)<tss->motiontrack_min_roi)
     {
-        debugf("skip inference\n");
+        debugf("skip inference ROI area %f < %f", roi_area(&motion_roi), tss->motiontrack_min_roi);
         motion_track_set_roi(ts->mt, ROI_ZERO);
         destroy_image(image_scaled);
 

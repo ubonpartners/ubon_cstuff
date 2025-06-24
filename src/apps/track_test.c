@@ -17,18 +17,24 @@ typedef struct state
     track_shared_state_t *tss;
     track_stream_t *ts;
     image_t *img;
+    double start_time;
 } state_t;
 
 static void track_result(void *context, track_results_t *r)
 {
     state_t *s=(state_t *)context;
-    printf("result type %d\n",r->result_type);
+    printf("result type %d time %f\n",r->result_type,r->time);
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);
         image_t *img=image_reference(s->img);
         image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
         display_image("video", out_frame_rgb);
+        double target_time=r->time;
+        while(profile_time()-s->start_time<target_time)
+        {
+            usleep(1000);
+        }
         destroy_image(out_frame_rgb);
         destroy_image(img);
     }
@@ -55,28 +61,12 @@ int main(int argc, char *argv[])
     memset(&s, 0, sizeof(state_t));
     s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_test.yaml");
     s.ts=track_stream_create(s.tss, &s, track_result);
+    s.start_time=profile_time();
     track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);
 
     if (argc>1)
     {
-        FILE *input = fopen(argv[1], "rb");
-        if (!input)
-        {
-            printf("Failed to open input file %s", argv[1]);
-            return -1;
-        }
-
-        simple_decoder_t *decoder = simple_decoder_create(&s, process_image, SIMPLE_DECODER_CODEC_H264);
-
-        uint8_t buffer[4096];
-        size_t bytes_read;
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0)
-        {
-            simple_decoder_decode(decoder, buffer, bytes_read);
-        }
-
-        simple_decoder_destroy(decoder);
-        fclose(input);
+        decode_file(argv[1], &s, process_image, 0);
     }
     else
     {

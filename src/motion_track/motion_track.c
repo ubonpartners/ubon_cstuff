@@ -4,6 +4,7 @@
 #include <math.h>
 #include <cassert>
 #include <algorithm>
+#include <unistd.h>
 #include <stdio.h>
 #include "image.h"
 #include "cuda_stuff.h"
@@ -133,6 +134,9 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     assert(mad_img!=0);
     assert(mad_img->format==IMAGE_FORMAT_YUV420_DEVICE);
 
+    //display_image("mad", mad_img);
+    //usleep(250000);
+
     int block_w=mt->block_w;
     int block_h=mt->block_h;
     assert(block_w<=64);
@@ -174,7 +178,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         roi.box[1]=roi_t/image_scaled->height;
         roi.box[2]=roi_r/image_scaled->width;
         roi.box[3]=roi_b/image_scaled->height;
-        //printf("%.3f %.3f %.3f %.3f\n",roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
+        debugf("ROI %.3f %.3f %.3f %.3f A %0.4f",roi.box[0],roi.box[1],roi.box[2],roi.box[3], roi_area(&roi));
     }
 
     mt->in_img=image_scaled;

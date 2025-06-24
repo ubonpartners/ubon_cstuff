@@ -93,19 +93,12 @@ static void *run_track_worker(void *arg) {
         return NULL;
     }
 
-    bool is_h265=strcmp(filename + strlen(filename) - strlen(".265"), ".265") == 0;
-    simple_decoder_t *decoder = simple_decoder_create(&s, process_image, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
-    simple_decoder_set_output_format(decoder, track_stream_get_stream_image_format(s.ts));
-    simple_decoder_set_framerate(decoder, args->video_file_framerate);
-    uint8_t buffer[4096];
+    auto stop_callback=[](void *context) {
+        return !keep_running;
+    };
 
-    while (keep_running) {
-        size_t bytes_read = fread(buffer, 1, sizeof(buffer), input);
-        if (bytes_read <= 0) {
-            fseek(input, 0, SEEK_SET);
-            continue;
-        }
-        simple_decoder_decode(decoder, buffer, bytes_read);
+    while(keep_running){
+        decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
     }
 
     pthread_mutex_lock(args->lock);
@@ -114,7 +107,6 @@ static void *run_track_worker(void *arg) {
     *args->total_decoded_macroblocks += s.decoded_macroblocks;
     pthread_mutex_unlock(args->lock);
 
-    simple_decoder_destroy(decoder);
     fclose(input);
     track_stream_destroy(s.ts);
     return NULL;
