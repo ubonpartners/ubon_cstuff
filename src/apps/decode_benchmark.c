@@ -92,6 +92,8 @@ static test_t tests[]={
     {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 16,  10, false},
     {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 32,  10, false},
     {"INof 720p, H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 16,  10, false},
+    {"BC1, 1080p, H265", "/mldata/video/bc1.265", 1, 1, false},
+    {"BC1, 1080p, H264", "/mldata/video/bc1.264", 1, 1, false},
     {"BC1, 1080p, H265", "/mldata/video/bc1.265", 2, 1, false},
     {"BC1, 1080p, H264", "/mldata/video/bc1.264", 2, 1, false}
 };
@@ -130,8 +132,9 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < tc; ++i) {
             workers.emplace_back(do_decode, filename, is_h265, &results[i], tests[t].num_iters, tests[t].compute_hash);
         }
-        for (auto &t : workers) t.join();
         auto end = std::chrono::high_resolution_clock::now();
+        for (auto &t : workers) t.join();
+
         auto end_mem = get_process_gpu_mem(false, false);
 
         // Verify hashes match
