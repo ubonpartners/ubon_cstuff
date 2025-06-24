@@ -10,6 +10,7 @@
 #include "track.h"
 #include "misc.h"
 #include "profile.h"
+#include "trackset.h"
 
 typedef struct state
 {
@@ -47,6 +48,8 @@ int main(int argc, char *argv[])
     printf("ubon_cstuff version = %s\n", ubon_cstuff_get_version());
     init_cuda_stuff();
     image_init();
+
+    trackset_t *ts=trackset_load("/mldata/tracking/cevo/annotation/UKof_HD_Indoor_Light_OHcam_001.json");
 
     state_t s;
     memset(&s, 0, sizeof(state_t));

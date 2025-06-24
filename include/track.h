@@ -10,6 +10,7 @@ typedef struct track_results track_results_t;;
 #include "image.h"
 #include "detections.h"
 #include "simple_decoder.h"
+#include "infer.h"
 
 typedef enum result_type
 {
@@ -35,6 +36,7 @@ struct track_results
 track_shared_state_t *track_shared_state_create(const char *yaml_config);
 void track_shared_state_destroy(track_shared_state_t *tss);
 model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss);
+void track_shared_state_configure_inference(track_shared_state_t *tss, infer_config_t *config);
 
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
 // min_process sets minimum time (in seconds) between successive frames where inference is run

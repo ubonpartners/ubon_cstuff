@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <iostream>
+#include <nvml.h>
+#include <unistd.h>
 #include <mutex>
 #include <cuda.h>
 #include <cassert>
@@ -10,12 +12,17 @@
 #include "misc.h"
 #include "memory_stuff.h"
 
+#define USE_NVML    1
+
 static bool cuda_inited=false;
 static allocation_tracker_t cuda_alloc_tracker;
 static allocation_tracker_t cuda_alloc_async_tracker;
 static allocation_tracker_t cuda_alloc_host_tracker;
-
+static pthread_t cuda_thread;
 NppStreamContext nppStreamCtx;
+#ifdef USE_NVML
+static nvmlDevice_t nvml_device;
+#endif
 
 NppStreamContext get_nppStreamCtx()
 {
@@ -40,6 +47,8 @@ typedef struct cuda_stuff_context {
     uint32_t event_not_ready;
     uint32_t stream_ct;
     uint32_t stream_not_ready;
+    uint64_t process_gpu_memory_hwm;
+    uint64_t process_gpu_memory_baseline;
     cudaEvent_t events[NUM_EVENTS]; // Pre-created CUDA events.
     cudaStream_t streams[NUM_STREAMS];
 } cuda_stuff_context_t;
@@ -101,9 +110,63 @@ void cuda_stream_add_dependency(cudaStream_t stream, cudaStream_t stream_depends
     pthread_mutex_unlock(&cs.lock);
 }
 
+static uint64_t get_process_GPU_memory()
+{
+    #ifdef USE_NVML
+    nvmlReturn_t result;
+    unsigned int infoCount = 100;
+    nvmlProcessInfo_t infos[100];
+
+    result = nvmlDeviceGetComputeRunningProcesses(nvml_device, &infoCount, infos);
+    if (result != NVML_SUCCESS && result != NVML_ERROR_INSUFFICIENT_SIZE) {
+        printf("Failed to get compute processes: %s\n", nvmlErrorString(result));
+    }
+
+    unsigned int my_pid = getpid();
+
+    // Search for this process
+    for (unsigned int i = 0; i < infoCount; ++i) {
+        if (infos[i].pid == my_pid) {
+            if ((unsigned long long)infos[i].usedGpuMemory)
+            return (unsigned long long)infos[i].usedGpuMemory;
+        }
+    }
+    #endif
+    return 0;
+}
+static void *cuda_thread_fn(void *arg)
+{
+    while(1)
+    {
+        usleep(100*1000);
+
+        uint64_t process_gpu_memory=get_process_GPU_memory();
+        if (process_gpu_memory>cs.process_gpu_memory_hwm)
+        {
+            cs.process_gpu_memory_hwm=process_gpu_memory;
+        }
+    }
+    return 0;
+}
+
 static void do_cuda_init()
 {
     log_debug("Cuda init");
+
+    // --------------------------------------------------
+    // Start NVML
+    // --------------------------------------------------
+    #ifdef USE_NVML
+    nvmlReturn_t result = nvmlInit();
+    if (result != NVML_SUCCESS) {
+        log_fatal("Failed to initialize NVML: %s", nvmlErrorString(result));
+    }
+    result = nvmlDeviceGetHandleByIndex(0, &nvml_device);
+    if (result != NVML_SUCCESS) {
+        log_fatal("Failed to get NVML handle for device 0: %s", nvmlErrorString(result));
+    }
+    #endif
+    log_debug("Initial process GPU memory usage %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
 
     // --------------------------------------------------
     // Register allocation trackers
@@ -126,7 +189,6 @@ static void do_cuda_init()
     // --------------------------------------------------
     // Bind device for Runtime API
     // --------------------------------------------------
-
     int device = 0;
     CHECK_CUDART_CALL(cudaSetDevice(device));
 
@@ -134,7 +196,7 @@ static void do_cuda_init()
     // Get default pool and
     // Create cuda memory pool for our cudaMalloc/cudaMallocAsync
     // --------------------------------------------------
-
+    log_debug("GPU memory before pool creation: %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
     CHECK_CUDA_CALL(cuDeviceGetDefaultMemPool(&cs.defaultPool, cuDev));
 
      {
@@ -183,7 +245,11 @@ static void do_cuda_init()
     for(int i=0;i<NUM_EVENTS;i++)
         CHECK_CUDART_CALL(cudaStreamCreate(&cs.streams[i]));
 
+    log_debug("GPU memory usage after event+stream creation: %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
+    cs.process_gpu_memory_baseline=get_process_GPU_memory();
+
     cuda_inited=true;
+    pthread_create(&cuda_thread, NULL, cuda_thread_fn, 0);
 }
 
 //--------------------------------------------------------------------
@@ -328,26 +394,28 @@ void cuda_malloc_async_check(void *ptr)
 void cuda_free(void *ptr)
 {
     if (ptr==0) return;
-    track_check(&cuda_alloc_tracker, ptr);
+    track_free_table(&cuda_alloc_tracker, ptr);
     CHECK_CUDART_CALL(cudaFreeAsync(ptr, cs.stream));
     CHECK_CUDART_CALL(cudaStreamSynchronize(cs.stream));
-    track_free_table(&cuda_alloc_tracker, ptr);
 }
 
 void cuda_free_async(void *ptr, cudaStream_t stream)
 {
     if (ptr==0) return;
-    track_check(&cuda_alloc_async_tracker, ptr);
-    CHECK_CUDART_CALL(cudaFreeAsync(ptr, stream));
     track_free_table(&cuda_alloc_async_tracker, ptr);
+    CHECK_CUDART_CALL(cudaFreeAsync(ptr, stream));
 }
 
 void cuda_free_host(void *ptr)
 {
     if (ptr==0) return;
-    track_check(&cuda_alloc_host_tracker, ptr);
-    CHECK_CUDART_CALL(cudaFreeHost(ptr));
     track_free_table(&cuda_alloc_host_tracker, ptr);
+    CHECK_CUDART_CALL(cudaFreeHost(ptr));
+}
+
+void cuda_flush()
+{
+    CHECK_CUDA_CALL(cuMemPoolTrimTo(cs.appPool, 0));
 }
 
 double get_cuda_mem(bool default_pool, bool hwm, bool reset)
@@ -364,4 +432,20 @@ double get_cuda_mem(bool default_pool, bool hwm, bool reset)
 
     }
     return (double)used;
+}
+
+double get_process_gpu_mem(bool hwm, bool reset)
+{
+    if (hwm)
+    {
+        double ret=(double)cs.process_gpu_memory_hwm;
+        if (reset)
+        {
+            cuda_flush();
+            cs.process_gpu_memory_hwm=0;
+        }
+        //ret-=(double)cs.process_gpu_memory_baseline;
+        return ret;
+    }
+    return (double)get_process_GPU_memory()/*-(double)cs.process_gpu_memory_baseline*/;
 }

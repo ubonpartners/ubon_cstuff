@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <new>   // for std::nothrow
+#include "log.h"
 
 #define BLOCKS_PER_BIG 64
 #define BA_CANARY           0xFEEDBEEF1234ULL
@@ -86,6 +87,14 @@ void allocation_table_insert(allocation_table_t *table, void *ptr, size_t size)
     if (!table || !ptr) return;
     auto* t = reinterpret_cast<allocation_table*>(table);
     std::lock_guard<std::mutex> lk(t->mutex);
+    auto it = t->map.find(ptr);
+    //assert(it == t->map.end());
+    if (it != t->map.end())
+    {
+        log_error("allocation_table_add: double-insert pointer %p already in table (sizes %ld, %ld)",
+            ptr, it->second, size);
+        return;
+    }
     t->map[ptr] = size;
 }
 
@@ -95,7 +104,12 @@ size_t allocation_table_remove(allocation_table_t *table, void *ptr)
     auto* t = reinterpret_cast<allocation_table*>(table);
     std::lock_guard<std::mutex> lk(t->mutex);
     auto it = t->map.find(ptr);
-    assert(it != t->map.end());
+    //assert(it != t->map.end());
+    if (it == t->map.end())
+    {
+        log_error("allocation_table_remove: pointer %p not found in table", ptr);
+        return 0;
+    }
     size_t sz = it->second;
     t->map.erase(it);
     return sz;
@@ -107,7 +121,8 @@ void allocation_table_check_ptr(allocation_table_t *table, void *ptr)
     auto* t = reinterpret_cast<allocation_table*>(table);
     std::lock_guard<std::mutex> lk(t->mutex);
     auto it = t->map.find(ptr);
-    assert(it != t->map.end());
+    //assert(it != t->map.end());
+    if (it == t->map.end()) log_error("allocation_table_check pointer %p not found in table", ptr);
 }
 
 void allocation_tracker_register(allocation_tracker_t *t, const char *name, bool use_table)

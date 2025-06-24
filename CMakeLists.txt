@@ -115,6 +115,7 @@ else()
         -lopenh264 -lcuda -lnvcuvid -lyuv -lpcap -lsrtp2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei -lSDL2 -ljpeg
         -lnvvpi -lnvjpeg
+        -lnvidia-ml
         -lnvidia-opticalflow
     )
 endif()

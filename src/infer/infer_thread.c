@@ -49,6 +49,7 @@ struct infer_thread {
     infer_t *infer;
     model_description_t *md;
     pthread_mutex_t queue_mutex;
+    pthread_mutex_t config_mutex;
     pthread_cond_t queue_cond;
     infer_job_t *job_head;
     infer_job_t *job_tail;
@@ -184,6 +185,7 @@ infer_thread_t *infer_thread_start(const char *model_trt, const char *config_yam
     h->infer = infer_create(model_trt, config_yaml);
     infer_configure(h->infer, config);
     h->md=infer_get_model_description(h->infer);
+    pthread_mutex_init(&h->config_mutex, NULL);
 
     // Initialize queue structures
     pthread_mutex_init(&h->queue_mutex, NULL);
@@ -232,6 +234,7 @@ void infer_thread_destroy(infer_thread_t *h)
 
     // Destroy synchronization primitives
     pthread_mutex_destroy(&h->queue_mutex);
+    pthread_mutex_destroy(&h->config_mutex);
     pthread_cond_destroy(&h->queue_cond);
 
     free(h);
@@ -332,6 +335,11 @@ void infer_thread_get_stats(infer_thread_t *h, infer_thread_stats_t *s)
         if (s->batch_size_histogram[i]!=0)
             s->batch_size_histogram_time_per_inference[i]=s->batch_size_histogram_total_time[i]/s->batch_size_histogram[i];
     }
+}
+
+void infer_thread_configure(infer_thread_t *t, infer_config_t *config)
+{
+    infer_configure(t->infer, config);
 }
 
 void infer_thread_print_stats(infer_thread_t *h)

@@ -334,3 +334,9 @@ std::vector<track_results_t> track_stream_get_results(track_stream_t *ts)
     pthread_mutex_unlock(&ts->run_mutex);
     return ret;
 }
+
+void track_shared_state_configure_inference(track_shared_state_t *tss, infer_config_t *config)
+{
+    if (!tss || !config) return;
+    infer_thread_configure(tss->infer_thread, config);
+}

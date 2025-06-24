@@ -69,7 +69,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
             dec->out_height=dec->target_height;
         }
 
-        log_debug("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d\n",
+        log_debug("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d",
             dec->coded_width,dec->coded_height,
             pFormat->display_area.left,pFormat->display_area.top,
             pFormat->display_area.right,pFormat->display_area.bottom,

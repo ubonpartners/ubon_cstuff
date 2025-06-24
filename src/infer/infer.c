@@ -49,6 +49,7 @@ struct infer
     bool use_cuda_nms;
     bool do_fuse_face_person;
     bool inf_allow_upscale;
+    bool dynamic_workspace_sizing;
     bool input_is_fp16, output_is_fp16;
     int output_size;
     int fn;
@@ -146,7 +147,7 @@ static void infer_build(const char *onnx_filename, const char *out_filename)
         Dims inputDims = inputTensor->getDimensions();
         for (int j = 0; j < inputDims.nbDims; ++j)
         {
-            log_debug("Input (%s) %d : %d\n",inputTensor->getName(), i, (int)inputDims.d[j]);
+            log_debug("Input (%s) %d : %d",inputTensor->getName(), i, (int)inputDims.d[j]);
         }
     }
 
@@ -245,8 +246,9 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->person_class_index=-1;
     inf->face_class_index=-1;
     inf->use_cuda_nms=true;
-    inf->inf_allow_upscale=false; // to be like ultralytics
+    inf->inf_allow_upscale=false; // true- to be like ultralytics
     inf->do_fuse_face_person=true;
+    inf->dynamic_workspace_sizing=false; // if true, (re-)allocate buffers for NMS etc based on worse case inputs seen so far
 
     cudaStreamCreate(&inf->stream);
 
@@ -355,7 +357,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
             inf->md.output_is_fp16=inf->output_is_fp16=(dtype==nvinfer1::DataType::kHALF);
             Dims outputDims=inf->engine->getTensorShape(inf->output_tensor_name);
             inf->detection_attribute_size=(int)outputDims.d[1]; // "110"
-            log_debug("outputDims %dx%dx%d\n", (int)outputDims.d[0], (int)outputDims.d[1], (int)outputDims.d[2]);
+            log_debug("outputDims %dx%dx%d", (int)outputDims.d[0], (int)outputDims.d[1], (int)outputDims.d[2]);
             inf->md.model_output_dims[0]=(int)outputDims.d[0];
             inf->md.model_output_dims[1]=(int)outputDims.d[1];
             inf->md.model_output_dims[2]=(int)outputDims.d[2];
@@ -370,7 +372,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     if (expected_size+64==inf->detection_attribute_size)
     {
         inf->md.reid_vector_len=64;
-        log_debug("found REID vector length of %d\n",inf->md.reid_vector_len);
+        log_debug("found REID vector length of %d",inf->md.reid_vector_len);
     }
     else if (expected_size!=inf->detection_attribute_size)
     {
@@ -384,14 +386,21 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     assert(0==inf->ec->inferShapes(0,0));
     Dims outputDims = inf->ec->getTensorShape(inf->output_tensor_name);
     size_t max_output_bytes=(inf->md.output_is_fp16 ? 2 : 4)*outputDims.d[0]*outputDims.d[1]*outputDims.d[2];
-    log_debug("Max output bytes %dx%dx%d (%d) %ld\n",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2],
+    log_debug("Max output bytes %dx%dx%d (%d) %ld",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2],
         outputDims.nbDims,max_output_bytes);
 
     inf->max_output_tensor_bytes=max_output_bytes;
-    /*inf->output_mem=cuda_malloc(inf->max_output_tensor_bytes);
-    inf->output_mem_host=cuda_malloc_host(inf->max_output_tensor_bytes);
-    inf->output_size=inf->max_output_tensor_bytes;*/
-
+    if (inf->dynamic_workspace_sizing==false) // pre-allocate worst case size
+    {
+        inf->output_mem=cuda_malloc(inf->max_output_tensor_bytes);
+        //inf->output_mem_host_fp16=cuda_malloc_host(inf->max_output_tensor_bytes);
+        inf->output_size=inf->max_output_tensor_bytes;
+        if (inf->use_cuda_nms)
+        {
+            inf->nms_max_boxes=(int)outputDims.d[2];
+            inf->nms=cuda_nms_allocate_workspace(inf->nms_max_boxes, inf->md.num_classes, inf->max_detections, 0);
+        }
+        }
     return inf;
 }
 
@@ -462,7 +471,6 @@ static detection_list_t *process_detections(infer_t *inf, float *p, int rows, in
             detection_list_destroy(temp_dets);
         }
     }
-
 
     for(int i=0;i<dets->num_detections;i++)
     {
@@ -736,7 +744,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     int max_output_size=(int)inf->ec->getMaxOutputSize(inf->output_tensor_name);
     if (max_output_size>inf->output_size)
     {
-        log_debug("Infer reallocate output memory [%d > %d bytes, sz %dx%dx%d]\n",max_output_size,(int)inf->output_size,num,infer_h,infer_w);
+        log_debug("Infer reallocate output memory [%d > %d bytes, sz %dx%dx%d]",max_output_size,(int)inf->output_size,num,infer_h,infer_w);
         cuda_free(inf->output_mem);
         if (inf->output_mem_host_fp32!=0) cuda_free_host(inf->output_mem_host_fp32);
         if (inf->output_mem_host_fp16!=0) cuda_free_host(inf->output_mem_host_fp16);

@@ -38,6 +38,8 @@ void destroy_cuda_stream_pool(cudaStream_t s);
 void cuda_set_sync_mode(bool force_sync, bool force_default_stream);
 void cuda_thread_init();
 double get_cuda_mem(bool default_pool, bool hwm, bool reset);
+double get_process_gpu_mem(bool hwm, bool reset);
+void cuda_flush();
 
 void *cuda_malloc_async(size_t size, cudaStream_t stream);
 void cuda_malloc_async_check(void *p);
