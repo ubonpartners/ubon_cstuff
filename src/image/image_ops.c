@@ -577,8 +577,18 @@ void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *r
         rw=(rw*max_h)/rh;
         rh=(rh*max_h)/rh;
     }
-    if (round_w!=0) rw&=(~(round_w-1));
-    if (round_h!=0) rh&=(~(round_h-1));
+    if (round_w!=0)
+    {
+        rw+=(round_w>>1);
+        rw&=(~(round_w-1));
+        if (rw>max_w) rw-=round_w;
+    }
+    if (round_h!=0)
+    {
+        rh+=(round_h>>1);
+        rh&=(~(round_h-1));
+        if (rh>max_h) rh-=round_h;
+    }
     if (percent_stretch_allowed!=0)
     {
         // allow 10% or so distortion if it makes it fit better

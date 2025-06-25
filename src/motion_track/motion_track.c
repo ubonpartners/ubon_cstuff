@@ -14,21 +14,30 @@
 #include "roi.h"
 #include "log.h"
 #include "yaml_stuff.h"
+#include "nvof.h"
 
+#define NVOF_SUPPORTED 1
 #define debugf if (0) log_debug
 
 struct motion_track
 {
     int max_width, max_height;
     int block_w, block_h;
+    int frames_since_reset;
     float *noise_floor;
     float mad_delta;
+    float alpha, beta; // alpha and beta for noise floor update
     bool blur;
     float *noise_floor_device;
     uint8_t *row_masks_device, *row_masks_host;
     image_t *ref;
     image_t *in_img;
     roi_t roi;
+    bool generate_of_results;
+    of_results_t of_results;
+    #ifdef NVOF_SUPPORTED
+    nvof_t *nvof;
+    #endif
 };
 
 motion_track_t *motion_track_create(const char *yaml_config)
@@ -41,12 +50,18 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->mad_delta=yaml_get_float_value(yaml_base["motiontrack_mad_delta"], 24.0);
     mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);    // must be <=64*8 = 512
     mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);  // must be <=512
+    mt->alpha=yaml_get_float_value(yaml_base["motiontrack_alpha"], 0.9);
+    mt->beta=yaml_get_float_value(yaml_base["motiontrack_beta"], 0.995);
+    mt->generate_of_results=yaml_get_bool_value(yaml_base["motiontrack_generate_of_results"], true);
     assert(mt->max_width>=64 && mt->max_width<=512 && ((mt->max_width&7)==0));
     assert(mt->max_height>=64 && mt->max_height<=512 && ((mt->max_height&7)==0));
     mt->blur=yaml_get_bool_value(yaml_base["motiontrack_blur"], true);
     mt->noise_floor_device=(float *)cuda_malloc(64*64*4);
     mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
     mt->row_masks_host=(uint8_t *)cuda_malloc_host(8*64);
+    #ifdef NVOF_SUPPORTED
+    if (mt->generate_of_results) mt->nvof=nvof_create(mt, mt->max_width, mt->max_height);;
+    #endif
     CHECK_CUDART_CALL(cudaMemset(mt->noise_floor_device, 0, 64*64*4));
     CHECK_CUDART_CALL(cudaMemset(mt->row_masks_device, 0, 64*8));
     return mt;
@@ -61,7 +76,10 @@ void motion_track_destroy(motion_track_t *mt)
     if (mt->ref) destroy_image(mt->ref);
     if (mt->in_img) destroy_image(mt->in_img);
     if (mt->noise_floor) free(mt->noise_floor);
-    free(mt);
+    #ifdef NVOF_SUPPORTED
+    if (mt->nvof) nvof_destroy(mt->nvof);
+    #endif
+    (mt);
 }
 
 static int count_leading_zeros(uint64_t x) {
@@ -90,6 +108,19 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     assert((scale_w&7)==0);
     assert((scale_h&7)==0);
+
+    #ifdef NVOF_SUPPORTED
+    if (mt->nvof)
+    {
+        nvof_results_t *r=nvof_execute(mt->nvof, image_scaled);
+        if (r)
+        {
+            mt->of_results.grid_w=r->grid_w;
+            mt->of_results.grid_h=r->grid_h;
+            mt->of_results.flow=(oflow_vector_t*)r->flow;
+        }
+    }
+    #endif
 
     if (mt->blur)
     {
@@ -127,6 +158,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         if (mt->noise_floor) free(mt->noise_floor);
         mt->noise_floor=(float *)malloc(sizeof(float)*mt->block_w*mt->block_h);
         memset(mt->noise_floor, 0, sizeof(float)*mt->block_w*mt->block_h);
+        mt->frames_since_reset=0;
         return;
     }
 
@@ -142,8 +174,18 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     assert(block_w<=64);
     assert(mad_img->width==2*block_w && mad_img->height==2*block_h);
     float mad_delta=mt->mad_delta;
-    float alpha=0.8f;
-    float beta=0.95;
+
+    // noise floor is tracked by updating from new MAD for each block
+    // if new noise<noise measure : noise_measure=alpha*noise_measure+(1-alpha)*new_noise - fast fall
+    // if new noise>noise measure : noise_measure=beta*noise_measure+(1-beta)*new_noise - slow rise
+
+    float alpha=mt->alpha;
+    float beta=mt->beta;
+    int alpha_ramp_frames=16;
+    if (mt->frames_since_reset<alpha_ramp_frames)
+    {
+        alpha=(alpha*mt->frames_since_reset)/alpha_ramp_frames;
+    }
 
     cuda_generate_motion_mask(
         mad_img->y, mad_img->u, mad_img->v, mad_img->stride_y, mad_img->stride_uv,
@@ -183,6 +225,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     mt->in_img=image_scaled;
     mt->roi=roi;
+    mt->frames_since_reset++;
 }
 
 roi_t motion_track_get_roi(motion_track_t *mt)
@@ -223,4 +266,9 @@ void motion_track_set_roi(motion_track_t *mt, roi_t roi)
     mt->ref=0;
     mt->in_img=0;
     mt->ref=ref_new;
+}
+
+of_results_t *motion_track_get_of_results(motion_track_t *mt)
+{
+    return &mt->of_results;
 }

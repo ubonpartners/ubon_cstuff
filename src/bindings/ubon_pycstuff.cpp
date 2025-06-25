@@ -873,6 +873,31 @@ public:
         }
         motion_track_set_roi(mt, roi);
     }
+
+    py::array_t<float> get_of_results() {
+        of_results_t* result = motion_track_get_of_results(mt);
+
+        if (!result || !result->flow) {
+            throw std::runtime_error("motion_track_get_of_results failed or returned null results");
+        }
+
+        int h = result->grid_h;
+        int w = result->grid_w;
+        //printf("Motion tracker OF results: %dx%d\n", h, w);
+
+       // Wrap flow as (h, w, 2) float NumPy array
+        auto flow = py::array_t<float, py::array::c_style>({h, w, 2});
+
+        auto flow_buf = flow.mutable_unchecked<3>();
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int idx = y * w + x;
+                flow_buf(y, x, 0) = result->flow[idx].flowx/(4*32.0*w);
+                flow_buf(y, x, 1) = result->flow[idx].flowy/(4*32.0*h);
+            }
+        }
+        return flow;
+    }
 };
 
 PYBIND11_MODULE(ubon_pycstuff, m) {
@@ -1028,7 +1053,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def(py::init<const std::string&>(), py::arg("config_yaml"))
         .def("add_frame", &c_motion_tracker::add_frame, "Add image frame to tracker")
         .def("get_roi", &c_motion_tracker::get_roi, "Get current ROI as list of 4 floats")
-        .def("set_roi", &c_motion_tracker::set_roi, py::arg("roi"), "Set ROI from list of 4 floats");
+        .def("set_roi", &c_motion_tracker::set_roi, py::arg("roi"), "Set ROI from list of 4 floats")
+        .def("get_of_results", &c_motion_tracker::get_of_results, "Get optical flow results as NumPy array");
 
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",
