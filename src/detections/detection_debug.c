@@ -74,17 +74,6 @@ detection_list_t *detection_list_load(const char *filename)
     return dets;
 }
 
-static void draw_detection(detection_t *d, image_t *img)
-{
-    int clr=0xff0000;
-    assert(img->format==IMAGE_FORMAT_RGB24_HOST);
-    if (d->cl==0) clr=0xffff00;
-    image_draw_line(img, d->x0, d->y0, d->x1, d->y0, clr);
-    image_draw_line(img, d->x0, d->y1, d->x1, d->y1, clr);
-    image_draw_line(img, d->x0, d->y0, d->x0, d->y1, clr);
-    image_draw_line(img, d->x1, d->y0, d->x1, d->y1, clr);
-}
-
 static void draw_cross(image_t *img, float cx, float cy, float w, int clr)
 {
     image_draw_line(img, cx-w, cy-w, cx+w, cy+w, clr);
@@ -116,7 +105,13 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=dets->det[i];
-        draw_detection(det, x);
+        if (det->cl!=0) continue;
+
+        image_draw_box(x, det->x0, det->y0, det->x1, det->y1, 0xff0000);
+        if (det->subbox_conf>0)
+        {
+            image_draw_box(x, det->subbox_x0, det->subbox_y0,det->subbox_x1, det->subbox_y1, 0x00ff00);
+        }
 
         for(int j=0;j<det->num_face_points;j++)
         {

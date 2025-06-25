@@ -278,6 +278,8 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
         }
     }
+    md.person_class_index=inf->person_class_index;
+    md.face_class_index=inf->face_class_index;
     md.num_classes=md.class_names.size();
     md.num_person_attributes=md.person_attribute_names.size();
     md.num_keypoints=kpt_shape[0];
@@ -369,9 +371,23 @@ infer_t *infer_create(const char *model, const char *yaml_config)
                       +inf->md.num_classes
                       +inf->md.num_person_attributes
                       +inf->md.num_keypoints*3;
+    if (inf->md.num_keypoints==22)
+    {
+        inf->md.face_keypoint_offset=4+inf->md.num_classes+inf->md.num_person_attributes;
+        inf->md.num_face_keypoints=5;
+        inf->md.person_keypoint_offset=inf->md.face_keypoint_offset+5*3;
+        inf->md.num_person_keypoints=17;
+    }
+    else
+    {
+        // fix this to support other than 17+5 keypoints
+        // can parse from yaml if can be bothered
+        assert(0);
+    }
     if (expected_size+64==inf->detection_attribute_size)
     {
         inf->md.reid_vector_len=64;
+        inf->md.reid_offset=expected_size;
         log_debug("found REID vector length of %d",inf->md.reid_vector_len);
     }
     else if (expected_size!=inf->detection_attribute_size)
@@ -424,7 +440,7 @@ void infer_destroy(infer_t *inf)
 static detection_list_t *process_detections(infer_t *inf, float *p, int rows, int row_stride)
 {
     detection_list_t *dets=detection_list_create(inf->max_detections); // output post-NMS detections
-
+    dets->md=&inf->md;
     int num_classes=inf->md.num_classes;
     int num_attributes=inf->md.num_person_attributes;
     int num_person_detections=0;
@@ -507,7 +523,7 @@ static detection_list_t *process_detections(infer_t *inf, float *p, int rows, in
                 d->reid_vector_len=inf->md.reid_vector_len;
                 for(int i=0;i<inf->md.reid_vector_len;i++)
                 {
-                    d->reid[i]=p[(4+num_classes+num_attributes+3*(d->num_pose_points+d->num_face_points)+i)*row_stride+index];
+                    d->reid[i]=p[(inf->md.reid_offset+i)*row_stride+index];
                 }
             }
         }
@@ -585,6 +601,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
         int num_dets=0;
         for(int cl=0;cl<nc;cl++) num_dets+=keptIndices[b*nc+cl].size();
         dets[b]=detection_list_create((num_dets<8) ? 8 : num_dets);
+        dets[b]->md=&inf->md;
         int num_person_detections=0;
         int num_face_detections=0;
         for(int cl=0;cl<nc;cl++)
@@ -611,23 +628,23 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                 if (cl==inf->face_class_index)
                 {
                     num_face_detections++;
-                    det->num_face_points=5;
+                    det->num_face_points=inf->md.num_face_keypoints;
                     for(int k=0;k<det->num_face_points;k++)
                     {
-                        det->face_points[k].x=ptr[4+nc+num_attributes+3*k+0];
-                        det->face_points[k].y=ptr[4+nc+num_attributes+3*k+1];
-                        det->face_points[k].conf=ptr[4+nc+num_attributes+3*k+2];
+                        det->face_points[k].x=ptr[inf->md.face_keypoint_offset+3*k+0];
+                        det->face_points[k].y=ptr[inf->md.face_keypoint_offset+3*k+1];
+                        det->face_points[k].conf=ptr[inf->md.face_keypoint_offset+3*k+2];
                     }
                 }
                 if (cl==inf->person_class_index)
                 {
                     num_person_detections++;
-                    det->num_pose_points=17;
+                    det->num_pose_points=inf->md.num_person_keypoints;
                     for(int k=0;k<det->num_pose_points;k++)
                     {
-                        det->pose_points[k].x=ptr[4+nc+num_attributes+3*(k+5)+0];
-                        det->pose_points[k].y=ptr[4+nc+num_attributes+3*(k+5)+1];
-                        det->pose_points[k].conf=ptr[4+nc+num_attributes+3*(k+5)+2];
+                        det->pose_points[k].x=ptr[inf->md.person_keypoint_offset+3*k+0];
+                        det->pose_points[k].y=ptr[inf->md.person_keypoint_offset+3*k+1];
+                        det->pose_points[k].conf=ptr[inf->md.person_keypoint_offset+3*k+2];
                     }
                     det->num_attr=num_attributes;
                     for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+k];
@@ -636,7 +653,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                         det->reid_vector_len=inf->md.reid_vector_len;
                         for(int i=0;i<inf->md.reid_vector_len;i++)
                         {
-                            det->reid[i]=ptr[4+nc+num_attributes+3*(det->num_pose_points+det->num_face_points)+i];
+                            det->reid[i]=ptr[inf->md.reid_offset+i];
                         }
                     }
                 }

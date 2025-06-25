@@ -208,7 +208,7 @@ static py::list convert_points(kp_t *pts, int n)
     return pt_list;
 }
 
-static py::list convert_attributes(float *a, int n)
+static py::list convert_float_array(float *a, int n)
 {
     py::list pt_list;
     for(int i=0;i<n;i++) pt_list.append(a[i]);
@@ -288,11 +288,22 @@ static py::object convert_detections(detection_list_t *dets)
         box.append(det->x1);
         box.append(det->y1);
         item["box"] = box;
+        if (det->subbox_conf>0)
+        {
+            py::list subbox;
+            subbox.append(det->subbox_x0);
+            subbox.append(det->subbox_y0);
+            subbox.append(det->subbox_x1);
+            subbox.append(det->subbox_y1);
+            item["subbox"] = subbox;
+            item["subbox_conf"] = det->subbox_conf;
+        }
         assert(det->num_pose_points==0 || det->num_pose_points==17);
         assert(det->num_face_points==0 || det->num_face_points==5);
         if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
         if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
-        if (det->num_attr>0) item["attrs"]=convert_attributes(det->attr, det->num_attr);
+        if (det->num_attr>0) item["attrs"]=convert_float_array(det->attr, det->num_attr);
+        if (det->reid_vector_len>0) item["reid_vector"] = convert_float_array(det->reid, det->reid_vector_len);
         results.append(item);
     }
     return results;
@@ -422,7 +433,7 @@ public:
                 if (det->num_pose_points > 0)
                     item["pose_points"] = convert_points(det->pose_points, det->num_pose_points);
                 if (det->num_attr > 0)
-                    item["attrs"] = convert_attributes(det->attr, det->num_attr);
+                    item["attrs"] = convert_float_array(det->attr, det->num_attr);
                 detections.append(item);
             }
             detection_list_destroy(result_data.dets);

@@ -98,3 +98,13 @@ void image_draw_line(image_t *img, float x0, float y0, float x1, float y1, int c
         img->rgb[xi*3+yi*img->stride_rgb+2]=(clr>>0)&0xff;
     }
 }
+
+void image_draw_box(image_t *img, float x0, float y0, float x1, float y1, int clr)
+{
+    if (img==0) return;
+    assert(img->format==IMAGE_FORMAT_RGB24_HOST);
+    image_draw_line(img, x0, y0, x1, y0, clr);
+    image_draw_line(img, x0, y1, x1, y1, clr);
+    image_draw_line(img, x0, y0, x0, y1, clr);
+    image_draw_line(img, x1, y0, x1, y1, clr);
+}

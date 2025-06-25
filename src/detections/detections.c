@@ -158,6 +158,13 @@ void detection_list_scale_add(detection_list_t *dets, float sx, float sy, float 
         det->y0=clip_01(dy+det->y0*sy);
         det->x1=clip_01(dx+det->x1*sx);
         det->y1=clip_01(dy+det->y1*sy);
+        if (det->subbox_conf>0)
+        {
+            det->subbox_x0=clip_01(dx+det->subbox_x0*sx);
+            det->subbox_y0=clip_01(dy+det->subbox_y0*sy);
+            det->subbox_x1=clip_01(dx+det->subbox_x1*sx);
+            det->subbox_y1=clip_01(dy+det->subbox_y1*sy);
+        }
         for(int i=0;i<det->num_face_points;i++)
         {
             det->face_points[i].x=clip_01(dx+det->face_points[i].x*sx);
@@ -181,6 +188,13 @@ void detection_list_scale_add2(detection_list_t *dets, float sx, float sy, float
         det->y0=clip_01((det->y0-dy)*sy);
         det->x1=clip_01((det->x1-dx)*sx);
         det->y1=clip_01((det->y1-dy)*sy);
+        if (det->subbox_conf>0)
+        {
+            det->subbox_x0=clip_01((det->subbox_x0-dx)*sx);
+            det->subbox_y0=clip_01((det->subbox_y0-dy)*sy);
+            det->subbox_x1=clip_01((det->subbox_x1-dx)*sx);
+            det->subbox_y1=clip_01((det->subbox_y1-dy)*sy);
+        }
         for(int i=0;i<det->num_face_points;i++)
         {
             det->face_points[i].x=clip_01((det->face_points[i].x-dx)*sx);

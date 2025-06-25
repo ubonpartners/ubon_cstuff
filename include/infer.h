@@ -15,10 +15,17 @@ struct model_description
     std::vector<std::string> class_names;
     std::vector<std::string> person_attribute_names;
     int num_classes;
+    int person_class_index;
+    int face_class_index;
     int num_person_attributes;
     int num_keypoints;
     int max_batch;
     int reid_vector_len;
+    int reid_offset; // offset in output tensor for reid vector
+    int num_face_keypoints;
+    int face_keypoint_offset;
+    int num_person_keypoints;
+    int person_keypoint_offset;
     bool input_is_fp16, output_is_fp16; // input/output formats for model
     int min_w, max_w;  // min,max model input width
     int min_h, max_h;  // min,max model input height

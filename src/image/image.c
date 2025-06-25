@@ -217,7 +217,9 @@ image_t *create_image(int width, int height, image_format_t fmt)
 
 void image_check(image_t *img)
 {
+    if (!img) return;
     block_check(img);
+    if (img->device_mem_size!=0) cuda_malloc_async_check(img->device_mem);
 }
 
 image_t *image_reference(image_t *img)

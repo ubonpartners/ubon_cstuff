@@ -7,6 +7,7 @@
 #include "detections.h"
 #include "match.h"
 #include "log.h"
+#include "infer.h"
 
 static float person_face_match_cost(const detection_t *person, const detection_t *face, void *context)
 {
@@ -221,13 +222,19 @@ void detection_list_fuse_face_person(detection_list_t *dets)
         for(int j=0;j<face->num_face_points;j++) person->face_points[j]=face->face_points[j];
         //printf("index %2d match %d with %d\n",i,person_idx[i],face_idx[i]);
     }
-    /*if (num==dets->num_face_detections)
+    int old_num=dets->num_detections;
+    int new_num=0;
+    int fc=dets->md->face_class_index;
+
+    // delete face detections from list (including unmatched ones)
+    for (int i=0;i<old_num;i++)
     {
-        printf("ALL faces matched\n");
+        if (dets->det[i]->cl==fc)
+            detection_destroy(dets->det[i]);
+        else
+            dets->det[new_num++]=dets->det[i];
     }
-    else
-    {
-        printf("%d unmatched faces\n", dets->num_face_detections-num);
-    }*/
+    dets->num_detections=new_num;
+    dets->face_dets=0;
     dets->num_face_detections=0;
 }
