@@ -37,6 +37,22 @@ void detection_destroy(detection_t *d)
     block_free(d);
 }
 
+detection_t *detection_copy(detection_t *det)
+{
+    detection_t *det_new=detection_create();
+    memcpy(det_new, det, sizeof(detection_t));
+    return det_new;
+}
+
+detection_list_t *detection_list_copy(detection_list_t *dets)
+{
+    detection_list_t *dets_new=detection_list_create(dets->num_detections);
+    dets_new->num_detections=dets->num_detections;
+    for(int i=0;i<dets->num_detections;i++) dets_new->det[i]=detection_copy(dets->det[i]);
+    dets_new->md=dets->md;
+    return dets_new;
+}
+
 void detection_list_generate_overlap_masks(detection_list_t *dets)
 {
     for(int i=0;i<dets->num_detections;i++)
@@ -46,7 +62,7 @@ void detection_list_generate_overlap_masks(detection_list_t *dets)
     }
 }
 
-static void detections_free_callback(void *context, void *block)
+static void detection_list_free_callback(void *context, void *block)
 {
     detection_list_t *dets=(detection_list_t *)block;
     for(int i=0;i<dets->num_detections;i++) detection_destroy(dets->det[i]);
@@ -60,7 +76,7 @@ detection_list_t *detection_list_create(int max_detections)
     if (!dets) return 0;
     memset(dets, 0, sz);
     dets->max_detections=max_detections;
-    block_set_free_callback(dets, 0, detections_free_callback);
+    block_set_free_callback(dets, 0, detection_list_free_callback);
     return dets;
 }
 

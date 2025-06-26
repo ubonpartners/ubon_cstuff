@@ -446,6 +446,7 @@ void block_set_free_callback(void *block, void *context, void (*free_callback)(v
     if (!block) return;
     block_header_t *bh = (block_header_t*)((uint8_t*)block - sizeof(block_header_t));
     assert(bh->canary == SUB_CANARY);
+    assert(bh->free_callback==0);
     bh->free_callback = free_callback;
     bh->callback_context = context;
 }

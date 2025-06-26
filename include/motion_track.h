@@ -25,4 +25,7 @@ roi_t motion_track_get_roi(motion_track_t *mt);
 void motion_track_set_roi(motion_track_t *mt, roi_t roi);
 of_results_t *motion_track_get_of_results(motion_track_t *mt);
 
+void motion_track_predict_point_inplace(motion_track_t *mt, float *pt);
+void motion_track_predict_box_inplace(motion_track_t *mt, float *box);
+
 #endif

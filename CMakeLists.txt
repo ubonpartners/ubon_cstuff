@@ -77,6 +77,7 @@ enable_language(CUDA)
 set(PROJECT_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/track/bytetracker
+    ${CMAKE_SOURCE_DIR}/src/track/utrack
     /usr/include/eigen3
     /usr/local/include/eigen3
     ${CUDA_INCLUDE_DIRS}
@@ -141,6 +142,7 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/rtp/*.c
     ${CMAKE_SOURCE_DIR}/src/track/*.c
     ${CMAKE_SOURCE_DIR}/src/track/bytetracker/*.cpp
+    ${CMAKE_SOURCE_DIR}/src/track/utrack/*.c
     ${CMAKE_SOURCE_DIR}/src/vpi/*.c
 )
 

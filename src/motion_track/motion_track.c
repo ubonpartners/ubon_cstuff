@@ -272,3 +272,65 @@ of_results_t *motion_track_get_of_results(motion_track_t *mt)
 {
     return &mt->of_results;
 }
+
+static void motion_track_predict_delta(motion_track_t *mt, float *pt, float *d)
+{
+    int grid_w=mt->of_results.grid_w;
+    int grid_h=mt->of_results.grid_h;
+    float x=pt[0];
+    float y=pt[1];
+    int ix=std::min(grid_w-1, std::max(0, (int)(x*grid_w+0.5f)));
+    int iy=std::min(grid_h-1, std::max(0, (int)(y*grid_h+0.5f)));
+    int offs=ix+iy*grid_w;
+    oflow_vector_t *fv=mt->of_results.flow+offs;
+    float dx=fv->flowx/(4.0f*32.0f*grid_w);
+    float dy=fv->flowy/(4.0f*32.0f*grid_h);
+    d[0]=dx;
+    d[1]=dy;
+}
+
+void motion_track_predict_point_inplace(motion_track_t *mt, float *pt)
+{
+    float d[2];
+    motion_track_predict_delta(mt, pt, d);
+    pt[0]=std::max(0.0f, std::min(1.0f, pt[0]-d[0]));
+    pt[1]=std::max(0.0f, std::min(1.0f, pt[1]-d[1]));
+}
+
+typedef struct sample
+{
+    float xf, yf, w;
+} sample_t;
+
+void motion_track_predict_box_inplace(motion_track_t *mt, float *box)
+{
+    if (!mt) return;
+
+    static const sample_t samples[] = {
+        {0.5f, 0.5f, 0.5f},
+        {0.35f, 0.5f, 0.125f},
+        {0.65f, 0.5f, 0.125f},
+        {0.5f, 0.35f, 0.125f},
+        {0.5f, 0.65f, 0.125f}
+    };
+    float dx=0;
+    float dy=0;
+    float x0=box[0];
+    float y0=box[1];
+    float x1=box[2];
+    float y1=box[3];
+    for(int i=0;i<5;i++)
+    {
+        float xf=samples[i].xf;
+        float yf=samples[i].yf;
+        float p[2]={x0*xf+x1*(1.0f-xf), y0*yf+y1*(1.0f-yf)};
+        float d[2];
+        motion_track_predict_delta(mt, p, d);
+        dx+=samples[i].w*d[0];
+        dy+=samples[i].w*d[1];
+    }
+    box[0]=std::max(0.0f, std::min(1.0f, x0-dx));
+    box[1]=std::max(0.0f, std::min(1.0f, y0-dy));
+    box[2]=std::max(0.0f, std::min(1.0f, x1-dx));
+    box[3]=std::max(0.0f, std::min(1.0f, y1-dy));
+}

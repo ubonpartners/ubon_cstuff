@@ -11,6 +11,7 @@
 #include "ctpl_stl.h"
 #include "cuda_stuff.h"
 #include "BYTETracker.h"
+#include "utrack.h"
 #include "simple_decoder.h"
 #include "yaml_stuff.h"
 
@@ -23,6 +24,7 @@ struct track_shared_state
     int num_worker_threads;
     float motiontrack_min_roi;
     infer_thread_t *infer_thread;
+    const char *tracker_type;
     model_description_t *md;
     ctpl::thread_pool *thread_pool;
 };
@@ -37,7 +39,9 @@ struct track_stream
     pthread_mutex_t run_mutex;
     uint32_t frame_count;
     motion_track_t *mt;
+
     BYTETracker *bytetracker;
+    utrack_t *utrack;
     image_format_t stream_image_format;
     //
     double last_run_time;
@@ -61,6 +65,7 @@ static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
 track_shared_state_t *track_shared_state_create(const char *yaml_config)
 {
     YAML::Node yaml_base=yaml_load(yaml_config);
+    std::string tracker_type=yaml_base["tracker_type"].as<std::string>();
 
     track_shared_state_t *tss=(track_shared_state_t *)malloc(sizeof(track_shared_state_t));
     assert(tss!=0);
@@ -71,7 +76,7 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     tss->max_height=yaml_base["max_height"].as<int>();
     tss->num_worker_threads=yaml_base["num_worker_threads"].as<int>();
     tss->motiontrack_min_roi=yaml_get_float_value(yaml_base["motiontrack_min_roi"], 0.05);
-
+    tss->tracker_type=strdup(tracker_type.c_str());
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
     pthread_barrier_t barrier;
@@ -107,6 +112,7 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     delete tss->thread_pool;
     infer_thread_destroy(tss->infer_thread);
     free((void *)tss->config_yaml);
+    free((void *)tss->tracker_type);
     free(tss);
 }
 
@@ -121,7 +127,14 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->result_callback_context=result_callback_context;
     ts->result_callback=result_callback;
     ts->mt=motion_track_create(tss->config_yaml);
-    ts->bytetracker=new BYTETracker(tss->config_yaml);
+    bool use_bytetracker=(strcmp(tss->tracker_type, "upyc")==0);
+    use_bytetracker|=(strcmp(tss->tracker_type, "upyc-bytetracker")==0);
+    bool use_utrack=(strcmp(tss->tracker_type, "upyc-utrack")==0);
+    assert(use_bytetracker||use_utrack);
+    if (use_bytetracker)
+        ts->bytetracker=new BYTETracker(tss->config_yaml);
+    else
+        ts->utrack=utrack_create(tss->config_yaml);
     ts->min_time_delta_process=0.0;
     ts->min_time_delta_full_roi=120.0;
     ts->tracked_object_roi=ROI_ZERO;
@@ -140,7 +153,8 @@ void track_stream_destroy(track_stream_t *ts)
     pthread_mutex_lock(&ts->run_mutex);
     pthread_mutex_unlock(&ts->run_mutex);
     motion_track_destroy(ts->mt);
-    delete ts->bytetracker;
+    if (ts->bytetracker) delete ts->bytetracker;
+    if (ts->utrack) utrack_destroy(ts->utrack);
     pthread_mutex_destroy(&ts->run_mutex);
     free(ts);
 }
@@ -163,7 +177,14 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
 
     r.result_type=TRACK_FRAME_TRACKED_ROI;
     r.time=ts->last_run_time;
-    r.track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
+    if (ts->bytetracker)
+        r.track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
+    else if (ts->utrack)
+        r.track_dets=utrack_run(ts->utrack, ts->inference_detections, ts->last_run_time);
+    else
+    {
+        assert(0);
+    }
     r.inference_dets=ts->inference_detections;
     r.motion_roi=ts->motion_roi;
     r.inference_roi=ts->inference_roi;
@@ -277,6 +298,12 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
 
     roi_t expanded_roi=motion_roi;
     if (roi_area(&ts->tracked_object_roi)>0) expanded_roi=roi_union(expanded_roi, ts->tracked_object_roi);
+
+    if (ts->utrack)
+    {
+        roi_t object_roi=utrack_predict_positions(ts->utrack, time, ts->mt);
+        if (roi_area(&object_roi)>0) expanded_roi=roi_union(expanded_roi, object_roi);
+    }
 
     infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
     destroy_image(image_scaled);

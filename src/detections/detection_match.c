@@ -79,7 +79,7 @@ int match_detections_greedy(
         out_a_idx, out_b_idx);
 }
 
-static float score_box_iou(const detection_t *da, const detection_t *db, void *ctx)
+float detection_box_iou(const detection_t *da, const detection_t *db)
 {
     float x_left = fmaxf(da->x0, db->x0);
     float y_top = fmaxf(da->y0, db->y0);
@@ -99,11 +99,16 @@ static float score_box_iou(const detection_t *da, const detection_t *db, void *c
     if (union_area <= 0.0f)
         return 0.0f;
 
-    float thr=*((float *)ctx);
-
     float ret=inter / union_area;
-    if (ret<thr) return 0.0;
     return ret;
+}
+
+static float score_box_iou(const detection_t *da, const detection_t *db, void *ctx)
+{
+    float iou=detection_box_iou(da, db);
+    float thr=*((float *)ctx);
+    if (iou<thr) return 0.0;
+    return iou;
 }
 
 static float kp_iou(const kp_t *a, const kp_t *b, const float *scales, int n, float area)

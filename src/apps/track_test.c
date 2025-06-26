@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
 
     state_t s;
     memset(&s, 0, sizeof(state_t));
-    s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_test.yaml");
+    s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_reid.yaml");
     s.ts=track_stream_create(s.tss, &s, track_result);
     s.start_time=profile_time();
     track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);

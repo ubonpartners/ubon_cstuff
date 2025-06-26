@@ -358,7 +358,7 @@ void cuda_nms_run(
     int h_numCand;
 
     for (int b = 0; b < batch_size; ++b) {
-        const float* srcBatch = all_data + (size_t)b * rowSize * numBoxes;
+        //const float* srcBatch = all_data + (size_t)b * rowSize * numBoxes;
         const float*  srcFloat = all_data  + (size_t)b * rowSize * numBoxes;
         const __half* srcHalf  = reinterpret_cast<const __half*>(all_data)
                                    + (size_t)b * rowSize * numBoxes;

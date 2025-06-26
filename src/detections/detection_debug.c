@@ -147,7 +147,7 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
         draw_kp_line(x, kp, 14, 16);
         const char * classname=detection_list_get_classname(dets, det->cl);
         char text[256];
-        snprintf(text, 255, "ID:%d %s",(int)det->track_id,classname);
+        snprintf(text, 255, "ID:%lx %s",det->track_id,classname);
         image_draw_text(x, det->x0, det->y0, text, 0xffffff);
 
     }

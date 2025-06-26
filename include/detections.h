@@ -75,7 +75,9 @@ typedef struct detection_list
 
 detection_t *detection_create();
 void detection_destroy(detection_t *det);
+detection_t *detection_copy(detection_t *det);
 
+detection_list_t *detection_list_copy(detection_list_t *dets);
 detection_list_t *detection_list_create(int max_detections);
 detection_list_t *detection_list_load(const char *filename);
 void detection_list_destroy(detection_list_t *detections);
@@ -94,6 +96,7 @@ void detection_list_generate_overlap_masks(detection_list_t *dets);
 void detection_list_fuse_face_person(detection_list_t *dets);
 const char *detection_list_get_classname(detection_list_t *dets, int cl);
 
+float detection_box_iou(const detection_t *da, const detection_t *db);
 int match_detections_greedy(
     detection_t        **dets_a,
     int                num_dets_a,
