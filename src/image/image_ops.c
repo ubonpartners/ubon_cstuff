@@ -264,8 +264,10 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
 {
     if (!img) return 0;
     if (   img->format != IMAGE_FORMAT_YUV420_DEVICE
+        && img->format != IMAGE_FORMAT_YUV420_HOST
         && img->format != IMAGE_FORMAT_MONO_DEVICE
-        && img->format != IMAGE_FORMAT_RGB24_DEVICE)
+        && img->format != IMAGE_FORMAT_RGB24_DEVICE
+        && img->format != IMAGE_FORMAT_RGB24_HOST)
     {
         image_t *inter=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_crop(inter, x, y, w, h);
@@ -541,6 +543,8 @@ void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *r
                           int round_w, int round_h,
                           bool allow_upscale)
 {
+    int rw=w;
+    int rh=h;
     if (allow_upscale)
     {
         int scale_w_num = max_w;
@@ -551,31 +555,29 @@ void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *r
         // Compare scale_w = scale_w_num / scale_w_den vs scale_h = scale_h_num / scale_h_den
         if (scale_w_num * scale_h_den < scale_h_num * scale_w_den) {
             // Use scale_w
-            *res_w = max_w;
-            *res_h = (h * max_w) / w;
+            rw = max_w;
+            rh = (h * max_w) / w;
         } else {
             // Use scale_h
-            *res_w = (w * max_h) / h;
-            *res_h = max_h;
+            rw = (w * max_h) / h;
+            rh = max_h;
         }
-        return;
     }
-
-    // starting image w*h we need to determine a size to scale the image to so that it fits in
-    // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
-    int rw=w;
-    int rh=h;
-    if (rw>max_w)
-    {
-        // scale by max_w/w
-        rh=(rh*max_w)/rw;
-        rw=(rw*max_w)/rw;
-    }
-    if (rh>max_h)
-    {
-        // scale by max_h/rh
-        rw=(rw*max_h)/rh;
-        rh=(rh*max_h)/rh;
+    else {
+        // starting image w*h we need to determine a size to scale the image to so that it fits in
+        // max_w*max_h. We don't want to distort the aspect ratio too much, nor ever upscale
+        if (rw>max_w)
+        {
+            // scale by max_w/w
+            rh=(rh*max_w)/rw;
+            rw=(rw*max_w)/rw;
+        }
+        if (rh>max_h)
+        {
+            // scale by max_h/rh
+            rw=(rw*max_h)/rh;
+            rh=(rh*max_h)/rh;
+        }
     }
     if (round_w!=0)
     {
@@ -595,7 +597,7 @@ void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *r
         int thr_w=(max_w*(100-percent_stretch_allowed))/100;
         int thr_h=(max_h*(100-percent_stretch_allowed))/100;
         if (rw>thr_w && w>=max_w) rw=max_w;
-        if (rh>thr_w && h>=max_h) rh=max_h;
+        if (rh>thr_h && h>=max_h) rh=max_h;
     }
     assert(rw<=max_w);
     assert(rh<=max_h);
