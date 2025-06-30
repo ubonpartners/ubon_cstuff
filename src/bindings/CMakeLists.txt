@@ -2,12 +2,18 @@ add_library(ubon_pycstuff MODULE ubon_pycstuff.cpp)
 target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 if(DEFINED ENV{JETSON_SOC})
+    list(APPEND COMMON_LIBS
+        /usr/local/cuda/lib64/stubs/libnvidia-ml.a
+    )
     set(ARCH_LIBS
         pthread SDL2 jpeg openh264 yuv pcap srtp2 yaml-cpp
         cuda cudart nvv4l2
         nppc nppisu nppig nppicc nppif nppidei
         nvbufsurface nvbufsurftransform
-        nvvpi nvinfer nvonnxparser nvinfer_plugin
+        nvvpi nvjpeg nvinfer nvonnxparser nvinfer_plugin
+        -Wl,-rpath=/usr/lib/aarch64-linux-gnu/nvidia
+        -Wl,-rpath=/usr/local/cuda/lib64
+        -Wl,--disable-new-dtags
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
@@ -25,6 +31,7 @@ target_link_libraries(ubon_pycstuff PRIVATE
     uboncstufflib  # your static lib
     pybind11::module
     Python3::Python
+    ${COMMON_LIBS}
     ${ARCH_LIBS}
 )
 

@@ -101,7 +101,11 @@ if(DEFINED ENV{JETSON_SOC})
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
-        -lnvvpi -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lnvvpi -lnvjpeg -lnvdla_compiler
+        -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -Wl,-rpath=/usr/lib/aarch64-linux-gnu/nvidia
+        -Wl,-rpath=/usr/local/cuda/lib64
+        -Wl,--disable-new-dtags
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
