@@ -55,6 +55,12 @@ void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
     log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
 }
 
+void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
+{
+    (void)dec; (void)max_time;
+    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
+
 #endif //(UBONCSTUFF_PLATFORM == 1)
 
 #if 0 // chatGPT version

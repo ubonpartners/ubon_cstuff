@@ -93,16 +93,20 @@ if(DEFINED ENV{JETSON_SOC})
     list(APPEND PROJECT_INCLUDE_DIRS
         /usr/local/cuda/include
     )
+    list(APPEND COMMON_LIBS
+        /usr/local/cuda/lib64/stubs/libnvidia-ml.a
+    )
     set(ARCH_LIBS
         -lSDL2 -ljpeg -lopenh264 -lyuv -lpcap -lsrtp2
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
-        -lnvvpi -lnvidia-ml -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lnvvpi -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
         -L/usr/local/cuda/lib64
+        -L/usr/local/cuda/lib64/stubs
     )
 else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=0")

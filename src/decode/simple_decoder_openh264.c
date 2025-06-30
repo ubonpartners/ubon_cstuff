@@ -150,3 +150,9 @@ void __attribute__((weak)) simple_decoder_set_output_format(simple_decoder_t *de
     (void)dec; (void)fmt;
     printf("%s:%d This feature is not yet implemented", __func__, __LINE__);
 }
+
+void __attribute__((weak)) simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
+{
+    (void)dec; (void)max_time;
+    printf("%s:%d This feature is not yet implemented", __func__, __LINE__);
+}
