@@ -823,8 +823,8 @@ public:
             track_stream_run_frame_time(stream, img->raw());
     }
 
-    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps) {
-        track_stream_run_video_file(stream, file, codec, video_fps);
+    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, double max_time) {
+        track_stream_run_video_file(stream, file, codec, video_fps, max_time);
     }
 
     std::vector<py::dict> get_results() {

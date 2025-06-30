@@ -10,6 +10,8 @@
 #include "cuda_stuff.h"
 #include "log.h"
 
+#define debugf if (1) log_debug
+
 #define MAX_DECODE_W    3840
 #define MAX_DECODE_H    2160
 
@@ -26,6 +28,7 @@ struct simple_decoder
     image_format_t output_format;
     uint64_t time;
     uint64_t time_increment;
+    double max_time;
     //CUstream stream;
     CUvideoctxlock vidlock;
     CUvideodecoder decoder;
@@ -69,7 +72,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
             dec->out_height=dec->target_height;
         }
 
-        log_debug("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d",
+        debugf("Create cuda decoder %dx%d; display area (%d,%d)-(%d,%d) output %dx%d codec %d",
             dec->coded_width,dec->coded_height,
             pFormat->display_area.left,pFormat->display_area.top,
             pFormat->display_area.right,pFormat->display_area.bottom,
@@ -173,9 +176,15 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         dec_img->stride_y=dec_img->stride_uv=pitch;
         image_t *img=image_convert(dec_img, dec->output_format);
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+        bool skip=false;
+        if (dec->max_time>=0)
+        {
+            double time=dec->time/90000.0;
+            if (time>dec->max_time) skip=true;
+        }
         img->timestamp=dec->time;
         dec->time+=dec->time_increment;
-        dec->frame_callback(dec->context, img);
+        if (!skip) dec->frame_callback(dec->context, img);
         destroy_image(img);
         destroy_image(dec_img);
     }
@@ -199,6 +208,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->out_height=720;
     dec->time_increment=90000/30;
     dec->time=0;
+    dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
 
     CHECK_CUDA_CALL(cuvidCtxLockCreate(&dec->vidlock, get_CUcontext()));
@@ -245,6 +255,18 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     CUVIDSOURCEDATAPACKET packet = {0};
     packet.payload=bitstream_data;
     packet.payload_size=data_size;
+    if (dec->max_time>=0)
+    {
+        double time=dec->time/90000.0;
+        if (time>dec->max_time) return;
+    }
     CHECK_CUDA_CALL(cuvidParseVideoData(dec->videoParser, &packet));
 }
+
+void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
+{
+    dec->max_time=max_time;
+}
+
+
 #endif //(UBONCSTUFF_PLATFORM == 0)

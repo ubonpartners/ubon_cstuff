@@ -17,5 +17,5 @@ void simple_decoder_set_framerate(simple_decoder_t *dec, double fps);
 void simple_decoder_destroy(simple_decoder_t *dec);
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *data, int data_size);
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt);
-
+void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time);
 #endif

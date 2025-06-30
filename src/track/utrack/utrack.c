@@ -13,7 +13,7 @@
 
 #define REID_VECTOR_LEN 64
 #define MAX_TRACKED     300
-#define debugf if (1) log_debug
+#define debugf if (0) log_warn
 
 typedef enum trackstate
 {
@@ -188,6 +188,23 @@ static float match_cost(const detection_t *det, const detection_t *old, void *ct
     return score;
 }
 
+static float lost_object_match_score(const detection_t *self, const detection_t *other, void *ctx)
+{
+    utdet_t *tdet_self=(utdet_t *)self;
+    utdet_t *tdet_other=(utdet_t *)other;
+    if (tdet_self->track_state!=TRACKSTATE_TRACKED) return 0;
+    if (tdet_other->track_state!=TRACKSTATE_LOST) return 0;
+    float box_other[4];
+    box_other[0]=tdet_other->det.x0;
+    box_other[1]=tdet_other->det.y0;
+    box_other[2]=tdet_other->det.x1;
+    box_other[3]=tdet_other->det.y1;
+    float box_score=iou(self, box_other);
+    float thr=*((float *)ctx);
+    if (box_score<thr) return 0;
+    return thr;
+}
+
 roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt)
 {
     roi_t roi;
@@ -292,20 +309,20 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
 
         if (pass==0)
         {
-            det_filter_func=[ut](utdet_t* x){return x->adjusted_confidence>ut->param_track_initial_thresh; };
-            track_filter_func=[ut](utdet_t* x){return x->track_state!=TRACKSTATE_LOST; };
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_initial_thresh; };
+            track_filter_func=[ut](utdet_t* x){return x->matched==false && x->track_state!=TRACKSTATE_LOST; };
             mc.match_thr=ut->param_match_thresh_initial;
         }
         else if (pass==1)
         {
-            det_filter_func=[ut](utdet_t* x){return x->adjusted_confidence>ut->param_track_high_thresh; };
-            track_filter_func=[ut](utdet_t* x){return true;};
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_high_thresh; };
+            track_filter_func=[ut](utdet_t* x){return x->matched==false;};
             mc.match_thr=ut->param_match_thresh_high;
         }
         else // pass==2
         {
-            det_filter_func=[ut](utdet_t* x){return x->adjusted_confidence>ut->param_track_low_thresh; };
-            track_filter_func=[ut](utdet_t* x){return true;};
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_low_thresh; };
+            track_filter_func=[ut](utdet_t* x){return x->matched==false;};
             mc.match_thr=ut->param_match_thresh_low;
         }
 
@@ -317,12 +334,12 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         for(int i=0;i<num_det;i++)
         {
             utdet_t *det=dets[i];
-            if (det_filter_func(det) && (det->matched==false)) det_filtered[num_det_filtered++]=det;
+            if (det_filter_func(det)) det_filtered[num_det_filtered++]=det;
         }
         for(int i=0;i<num_tracked;i++)
         {
             utdet_t *det=tracked[i];
-            if (track_filter_func(det) && (det->matched==false)) tracked_filtered[num_tracked_filtered++]=det;
+            if (track_filter_func(det)) tracked_filtered[num_tracked_filtered++]=det;
         }
 
         if ((num_det_filtered==0)||(num_tracked_filtered==0)) continue;
@@ -341,7 +358,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         {
             utdet_t *new_obj=det_filtered[match_ind_det[i]];
             utdet_t *old_obj=tracked_filtered[match_ind_tracked[i]];
-            debugf("Match pass %d : Match to old obj %llx conf %0.3f",pass,old_obj->det.track_id, new_obj->adjusted_confidence);
+            debugf("Match pass %d : Match to old obj %lx conf %0.3f",pass,old_obj->det.track_id, new_obj->adjusted_confidence);
             new_obj->det.track_id=old_obj->det.track_id;
             new_obj->observations=old_obj->observations+1;
             old_obj->matched=true;
@@ -359,6 +376,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             else
                 new_obj->track_state=old_obj->track_state;
 
+            assert(num_output_objects<MAX_TRACKED);
             output_objects[num_output_objects++]=(utdet_t *)block_reference(new_obj);
         }
     }
@@ -372,7 +390,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         utdet_t *det=dets[i];
         if (det->matched) continue;
         debugf("Unmatched new obj %lx conf %0.3f", det->det.track_id, det->det.conf);
-        if (det->det.conf>ut->param_new_track_thresh)
+        if (det->adjusted_confidence>ut->param_new_track_thresh)
         {
             assert(det->det.track_id==0xdeaddead);
             det->det.track_id=ut->next_track_id++;
@@ -380,8 +398,9 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             Vector4f v(det->det.x0, det->det.y0, det->det.x1, det->det.y1);
             det->kf=new KalmanBoxTracker(v, rtp_time);
             det->last_detect_time=rtp_time;
-            if (det->det.conf>ut->param_immediate_confirm_thresh)
+            if (det->adjusted_confidence>ut->param_immediate_confirm_thresh)
                 det->track_state=TRACKSTATE_TRACKED;
+            assert(num_output_objects<MAX_TRACKED);
             output_objects[num_output_objects++]=(utdet_t *)block_reference(det);
         }
     }
@@ -393,6 +412,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         dets[i]=0;
     }
 
+    // ================================================================================================================
     // determine which objects to delete
     for(int i=0;i<num_tracked;i++)
     {
@@ -428,6 +448,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     memcpy(ut->tracked, output_objects, num_output_objects*sizeof(utdet_t*));
     ut->num_tracked=num_tracked=num_output_objects;
 
+    // ================================================================================================================
     // determine "lost" objects"
     for(int i=0;i<num_tracked;i++)
     {
@@ -437,6 +458,33 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         }
         debugf("final tracked list %d:%lx state %d",i,tracked[i]->det.track_id, tracked[i]->track_state);
     }
+
+    // ================================================================================================================
+    // remove duplicated objects
+
+    uint16_t new_ind[num_tracked], old_ind[num_tracked];
+    int n=match_detections_greedy((detection_t **)tracked, num_tracked,
+                                 (detection_t **)tracked, num_tracked,
+                                 lost_object_match_score, &ut->param_delete_dup_iou,
+                                 new_ind, old_ind);
+    for (int i=0;i<n;i++) tracked[old_ind[i]]->track_state=TRACKSTATE_REMOVED;
+
+    int num_not_removed=0;
+    for(int i=0;i<num_tracked;i++)
+    {
+        utdet_t *tdet=tracked[i];
+        if (tdet->track_state!=TRACKSTATE_REMOVED)
+            tracked[num_not_removed++]=tdet;
+        else
+        {
+            if (tdet->kf) delete tdet->kf;
+            block_free(tdet);
+        }
+    }
+    num_tracked=ut->num_tracked=num_not_removed;
+
+    //================================================================================================================
+    // output objects
 
     detection_list_t *out_list=detection_list_create(num_tracked);
     out_list->num_detections=0;

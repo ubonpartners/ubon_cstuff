@@ -5,10 +5,10 @@ typedef struct image image_t;
 
 typedef enum image_format {
   IMAGE_FORMAT_NONE=0,
-  IMAGE_FORMAT_YUV420_HOST,             // Currently assumed BT.709 limited range
-  IMAGE_FORMAT_YUV420_DEVICE,           // Currently assumed BT.709 limited range
-  IMAGE_FORMAT_NV12_DEVICE,
-  IMAGE_FORMAT_RGB24_HOST,
+  IMAGE_FORMAT_YUV420_HOST=1,             // Currently assumed BT.709 limited range
+  IMAGE_FORMAT_YUV420_DEVICE=2,           // Currently assumed BT.709 limited range
+  IMAGE_FORMAT_NV12_DEVICE=3,
+  IMAGE_FORMAT_RGB24_HOST=4,
   IMAGE_FORMAT_RGB24_DEVICE,
   IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE,
   IMAGE_FORMAT_RGB_PLANAR_FP16_HOST,

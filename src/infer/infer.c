@@ -733,8 +733,10 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         image_t *img=(testimage!=0) ? testimage : img_list[i];
         determine_scale_size(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i,
                           10, 2, 2, inf->inf_allow_upscale);
-        //printf("%dx%d %dx%d %dx%d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0]);
+        //printf("%dx%d %dx%d %dx%d %d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0], img->format);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
+        //display_image("test",image_scaled);
+    //usleep(1000*500);
         image_format_t fmt=image_scaled->format;
         if (  (fmt==IMAGE_FORMAT_RGB24_DEVICE)
             ||(fmt==IMAGE_FORMAT_RGB24_HOST)
@@ -753,6 +755,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
 
     image_format_t fmt=inf->input_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
     image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num, offs_x, offs_y);
+
+    //display_image("test",image_scaled_conv[0]);
+    //usleep(1000*500);
 
     // step4: run inference
     auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
@@ -845,6 +850,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         detection_list_generate_overlap_masks(dets[i]);
         if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i]);
     }
+    //detection_list_show(dets[0]);
 }
 
 detection_list_t *infer(infer_t *inf, image_t *img)

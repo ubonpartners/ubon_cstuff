@@ -330,7 +330,7 @@ static void track_run_video_process_image(void *context, image_t *img)
     if (img!=0) track_stream_run_frame_time(ts, img);
 }
 
-void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps)
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double max_time)
 {
     FILE *input = fopen(file, "rb");
     if (!input)
@@ -341,7 +341,7 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
 
     simple_decoder_t *decoder = simple_decoder_create(ts, track_run_video_process_image, codec);
     simple_decoder_set_framerate(decoder, video_fps);
-
+    simple_decoder_set_max_time(decoder, max_time);
     uint8_t buffer[4096];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0)
