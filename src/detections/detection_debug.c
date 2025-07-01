@@ -160,9 +160,13 @@ void detection_list_show(detection_list_t *dets)
     {
         detection_t *det=dets->det[i];
         const char * classname=detection_list_get_classname(dets, det->cl);
-        printf("det %2d cls %8s conf %0.3f idx:%3d box[%0.3f,%0.3f,%0.3f,%0.3f] area %0.3f\n",i,
+        printf("DLS det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f\n",i,
             classname,
-            det->conf, det->index, det->x0, det->y0, det->x1, det->y0,
+            det->conf, det->index, det->x0, det->y0, det->x1, det->y1,
+            (det->y1-det->y0)*(det->x1-det->x0));
+        log_trace("det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f",i,
+            classname,
+            det->conf, det->index, det->x0, det->y0, det->x1, det->y1,
             (det->y1-det->y0)*(det->x1-det->x0));
     }
 }

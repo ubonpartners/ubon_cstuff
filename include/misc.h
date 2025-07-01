@@ -12,4 +12,10 @@ const char *ubon_cstuff_get_version(void);
 void decode_file(const char *file, void *context, void (*callback)(void *context, image_t *img),
                  float framerate=0, bool (*stop_callback)(void *context)=0);
 
+void file_trace_enable(const char *filename);
+extern bool file_trace_enabled;
+
+#define FILE_TRACE  if (file_trace_enabled) log_trace
+void file_trace(const char *txt);
+
 #endif

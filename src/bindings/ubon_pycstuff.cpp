@@ -22,6 +22,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "jpeg.h"
 #include "track.h"
 #include "motion_track.h"
+#include "kalman_tracker.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -1067,6 +1068,34 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("set_roi", &c_motion_tracker::set_roi, py::arg("roi"), "Set ROI from list of 4 floats")
         .def("get_of_results", &c_motion_tracker::get_of_results, "Get optical flow results as NumPy array");
 
+     py::class_<KalmanBoxTracker>(m, "c_kalmanboxtracker")
+        .def(py::init([](const std::array<float,4>& bbox, double init_time) {
+            Eigen::Matrix<float,4,1> vec;
+            for (int i = 0; i < 4; ++i)
+                vec(i) = bbox[i];
+            return new KalmanBoxTracker(vec, init_time);
+        }),
+        py::arg("init_bbox"), py::arg("init_time") = 0.0,
+        "Create a KalmanBoxTracker with initial bbox [x1, y1, x2, y2] (as a list/tuple of 4 floats) and optional init_time.")
+
+        .def("predict", [](KalmanBoxTracker &self, double predict_time) {
+            Eigen::Matrix<float,4,1> out = self.predict(predict_time);
+            return std::array<float,4>{ out(0), out(1), out(2), out(3) };
+        },
+        py::arg("predict_time"),
+        "Predicts the bbox at the given time; returns a tuple [x1, y1, x2, y2].")
+
+        .def("update", [](KalmanBoxTracker &self,
+                           const std::array<float,4>& bbox,
+                           double curr_time) {
+            Eigen::Matrix<float,4,1> vec;
+            for (int i = 0; i < 4; ++i)
+                vec(i) = bbox[i];
+            self.update(vec, curr_time);
+        },
+        py::arg("bbox"), py::arg("curr_time"),
+        "Update tracker with new bbox [x1, y1, x2, y2] at curr_time.");
+
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",
           py::arg("file"));
@@ -1086,6 +1115,14 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             py::arg("level"),
             "Set the logging level. "
             "`level`: 0 (TRACE) to 5 (FATAL).");
+
+    m.def("enable_file_trace",&file_trace_enable,
+            py::arg("file"),
+            "Enable file tracing"
+            "");
+
+    m.def("file_trace", &file_trace,
+          py::arg("txt"), "Inject text into ubon c file trace log", "");
 
     m.doc() = "ubon_cstuff python module";
     m.def("get_version", ubon_cstuff_get_version, "Returns the git version of the library");

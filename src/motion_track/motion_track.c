@@ -92,12 +92,6 @@ static int count_trailing_zeros(uint64_t x) {
 
 void motion_track_add_frame(motion_track_t *mt, image_t *img)
 {
-    if (mt->mad_delta==0)
-    {
-        mt->roi=ROI_ONE;
-        return;
-    }
-
     int scale_w, scale_h;
     determine_scale_size(img->width, img->height,
                          mt->max_width, mt->max_height, &scale_w, &scale_h,
@@ -121,6 +115,18 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         }
     }
     #endif
+
+    if (mt->mad_delta==0)
+    {
+        mt->roi=ROI_ONE;
+        if (mt->in_img)
+        {
+            destroy_image(mt->in_img);
+            mt->in_img=0;
+        }
+        mt->in_img=image_scaled;
+        return;
+    }
 
     if (mt->blur)
     {
@@ -222,6 +228,8 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         roi.box[3]=roi_b/image_scaled->height;
         debugf("ROI %.3f %.3f %.3f %.3f A %0.4f",roi.box[0],roi.box[1],roi.box[2],roi.box[3], roi_area(&roi));
     }
+
+    assert(roi.box[0]>=0.0f && roi.box[2]<=1.0f && roi.box[1]>=0.0f && roi.box[3]<=1.0f);
 
     mt->in_img=image_scaled;
     mt->roi=roi;

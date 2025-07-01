@@ -36,13 +36,15 @@ static __global__ void row_hash_kernel(const uint8_t* data, int w, int h, int st
 
 void cuda_hash_2d(const uint8_t* d_data, int w, int h, int stride, uint32_t *dest, cudaStream_t stream)
 {
-    uint32_t *dest_device=0;
-    cudaMallocAsync(&dest_device, h * sizeof(uint32_t), stream);
+    uint32_t *dest_device=(uint32_t *)cuda_malloc_async(h * sizeof(uint32_t), stream);
+    //cudaMallocAsync(&dest_device, h * sizeof(uint32_t), stream);
     int threads = 256;
     int blocks = (h + threads - 1) / threads;
     row_hash_kernel<<<blocks, threads, 0, stream>>>(d_data, w, h, stride, dest_device);
     cudaMemcpyAsync(dest, dest_device, h * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream);
-    cudaFreeAsync(dest, stream);
+    cudaStreamSynchronize(stream);
+    cuda_free_async(dest_device, stream);
+    //cudaFreeAsync(dest, stream);
 }
 
 // Kernel to compute MAD per 4x4 block

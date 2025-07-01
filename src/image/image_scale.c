@@ -191,7 +191,10 @@ image_t *image_scale(image_t *img, int width, int height)
             return image_scale_yuv420_host(img,width,height);
         case IMAGE_FORMAT_MONO_DEVICE:
         case IMAGE_FORMAT_YUV420_DEVICE:
-            return image_scale_yuv420_device(img,width,height);
+        {
+            image_t *ret=image_scale_yuv420_device(img,width,height);
+            return ret;
+        }
         case IMAGE_FORMAT_NV12_DEVICE:
             return image_scale_nv12_device(img,width,height);
         case IMAGE_FORMAT_RGB24_DEVICE:

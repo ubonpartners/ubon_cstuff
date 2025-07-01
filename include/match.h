@@ -91,7 +91,9 @@ int match_greedy(
     float            (*cost_fn)(const void *item_a, const void *item_b, void *context),
     void              *ctx,
     uint16_t           *out_a_idx,
-    uint16_t           *out_b_idx
+    uint16_t           *out_b_idx,
+    float              *out_score=0,
+    bool               do_debug=false
 );
 
 #endif

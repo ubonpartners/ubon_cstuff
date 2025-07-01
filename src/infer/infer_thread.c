@@ -10,6 +10,7 @@
 #include <assert.h>
 #include "display.h"
 #include "profile.h"
+#include "misc.h"
 
 /*
  * Internal job struct: holds the image, ROI, and result handle
@@ -274,6 +275,8 @@ void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t ro
 infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_t *img, roi_t roi)
 {
     if (!h || !img) return NULL;
+
+    FILE_TRACE("infer_thread img %dx%d TS %ld [%.4f,%.4f,%.4f,%.4f]", img->width,img->height,img->timestamp, roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
 
     // Allocate and initialize a new result handle
     infer_thread_result_handle_t *handle = (infer_thread_result_handle_t *)malloc(sizeof(infer_thread_result_handle_t));

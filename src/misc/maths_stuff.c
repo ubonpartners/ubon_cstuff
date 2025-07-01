@@ -21,3 +21,10 @@ void vec_mean_normalize(float *src, float *mean, float *dest, int len)
     norm=sqrtf(norm);
     if (norm!=0) vec_scale(dest, 1.0/norm, len);
 }
+
+float vec_dot(float *srca, float *srcb, int len)
+{
+    float ret=0;
+    for(int i=0;i<len;i++) ret+=(srca[i]*srcb[i]);
+    return ret;
+}

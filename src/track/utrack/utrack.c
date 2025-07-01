@@ -9,10 +9,13 @@
 #include "memory_stuff.h"
 #include "maths_stuff.h"
 #include "match.h"
-#include "kalman.h"
+#include "misc.h"
+#include "kalman_tracker.h"
+#include "detections.h"
+
 
 #define REID_VECTOR_LEN 64
-#define MAX_TRACKED     300
+#define MAX_TRACKED     350
 #define debugf if (0) log_warn
 
 typedef enum trackstate
@@ -59,6 +62,7 @@ struct utrack
     float param_track_buffer_seconds;
     float param_fuse_scores;
     float param_pose_conf;
+    float params_roi_expand_ratio;
 
     uint64_t next_track_id;
     int num_tracked;
@@ -103,6 +107,7 @@ utrack_t *utrack_create(const char *yaml_config)
     ut->param_track_buffer_seconds=yaml_get_float_value(yaml_base["track_buffer_seconds"], 2.0f);
     ut->param_fuse_scores=yaml_get_float_value(yaml_base["fuse_scores"], 0.94f);
     ut->param_pose_conf=yaml_get_float_value(yaml_base["pose_conf"], 0.004f);
+    ut->params_roi_expand_ratio=yaml_get_float_value(yaml_base["roi_expand_ratio"], 0.05f);
 
     return ut;
 }
@@ -131,8 +136,10 @@ static void utrack_normalize_reid_vectors(utdet_t **dets, int num_det, utdet_t *
 typedef struct match_context
 {
     float match_thr;
-    float kp_weight, kf_weight;
-    float kf_warmup;
+    float param_kp_weight, param_kf_weight;
+    float param_kf_warmup;
+    float param_fuse_scores;
+    float param_sim_weight;
 } match_context_t;
 
 
@@ -164,27 +171,34 @@ static float match_cost(const detection_t *det, const detection_t *old, void *ct
 {
     match_context_t *mc=(match_context_t *)ctx;
     utdet_t *tdet=(utdet_t *)old;
+    utdet_t *tdet_new=(utdet_t *)det;
 
-    float kf_weight=mc->kf_weight;
-    float kp_weight=mc->kp_weight;
+    float kf_weight=mc->param_kf_weight;
+    float kp_weight=mc->param_kp_weight;
     float of_weight=1.0;
 
     float kf_score=iou(det, tdet->kf_predicted_box);
     float of_score=iou(det, tdet->of_predicted_box);
 
-    if ((of_score+kf_score)==0) return 0.0f;
+    //if ((of_score+kf_score)==0) return 0.0f;
+
+    float sim=vec_dot(tdet->reid_norm, tdet_new->reid_norm, REID_MAX_VECTOR_LEN);
+    sim*=mc->param_sim_weight;
 
     if (tdet->observations<2)
         kf_weight=0;
     else
     {
-        float f=powf(std::max(0.1f, 1.0f/tdet->observations ), mc->kf_warmup);
+        float f=powf(std::max(0.1f, 1.0f/tdet->observations ), mc->param_kf_warmup);
         kf_weight*=(1-f);
     }
-
     float score=(of_score*of_weight+kf_score*kf_weight)/(of_weight+kf_weight);
 
+    score+=sim;
     if (score<mc->match_thr) return 0;
+
+    score=score*powf(det->conf, mc->param_fuse_scores);
+
     return score;
 }
 
@@ -202,18 +216,21 @@ static float lost_object_match_score(const detection_t *self, const detection_t 
     float box_score=iou(self, box_other);
     float thr=*((float *)ctx);
     if (box_score<thr) return 0;
-    return thr;
+    return box_score;
 }
 
-roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt)
+roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt, roi_t motion_roi)
 {
-    roi_t roi;
-    float max_x=0.0;
-    float min_x=1.0;
-    float max_y=0.0;
-    float min_y=1.0;
+    float min_x=motion_roi.box[0];
+    float min_y=motion_roi.box[1];
+    float max_x=motion_roi.box[2];
+    float max_y=motion_roi.box[3];
+
+    FILE_TRACE("predict positions time %f", rtp_time);
 
     debugf("utrack_predict_positions");
+
+    FILE_TRACE("Predicted (Motion ROI) [%0.4f,%0.4f,%0.4f,%0.4f]",min_x,min_y,max_x,max_y);
 
     utdet_t **tracked=ut->tracked;
     int num_tracked=ut->num_tracked;
@@ -226,6 +243,7 @@ roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt
         tdet->kf_predicted_box[1]=v[1];
         tdet->kf_predicted_box[2]=v[2];
         tdet->kf_predicted_box[3]=v[3];
+
         min_x=std::min(min_x, v[0]);
         min_y=std::min(min_y, v[1]);
         max_x=std::max(max_x, v[2]);
@@ -240,17 +258,45 @@ roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt
         min_y=std::min(min_y, tdet->of_predicted_box[1]);
         max_x=std::max(max_x, tdet->of_predicted_box[2]);
         max_y=std::max(max_y, tdet->of_predicted_box[3]);
+
+        FILE_TRACE("det bx [%.4f %.4f %.4f %.4f] OF [%.4f %.4f %.4f %.4f] KF [%.4f %.4f %.4f %.4f]",
+            tdet->det.x0,tdet->det.y0,tdet->det.x1,tdet->det.y1,
+            tdet->of_predicted_box[0], tdet->of_predicted_box[1], tdet->of_predicted_box[2], tdet->of_predicted_box[3],
+            tdet->kf_predicted_box[0], tdet->kf_predicted_box[1], tdet->kf_predicted_box[2], tdet->kf_predicted_box[3]);
+
     }
-    roi.box[0]=std::min(min_x, max_x);
-    roi.box[1]=std::min(min_y, max_y);
+
+    FILE_TRACE("Predicted position ROI (pre expand) [%0.4f,%0.4f,%0.4f,%0.4f]",min_x,min_y,max_x,max_y);
+
+    float e_w=std::max(0.05f, max_x-min_x);
+    float e_h=std::max(0.05f, max_y-min_y);
+    float params_roi_expand_ratio=ut->params_roi_expand_ratio;
+    min_x=std::max(0.0f, std::min(1.0f, min_x-params_roi_expand_ratio*0.5f*e_w));
+    min_y=std::max(0.0f, std::min(1.0f, min_y-params_roi_expand_ratio*0.5f*e_h));
+    max_x=std::max(0.0f, std::min(1.0f, max_x+params_roi_expand_ratio*0.5f*e_w));
+    max_y=std::max(0.0f, std::min(1.0f, max_y+params_roi_expand_ratio*0.5f*e_h));
+
+    roi_t roi;
+    roi.box[0]=min_x;
+    roi.box[1]=min_y;
     roi.box[2]=max_x;
     roi.box[3]=max_y;
+    FILE_TRACE("Predicted position ROI (post expand %0.3f) [%0.4f,%0.4f,%0.4f,%0.4f]",params_roi_expand_ratio,roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
     return roi;
+}
+
+static int compare_utdet_desc(const void *a, const void *b) {
+    const utdet_t *ua = *(const utdet_t **)a;
+    const utdet_t *ub = *(const utdet_t **)b;
+    if (ua->adjusted_confidence < ub->adjusted_confidence) return 1;
+    if (ua->adjusted_confidence > ub->adjusted_confidence) return -1;
+    return 0;
 }
 
 detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp_time)
 {
-    debugf("utrack run: time %f; %d detections", rtp_time, dets_in->num_detections);
+    FILE_TRACE("==================================");
+    FILE_TRACE("utrack run: time %f; %d detections", rtp_time, dets_in->num_detections);
 
     utdet_t *output_objects[MAX_TRACKED];
     utdet_t **dets=ut->det;
@@ -270,16 +316,38 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         memset(utdet, 0, sizeof(utdet_t));
         memcpy(&utdet->det, det, sizeof(detection_t));
         utdet->det.track_id=0xdeaddead;
+
         utdet->observations=1;
         utdet->kf=0;
-        //o.adjusted_confidence=o.confidence+pose_conf*sum(o.pose_conf)
         float pose=0;
         for(int i=0;i<det->num_pose_points;i++) pose+=det->pose_points[i].conf;
         utdet->adjusted_confidence=utdet->det.conf+pose*pose_conf;
+        if (true) // expand by pose
+        {
+            for(int i=0;i<det->num_pose_points;i++)
+            {
+                if (det->pose_points[i].conf>0.05)
+                {
+                    utdet->det.x0=std::min(utdet->det.x0, det->pose_points[i].x);
+                    utdet->det.y0=std::min(utdet->det.y0, det->pose_points[i].y);
+                    utdet->det.x1=std::max(utdet->det.x1, det->pose_points[i].x);
+                    utdet->det.y1=std::max(utdet->det.y1, det->pose_points[i].y);
+                }
+            }
+        }
         //printf("adjusted %f (pose %f %f)\n",utdet->adjusted_confidence, pose, pose_conf);
         utdet->track_state=TRACKSTATE_NEW;
         utdet->matched=false;
         dets[num_det++]=utdet;
+    }
+
+    qsort(dets, num_det, sizeof(utdet_t *), compare_utdet_desc);
+
+    for(int i=0;i<num_det;i++)
+    {
+        utdet_t *utdet=dets[i];
+        FILE_TRACE("Initial det %2d conf %0.4f box [%0.4f,%0.4f,%0.4f,%0.4f]", i, utdet->adjusted_confidence,
+                    utdet->det.x0, utdet->det.y0, utdet->det.x1, utdet->det.y1);
     }
 
     for(int i=0;i<num_tracked;i++)
@@ -288,8 +356,28 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         tdet->matched=false;
         tdet->time=rtp_time;
         // regenerate overlap mask as det has probably moved (will be used a lot...)
-        tdet->det.overlap_mask=box_to_8x8_mask(tdet->det.x0, tdet->det.y0, tdet->det.x1, tdet->det.y1);
-        debugf("Initial tracked %p:%d:%lx",tdet,i,tdet->det.track_id);
+        float vbox_x0=std::min(tdet->det.x0, std::min(tdet->of_predicted_box[0], tdet->kf_predicted_box[0]));
+        float vbox_y0=std::min(tdet->det.y0, std::min(tdet->of_predicted_box[1], tdet->kf_predicted_box[1]));
+        float vbox_x1=std::max(tdet->det.x1, std::max(tdet->of_predicted_box[2], tdet->kf_predicted_box[2]));
+        float vbox_y1=std::max(tdet->det.y1, std::max(tdet->of_predicted_box[3], tdet->kf_predicted_box[3]));
+        float w=vbox_x1-vbox_x0;
+        float h=vbox_y1-vbox_y0;
+        float e=0.1;
+        vbox_x0-=(0.5*e*w);
+        vbox_y0-=(0.5*e*h);
+        vbox_x1+=(0.5*e*w);
+        vbox_y1+=(0.5*e*h);
+        tdet->det.overlap_mask=box_to_8x8_mask(vbox_x0, vbox_y0, vbox_x1, vbox_y1);
+        FILE_TRACE(" MASKGEN %0.4f %0.4f %0.4f %0.4f %016lx", vbox_x0,vbox_y0,vbox_x1,vbox_y1,tdet->det.overlap_mask);
+    }
+
+    for(int i=0;i<num_tracked;i++)
+    {
+        utdet_t *tdet=tracked[i];
+        FILE_TRACE("Initial tracked %2d %lx msk %016lx [%.4f %.4f %.4f %.4f] OF [%.4f %.4f %.4f %.4f] KF [%.4f %.4f %.4f %.4f]",
+            i, tdet->det.track_id, tdet->det.overlap_mask, tdet->det.x0,tdet->det.y0,tdet->det.x1,tdet->det.y1,
+            tdet->of_predicted_box[0], tdet->of_predicted_box[1], tdet->of_predicted_box[2], tdet->of_predicted_box[3],
+            tdet->kf_predicted_box[0], tdet->kf_predicted_box[1], tdet->kf_predicted_box[2], tdet->kf_predicted_box[3]);
     }
 
     utrack_normalize_reid_vectors(dets, num_det, tracked, num_tracked);
@@ -298,9 +386,11 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     // matching
 
     match_context_t mc;
-    mc.kf_weight=ut->param_kf_weight;
-    mc.kp_weight=ut->param_kp_weight;
-    mc.kf_warmup=ut->param_kf_warmup;
+    mc.param_kf_weight=ut->param_kf_weight;
+    mc.param_kp_weight=ut->param_kp_weight;
+    mc.param_kf_warmup=ut->param_kf_warmup;
+    mc.param_fuse_scores=ut->param_fuse_scores;
+    mc.param_sim_weight=ut->param_sim_weight;
 
     for(int pass=0;pass<3;pass++)
     {
@@ -346,18 +436,23 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
 
         debugf("Running match pass %d; %d dets, %d tracked",pass, num_det_filtered, num_tracked_filtered);
 
-        uint16_t match_ind_det[num_det_filtered];
-        uint16_t match_ind_tracked[num_tracked_filtered];
+        int maxn=1+std::min(num_det_filtered, num_tracked_filtered);
+        uint16_t match_ind_det[maxn];
+        uint16_t match_ind_tracked[maxn];
+        float match_score[maxn];
 
         int n=match_detections_greedy((detection_t **)det_filtered, num_det_filtered,
                                     (detection_t **)tracked_filtered, num_tracked_filtered,
                                     match_cost, &mc,
-                                    match_ind_det, match_ind_tracked);
+                                    match_ind_det, match_ind_tracked, match_score, false);
 
         for(int i=0;i<n;i++)
         {
             utdet_t *new_obj=det_filtered[match_ind_det[i]];
             utdet_t *old_obj=tracked_filtered[match_ind_tracked[i]];
+            float score=match_score[i];
+            FILE_TRACE("match pass %d:%d/%d Match %2d<->%2d score %1.4f",pass,i,n,
+                        match_ind_det[i], match_ind_tracked[i], score);
             debugf("Match pass %d : Match to old obj %lx conf %0.3f",pass,old_obj->det.track_id, new_obj->adjusted_confidence);
             new_obj->det.track_id=old_obj->det.track_id;
             new_obj->observations=old_obj->observations+1;
@@ -365,6 +460,8 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             new_obj->matched=true;
             assert(new_obj->kf==0);
             new_obj->kf=old_obj->kf;
+            new_obj->last_detect_time=rtp_time;
+            new_obj->num_missed=0;
             old_obj->kf=0;
             Vector4f v(new_obj->det.x0, new_obj->det.y0, new_obj->det.x1, new_obj->det.y1);
             new_obj->kf->update(v, rtp_time);
@@ -398,6 +495,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             Vector4f v(det->det.x0, det->det.y0, det->det.x1, det->det.y1);
             det->kf=new KalmanBoxTracker(v, rtp_time);
             det->last_detect_time=rtp_time;
+            det->num_missed=0;
             if (det->adjusted_confidence>ut->param_immediate_confirm_thresh)
                 det->track_state=TRACKSTATE_TRACKED;
             assert(num_output_objects<MAX_TRACKED);
@@ -431,6 +529,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         if (keep)
         {
             assert(tdet!=0);
+            assert(num_output_objects<MAX_TRACKED);
             output_objects[num_output_objects++]=tdet;
         }
         else
@@ -496,5 +595,6 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             out_list->det[out_list->num_detections++]=(detection_t *)block_reference(tdet);
         }
     }
+    //detection_list_show(out_list);
     return out_list;
 }

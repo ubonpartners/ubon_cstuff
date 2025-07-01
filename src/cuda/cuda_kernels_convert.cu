@@ -433,6 +433,8 @@ static __global__ void yuv420_to_planar_rgb(
 
     int nx = ux + 1;
     int ny = uy + 1;
+    if (nx>=src_width/2) nx=src_width/2-1;
+    if (ny>=src_height/2) ny=src_height/2-1;
 
     int p00 = uy * src_stride_uv + ux;
     int p10 = uy * src_stride_uv + nx;

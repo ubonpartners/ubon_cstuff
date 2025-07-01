@@ -301,8 +301,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
 
     if (ts->utrack)
     {
-        roi_t object_roi=utrack_predict_positions(ts->utrack, time, ts->mt);
-        if (roi_area(&object_roi)>0) expanded_roi=roi_union(expanded_roi, object_roi);
+        expanded_roi=utrack_predict_positions(ts->utrack, time, ts->mt, expanded_roi);
     }
 
     infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);

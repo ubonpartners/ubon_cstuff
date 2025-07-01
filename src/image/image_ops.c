@@ -78,11 +78,11 @@ uint32_t image_hash(image_t *img)
     }
     if ((img->format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)||(img->format==IMAGE_FORMAT_RGB_PLANAR_FP32_HOST))
     {
-        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*4, img->height, img->stride_rgb, is_device, img->stream);
+        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*4, img->height, img->width*3*4, is_device, img->stream);
     }
     if ((img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)||(img->format==IMAGE_FORMAT_RGB_PLANAR_FP16_HOST))
     {
-        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*2, img->height, img->stride_rgb, is_device, img->stream);
+        hashes[nhashes++]=hash_plane(img->rgb, img->width*3*2, img->height, img->width*3*2, is_device, img->stream);
     }
     uint32_t ret=hash_u32(hashes, nhashes);
     return ret;

@@ -701,7 +701,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
 
         max_w=std::max(max_w, scale_w);
         max_h=std::max(max_h, scale_h);
-        debugf("%d) %dx%d->%dx%d\n",i,img->width,img->height,scale_w,scale_h);
+        debugf("%d) %dx%d->%dx%d fmt %d\n",i,img->width,img->height,scale_w,scale_h, img->format);
     }
     inf_max_w=std::max(inf->inf_limit_min_width, inf_max_w);
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
@@ -755,9 +755,6 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
 
     image_format_t fmt=inf->input_is_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE;
     image_t *inf_image=image_make_tiled(fmt, infer_w, infer_h, image_scaled_conv, num, offs_x, offs_y);
-
-    //display_image("test",image_scaled_conv[0]);
-    //usleep(1000*500);
 
     // step4: run inference
     auto input_dims = nvinfer1::Dims4{num, 3, infer_h, infer_w};
@@ -843,7 +840,9 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
                                        1.0/image_heights[i],
                                        offs_x[i],
                                        offs_y[i]);
+
     }
+    //detection_list_show(dets[0]);
 
     for(int i=0;i<num;i++)
     {

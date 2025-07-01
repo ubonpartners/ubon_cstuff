@@ -105,7 +105,9 @@ int match_detections_greedy(
     float            (*cost_fn)(const detection_t *, const detection_t *, void *),
     void              *ctx,
     uint16_t           *out_a_idx,
-    uint16_t           *out_b_idx
+    uint16_t           *out_b_idx,
+    float              *out_score=0,
+    bool               do_debug=false
 );
 
 typedef enum match_type

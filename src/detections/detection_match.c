@@ -51,7 +51,9 @@ int match_detections_greedy(
     float            (*cost_fn)(const detection_t *, const detection_t *, void *),
     void              *ctx,
     uint16_t           *out_a_idx,
-    uint16_t           *out_b_idx
+    uint16_t           *out_b_idx,
+    float              *out_score,
+    bool               do_debug
 )
 {
     if (num_dets_a <= 0 || num_dets_b <= 0) {
@@ -76,7 +78,7 @@ int match_detections_greedy(
         (const void **)dets_a_ptr, maskA, num_dets_a,
         (const void **)dets_b_ptr, maskB, num_dets_b,
         (float (*)(const void*, const void*, void*))cost_fn, ctx,
-        out_a_idx, out_b_idx);
+        out_a_idx, out_b_idx, out_score, do_debug);
 }
 
 float detection_box_iou(const detection_t *da, const detection_t *db)

@@ -2,6 +2,7 @@
 #include <cassert>
 #include "string.h"
 #include <math.h>
+#include <stdio.h>
 #include "match.h"
 
 /* Pair of uint16 indices */
@@ -65,6 +66,20 @@ static int match_masks_optimized(
     return out_idx;
 }
 
+typedef struct {
+    uint16_t a, b;
+    float   score;
+} Cand;
+
+// Comparator for qsort: descending by score
+static int compare_cand_desc(const void *p1, const void *p2) {
+    float s1 = ((const Cand*)p1)->score;
+    float s2 = ((const Cand*)p2)->score;
+    if (s1 < s2) return  1;
+    if (s1 > s2) return -1;
+    return 0;
+}
+
 int match_greedy(
     const void        **a,
     uint64_t          *maskA,
@@ -75,7 +90,9 @@ int match_greedy(
     float            (*cost_fn)(const void *item_a, const void *item_b, void *context),
     void              *ctx,
     uint16_t           *out_a_idx,
-    uint16_t           *out_b_idx
+    uint16_t           *out_b_idx,
+    float              *out_score,
+    bool               do_debug
 )
 {
     assert(num_a >= 0 && num_a <= MAX_ITEMS);
@@ -85,68 +102,51 @@ int match_greedy(
         return 0;
     }
 
-    /* 2) Build sparse candidate list (all pairs with mask intersection) */
-    Pair16 candidates[num_a * num_b];
-    int num_candidates = match_masks_optimized(
+    // 1) Build sparse mask‐filtered list of candidate pairs
+    Pair16 raw_cands[num_a * num_b];
+    int num_raw = match_masks_optimized(
         maskA, maskB,
         num_a, num_b,
-        candidates
+        raw_cands
     );
-    assert(num_candidates<=num_a*num_b);
+    assert(num_raw <= num_a * num_b);
 
-    //printf("%d / %d\n",num_candidates,num_a*num_b);
-
-    /* 3) Bucket candidates by A‐index: cand_list_by_A[i][0..cand_count_by_A[i]-1] = array of B‐indices */
-    uint16_t cand_list_by_A[num_a][num_b];
-    uint16_t cand_count_by_A[num_a];  /* ≤ num_b ≤ 200 */
-
-    /* Initialize counts to zero */
-    memset(cand_count_by_A, 0, sizeof(uint16_t)*num_a);
-
-    /* Fill buckets */
-    for (int idx = 0; idx < num_candidates; ++idx) {
-        uint16_t i = candidates[idx].a;
-        uint16_t j = candidates[idx].b;
-        uint16_t cnt = cand_count_by_A[i];
-        cand_list_by_A[i][cnt] = j;
-        assert(i<=num_a && cnt<=num_b);
-        cand_count_by_A[i] = cnt + 1;
+    // 2) Compute each pair's score
+    Cand *all = (Cand *)malloc(sizeof(Cand) * num_raw);
+    if (!all) return 0;
+    for (int i = 0; i < num_raw; ++i) {
+        uint16_t ia = raw_cands[i].a;
+        uint16_t ib = raw_cands[i].b;
+        float sc = cost_fn(a[ia], b[ib], ctx);
+        all[i].a     = ia;
+        all[i].b     = ib;
+        all[i].score = sc;
     }
 
-    /* 4) Greedy match */
-    uint16_t matchedA[num_a];
-    uint16_t matchedB[num_b];
+    // 3) Sort all candidates by descending score
+    qsort(all, num_raw, sizeof(Cand), compare_cand_desc);
+
+    // 4) Greedily pick top‐scoring non‐conflicting pairs
+    uint8_t matchedA[num_a] = {0};
+    uint8_t matchedB[num_b] = {0};
     int out_count = 0;
-    memset(matchedA, 0, num_a*sizeof(int16_t));
-    memset(matchedB, 0, num_b*sizeof(int16_t));
 
-    for (int i = 0; i < num_a; ++i) {
-        if (matchedA[i]) continue;  // should be false, by design
+    for (int k = 0; k < num_raw; ++k) {
+        uint16_t ia = all[k].a;
+        uint16_t ib = all[k].b;
+        float    sc = all[k].score;
 
-        float best_score = 0.0f;
-        int best_j = -1;
+        if (sc <= 0.0f)          continue;  // no benefit
+        if (matchedA[ia] || matchedB[ib]) continue;
 
-        uint16_t cnt_i = cand_count_by_A[i];
-        for (uint16_t k = 0; k < cnt_i; ++k) {
-            uint16_t j = cand_list_by_A[i][k];
-            assert(j<=num_b);
-            if (matchedB[j]) continue;
-            /* Only now call the expensive cost_fn */
-            float c = cost_fn(a[i], b[j], ctx);
-            if (c > best_score) {
-                best_score = c;
-                best_j = j;
-            }
-        }
-
-        if (best_j >= 0 && best_score > 0.0f) {
-            matchedA[i] = 1;
-            matchedB[best_j] = 1;
-            out_a_idx[out_count] = (uint16_t)i;
-            out_b_idx[out_count] = (uint16_t)best_j;
-            ++out_count;
-        }
+        matchedA[ia] = 1;
+        matchedB[ib] = 1;
+        out_a_idx[out_count] = ia;
+        out_b_idx[out_count] = ib;
+        if (out_score) out_score[out_count] = sc;
+        ++out_count;
     }
 
+    free(all);
     return out_count;
 }

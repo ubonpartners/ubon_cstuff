@@ -184,6 +184,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         }
         img->timestamp=dec->time;
         dec->time+=dec->time_increment;
+
         if (!skip) dec->frame_callback(dec->context, img);
         destroy_image(img);
         destroy_image(dec_img);
