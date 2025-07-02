@@ -9,6 +9,7 @@
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
 #include "log.h"
+#include "misc.h"
 
 #define debugf if (1) log_debug
 
@@ -26,8 +27,8 @@ struct simple_decoder
     int target_height;
     void *context;
     image_format_t output_format;
-    uint64_t time;
-    uint64_t time_increment;
+    double time;
+    double time_increment;
     double max_time;
     //CUstream stream;
     CUvideoctxlock vidlock;
@@ -113,7 +114,7 @@ static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicPara
 
 void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 {
-    dec->time_increment=(uint64_t)(90000.0/fps);
+    dec->time_increment=1.0/fps;
 }
 
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
@@ -151,7 +152,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
             cudaMemcpyDeviceToDevice
         ));
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
-        dec_img->timestamp=dec->time;
+        dec_img->time=dec->time;
         dec->time+=dec->time_increment;
         dec->frame_callback(dec->context, dec_img);
         destroy_image(dec_img);
@@ -175,14 +176,18 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         dec_img->v=dec_img->u+1;
         dec_img->stride_y=dec_img->stride_uv=pitch;
         image_t *img=image_convert(dec_img, dec->output_format);
+        image_sync(img);
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
         bool skip=false;
         if (dec->max_time>=0)
         {
-            double time=dec->time/90000.0;
-            if (time>dec->max_time) skip=true;
+            if (dec->time>dec->max_time) skip=true;
         }
-        img->timestamp=dec->time;
+        img->time=dec->time;
+        if (file_trace_enabled)
+        {
+            FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",img->width,img->height,img->format,img->time,image_hash(img));
+        }
         dec->time+=dec->time_increment;
 
         if (!skip) dec->frame_callback(dec->context, img);

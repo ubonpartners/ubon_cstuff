@@ -154,17 +154,20 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
     return x;
 }
 
-void detection_list_show(detection_list_t *dets)
+void detection_list_show(detection_list_t *dets, bool log_only)
 {
     for(int i=0;i<dets->num_detections;i++)
     {
         detection_t *det=dets->det[i];
         const char * classname=detection_list_get_classname(dets, det->cl);
-        printf("DLS det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f\n",i,
+        if (log_only==false)
+        {
+            printf("DLS det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f\n",i,
             classname,
             det->conf, det->index, det->x0, det->y0, det->x1, det->y1,
             (det->y1-det->y0)*(det->x1-det->x0));
-        log_trace("det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f",i,
+            }
+            log_trace("det %2d cls %8s conf %0.3f idx:%3d box[%0.4f,%0.4f,%0.4f,%0.4f] area %0.3f",i,
             classname,
             det->conf, det->index, det->x0, det->y0, det->x1, det->y1,
             (det->y1-det->y0)*(det->x1-det->x0));

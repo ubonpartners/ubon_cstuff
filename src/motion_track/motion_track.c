@@ -15,6 +15,7 @@
 #include "log.h"
 #include "yaml_stuff.h"
 #include "nvof.h"
+#include "misc.h"
 
 #define NVOF_SUPPORTED 1
 #define debugf if (0) log_debug
@@ -93,12 +94,20 @@ static int count_trailing_zeros(uint64_t x) {
 void motion_track_add_frame(motion_track_t *mt, image_t *img)
 {
     int scale_w, scale_h;
+
+    if (file_trace_enabled)
+    {
+        FILE_TRACE("motiontracker add frame %dx%d fmt %d TS %f hash %lx",img->width,img->height,img->format,img->time, image_hash(img));
+    }
+
     determine_scale_size(img->width, img->height,
                          mt->max_width, mt->max_height, &scale_w, &scale_h,
                          10, 8, 8, false);
 
     image_t *image_scaled=image_scale_convert(img, IMAGE_FORMAT_YUV420_DEVICE, scale_w, scale_h);
     image_t *ref=mt->ref;
+
+    FILE_TRACE("MT scaled size %dx%d",scale_w,scale_h);
 
     assert((scale_w&7)==0);
     assert((scale_h&7)==0);
@@ -172,6 +181,11 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     assert(mad_img!=0);
     assert(mad_img->format==IMAGE_FORMAT_YUV420_DEVICE);
 
+    if (file_trace_enabled)
+    {
+        FILE_TRACE("motiontracker REF %lx SCAL %lx MAD %lx",image_hash(mt->ref), image_hash(image_scaled), image_hash(mad_img));
+    }
+
     //display_image("mad", mad_img);
     //usleep(250000);
 
@@ -201,8 +215,9 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         mt->row_masks_device,
         mad_img->stream);
 
-    CHECK_CUDART_CALL(cudaMemcpyAsync(mt->row_masks_host, mt->row_masks_device, 64*8, cudaMemcpyDeviceToHost, mad_img->stream));
     CHECK_CUDART_CALL(cudaStreamSynchronize(mad_img->stream));
+    CHECK_CUDART_CALL(cudaMemcpy(mt->row_masks_host, mt->row_masks_device, 64*8, cudaMemcpyDeviceToHost));
+
     destroy_image(mad_img);
 
     uint64_t *mp=(uint64_t *)mt->row_masks_host;
@@ -245,6 +260,12 @@ void motion_track_set_roi(motion_track_t *mt, roi_t roi)
 {
     float a=roi_area(&roi);
     debugf("Mt set roi area %f\n",a);
+
+    if (file_trace_enabled)
+    {
+        FILE_TRACE("motion_track_set_roi %0.4f,%0.4f,%0.4f,%0.4f", roi.box[0], roi.box[1],roi.box[2],roi.box[3]);
+    }
+
     if (a>0.99)
     {
         if (mt->ref) destroy_image(mt->ref);

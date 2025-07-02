@@ -123,6 +123,6 @@ image_t *webcam_capture(webcam_t *w)
     image_t *img=decode_jpeg((unsigned char *)w->buffer, w->buf.bytesused);
     if (w->frames==0) w->first_time=timestamp90k;
     w->frames++;
-    img->timestamp = timestamp90k-w->first_time;
+    img->time = (timestamp90k-w->first_time)/90000.0;
     return img;
 }

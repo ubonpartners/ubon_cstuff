@@ -50,7 +50,7 @@ void track_stream_destroy(track_stream_t *ts);
 // most low-level run interface, can specify img and seperate time (img can be null to just advance time)
 void track_stream_run(track_stream_t *ts, image_t *img, double time);
 // simple run interface which processes a whole .264 or .265 stream
-void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double max_time=-1.0);
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double start_time=0, double end_time=100000.0);
 // run interface which takes time from img->timestamp - be sure it's monotonic!
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
 // if you do not provide a result callback then the results are cumulated into a vector

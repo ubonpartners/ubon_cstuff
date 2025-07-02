@@ -334,8 +334,8 @@ __global__ void compute_motion_bytemask(
     int tx = threadIdx.x;  // 0 .. bytes_per_row-1
     int y  = threadIdx.y;  // 0 .. block_h-1
 
-    int bytes_per_row = (block_w + 7) >> 3;
-    if (tx >= bytes_per_row || y >= block_h) return;
+    // run for all 8 bytes on each row
+    if (tx >= 8 || y >= block_h) return;
 
     int base_x = tx * 8;
     uint8_t byte_mask = 0;
@@ -393,15 +393,7 @@ void cuda_generate_motion_mask(
     assert(block_w > 0 && block_w <= 64);
     assert(block_h > 0 && block_h <= 64);
 
-    int bytes_per_row = (block_w + 7) >> 3;
-    size_t total_bytes = size_t(block_h) * bytes_per_row;
-
-    cudaError_t err = cudaMemsetAsync(d_row_masks, 0, total_bytes, stream);
-    if (err != cudaSuccess) {
-        // handle error
-    }
-
-    dim3 threads(bytes_per_row, block_h);
+    dim3 threads(8, block_h);
     compute_motion_bytemask<<<1, threads, 0, stream>>>(
         d_Y, d_U, d_V,
         stride_y, stride_uv,
@@ -410,11 +402,6 @@ void cuda_generate_motion_mask(
         mad_delta,
         alpha, beta,
         d_row_masks);
-
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        // handle error
-    }
 }
 
 } // extern "C"

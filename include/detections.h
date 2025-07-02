@@ -91,7 +91,7 @@ void detection_list_scale_add2(detection_list_t *dets, float sx, float sy, float
 void detection_list_unmap_roi(detection_list_t *dets, roi_t roi);
 detection_list_t *detection_list_join(detection_list_t *dets1, detection_list_t *dets2);
 image_t *detection_list_draw(detection_list_t *dets, image_t *img);
-void detection_list_show(detection_list_t *dets);
+void detection_list_show(detection_list_t *dets, bool log_only=false);
 void detection_list_generate_overlap_masks(detection_list_t *dets);
 void detection_list_fuse_face_person(detection_list_t *dets);
 const char *detection_list_get_classname(detection_list_t *dets, int cl);

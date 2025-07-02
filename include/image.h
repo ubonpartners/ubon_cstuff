@@ -43,7 +43,7 @@ struct image
     int width;
     int height;
     image_format_t format;
-    uint64_t timestamp;
+    double time;
     uint8_t *y;
     uint8_t *u;
     uint8_t *v;

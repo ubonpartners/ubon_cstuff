@@ -124,7 +124,7 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
     if (p->num_decoded_frames>0)
     {
         ret=p->decoded_frames[0];
-        ret->timestamp=p->frame_timestamp;
+        ret->time=p->frame_timestamp/90000.0;
         p->num_decoded_frames--;
         for(int i=0;i<p->num_decoded_frames;i++)
         {

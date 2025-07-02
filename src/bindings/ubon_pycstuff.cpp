@@ -46,8 +46,8 @@ public:
         return {img->height, img->width};
     }
 
-    uint64_t timestamp() const {
-        return img->timestamp;
+    double time() const {
+        return img->time;
     }
 
     image_format_t format() const {
@@ -118,6 +118,23 @@ public:
     std::shared_ptr<c_image> crop(int x, int y, int w, int h) {
         image_t* cropped = image_crop(img, x, y, w, h);
         return std::make_shared<c_image>(cropped);
+    }
+
+    std::tuple<std::shared_ptr<c_image>, std::vector<float>> crop_roi(std::vector<float> in_roi_vec) {
+        if (in_roi_vec.size() != 4) {
+            throw std::runtime_error("Input ROI must be a list of 4 floats: [tlx, tly, blx, bly]");
+        }
+
+        roi_t in_roi;
+        for (int i = 0; i < 4; ++i) {
+            in_roi.box[i] = in_roi_vec[i];
+        }
+
+        roi_t out_roi;
+        image_t* cropped = image_crop_roi(img, in_roi, &out_roi);
+
+        std::vector<float> out_roi_vec(out_roi.box, out_roi.box + 4);
+        return {std::make_shared<c_image>(cropped), out_roi_vec};
     }
 
     std::shared_ptr<c_image> blend(std::shared_ptr<c_image> other,
@@ -655,14 +672,10 @@ class c_decoder {
     public:
         simple_decoder_t* dec;
         std::vector<std::shared_ptr<c_image>> current_output;
-        uint64_t dec_time;
-        uint64_t dec_time_increment;
 
         c_decoder(simple_decoder_codec_t codec) {
             // Create the decoder, register our static callback, pass `this` as context
             dec = simple_decoder_create(this, &c_decoder::on_frame_static, codec);
-            dec_time=0;
-            dec_time_increment=90000/30;
             if (!dec) {
                 throw std::runtime_error("Failed to create decoder");
             }
@@ -673,7 +686,7 @@ class c_decoder {
         }
 
         void set_framerate(double fps) {
-            dec_time_increment=(uint64_t)(90000.0/fps);
+            simple_decoder_set_framerate(dec, fps);
         }
 
         py::list decode(py::bytes bitstream) {
@@ -700,8 +713,6 @@ class c_decoder {
 
         void on_frame(image_t* img) {
             // Reference the frame so we manage its lifetime cleanly
-            img->timestamp=dec_time;
-            dec_time+=dec_time_increment;
             current_output.emplace_back(std::make_shared<c_image>(image_reference(img)));
         }
     };
@@ -824,8 +835,8 @@ public:
             track_stream_run_frame_time(stream, img->raw());
     }
 
-    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, double max_time) {
-        track_stream_run_video_file(stream, file, codec, video_fps, max_time);
+    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time) {
+        track_stream_run_video_file(stream, file, codec, video_fps, start_time, end_time);
     }
 
     std::vector<py::dict> get_results() {
@@ -941,12 +952,13 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def_property_readonly("size", &c_image::size, "Return (height, width) of the image")
         .def_property_readonly("format", &c_image::format, "Get the image format")
         .def_property_readonly("format_name", &c_image::format_name, "Get the image format name as a string")
-        .def_property_readonly("timestamp", &c_image::timestamp, "Get the image timestamp")
+        .def_property_readonly("time", &c_image::time, "Get the image timestamp")
         .def("__repr__",
             [](const c_image &self) {
                 std::ostringstream oss;
                 oss << "<c_image format='" << image_format_name(self.format())
-                    << "' width:" << self.size().second << ", height:" << self.size().first << ")>";
+                    << "' timestamp: " << self.img->time
+                    << " width:" << self.size().second << ", height:" << self.size().first << ")>";
                 return oss.str();
             }
         )
@@ -959,6 +971,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("blur", &c_image::blur, "Return gaussian blur of image")
         .def("mad_4x4", &c_image::mad_4x4, "Return 4x4 MAD of source images")
         .def("crop", &c_image::crop, "Return a crop of the surface")
+        .def("crop_roi", &c_image::crop_roi,
+            "Crop the image using a normalized ROI [tlx, tly, brx, bry], returns (cropped image, output ROI)",
+            py::arg("roi"))
         .def("blend", &c_image::blend, "Blend a rectange from a second surface over the top");
 
     m.def("c_get_aligned_faces", [](const std::vector<std::shared_ptr<c_image>>& images,
@@ -1051,7 +1066,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<simple_decoder_codec_t>())
-        .def("decode", &c_decoder::decode, py::arg("bitstream"));
+        .def("decode", &c_decoder::decode, py::arg("bitstream"))
+        .def("set_framerate", &c_decoder::set_framerate, py::arg("framerate"));
 
     py::class_<c_nvof, std::shared_ptr<c_nvof>>(m, "c_nvof")
         .def(py::init<int, int>(), py::arg("width"), py::arg("height"))

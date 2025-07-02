@@ -263,6 +263,17 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
 image_t *image_crop(image_t *img, int x, int y, int w, int h)
 {
     if (!img) return 0;
+
+    w=std::max(0, std::min(w, img->width-x));
+    h=std::max(0, std::min(h, img->height-y));
+
+    if (w==0 || h==0) return 0;
+
+    if (w==img->width && h==img->height)
+    {
+        return image_reference(img); // nothing to do...
+    }
+
     if (   img->format != IMAGE_FORMAT_YUV420_DEVICE
         && img->format != IMAGE_FORMAT_YUV420_HOST
         && img->format != IMAGE_FORMAT_MONO_DEVICE
@@ -275,16 +286,12 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
         return ret;
     }
 
-    w=std::max(0, std::min(w, img->width-x));
-    h=std::max(0, std::min(h, img->height-y));
-
-    if (w==0 || h==0) return 0;
-
     // what we do here is not actually any work - we just create a new shell surface
     // that points to the Y data of the original surface, and hold on to a reference
     // for that surface.
     image_t *cropped=create_image_no_surface_memory(w, h, img->format);
     cropped->referenced_surface=image_reference(img);
+    cropped->time=img->time;
     image_add_dependency(cropped, img);
 
     if ( (cropped->format==IMAGE_FORMAT_RGB24_DEVICE)
@@ -295,6 +302,10 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
     }
     else // MONO_ or YUV420_
     {
+        assert((x&1)==0);
+        assert((y&1)==0);
+        assert((w&1)==0);
+        assert((h&1)==0);
         cropped->y=img->y+x+y*img->stride_y;
         cropped->stride_y=img->stride_y;
         if (  (cropped->format==IMAGE_FORMAT_YUV420_DEVICE)

@@ -44,14 +44,14 @@ typedef struct utdet
 
 struct utrack
 {
-    float param_immediate_confirm_thresh;
-    float param_track_initial_thresh;
-    float param_track_high_thresh;
-    float param_track_low_thresh;
-    float param_new_track_thresh;
-    float param_match_thresh_initial;
-    float param_match_thresh_high;
-    float param_match_thresh_low;
+    float param_immediate_confirm_thr;
+    float param_track_initial_thr;
+    float param_track_high_thr;
+    float param_track_low_thr;
+    float param_new_track_thr;
+    float param_match_thr_initial;
+    float param_match_thr_high;
+    float param_match_thr_low;
     float param_face_weight;
     float param_kf_weight;
     float param_kf_warmup;
@@ -62,7 +62,8 @@ struct utrack
     float param_track_buffer_seconds;
     float param_fuse_scores;
     float param_pose_conf;
-    float params_roi_expand_ratio;
+    float param_roi_expand_ratio;
+    bool  param_simple;
 
     uint64_t next_track_id;
     int num_tracked;
@@ -89,14 +90,14 @@ utrack_t *utrack_create(const char *yaml_config)
 
     ut->next_track_id=0xbeef0000;
 
-    ut->param_immediate_confirm_thresh=yaml_get_float_value(yaml_base["immediate_confirm_thresh"], 1.18f);
-    ut->param_track_initial_thresh=yaml_get_float_value(yaml_base["track_initial_thresh"], 0.495f);
-    ut->param_track_high_thresh=yaml_get_float_value(yaml_base["track_high_thresh"], 1.225f);
-    ut->param_track_low_thresh=yaml_get_float_value(yaml_base["track_low_thresh"], 1.225f);
-    ut->param_new_track_thresh=yaml_get_float_value(yaml_base["new_track_thresh"], 0.57f);
-    ut->param_match_thresh_initial=yaml_get_float_value(yaml_base["match_thresh_initial"], 0.66f);
-    ut->param_match_thresh_high=yaml_get_float_value(yaml_base["match_thresh_high"], 0.225f);
-    ut->param_match_thresh_low=yaml_get_float_value(yaml_base["match_thresh_low"], 0.022f);
+    ut->param_immediate_confirm_thr=yaml_get_float_value(yaml_base["immediate_confirm_thr"], 1.18f);
+    ut->param_track_initial_thr=yaml_get_float_value(yaml_base["track_initial_thr"], 0.495f);
+    ut->param_track_high_thr=yaml_get_float_value(yaml_base["track_high_thr"], 0.9f);
+    ut->param_track_low_thr=yaml_get_float_value(yaml_base["track_low_thr"], 0.115f);
+    ut->param_new_track_thr=yaml_get_float_value(yaml_base["new_track_thr"], 0.57f);
+    ut->param_match_thr_initial=yaml_get_float_value(yaml_base["match_thr_initial"], 0.66f);
+    ut->param_match_thr_high=yaml_get_float_value(yaml_base["match_thr_high"], 0.225f);
+    ut->param_match_thr_low=yaml_get_float_value(yaml_base["match_thr_low"], 0.022f);
     ut->param_face_weight=yaml_get_float_value(yaml_base["face_weight"], 0.020f);
     ut->param_kf_weight=yaml_get_float_value(yaml_base["kf_weight"], 1.0f);
     ut->param_kf_warmup=yaml_get_float_value(yaml_base["kf_warmup"], 0.7f);
@@ -107,7 +108,9 @@ utrack_t *utrack_create(const char *yaml_config)
     ut->param_track_buffer_seconds=yaml_get_float_value(yaml_base["track_buffer_seconds"], 2.0f);
     ut->param_fuse_scores=yaml_get_float_value(yaml_base["fuse_scores"], 0.94f);
     ut->param_pose_conf=yaml_get_float_value(yaml_base["pose_conf"], 0.004f);
-    ut->params_roi_expand_ratio=yaml_get_float_value(yaml_base["roi_expand_ratio"], 0.05f);
+    ut->param_roi_expand_ratio=yaml_get_float_value(yaml_base["roi_expand_ratio"], 0.05f);
+    ut->param_simple=yaml_get_bool_value(yaml_base["simple"], false);
+    if (ut->param_simple) printf("SIMPLE %d\n",ut->param_simple);
 
     return ut;
 }
@@ -140,6 +143,7 @@ typedef struct match_context
     float param_kf_warmup;
     float param_fuse_scores;
     float param_sim_weight;
+    bool param_simple;
 } match_context_t;
 
 
@@ -179,10 +183,11 @@ static float match_cost(const detection_t *det, const detection_t *old, void *ct
 
     float kf_score=iou(det, tdet->kf_predicted_box);
     float of_score=iou(det, tdet->of_predicted_box);
+    //if (mc->param_simple) return (of_score+kf_score)/2;
 
     //if ((of_score+kf_score)==0) return 0.0f;
 
-    float sim=vec_dot(tdet->reid_norm, tdet_new->reid_norm, REID_MAX_VECTOR_LEN);
+    float sim=vec_dot(tdet->reid_norm, tdet_new->reid_norm, REID_VECTOR_LEN);
     sim*=mc->param_sim_weight;
 
     if (tdet->observations<2)
@@ -253,6 +258,12 @@ roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt
         tdet->of_predicted_box[1]=tdet->det.y0;
         tdet->of_predicted_box[2]=tdet->det.x1;
         tdet->of_predicted_box[3]=tdet->det.y1;
+
+        min_x=std::min(min_x, tdet->of_predicted_box[0]);
+        min_y=std::min(min_y, tdet->of_predicted_box[1]);
+        max_x=std::max(max_x, tdet->of_predicted_box[2]);
+        max_y=std::max(max_y, tdet->of_predicted_box[3]);
+
         motion_track_predict_box_inplace(mt, tdet->of_predicted_box);
         min_x=std::min(min_x, tdet->of_predicted_box[0]);
         min_y=std::min(min_y, tdet->of_predicted_box[1]);
@@ -270,18 +281,26 @@ roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt
 
     float e_w=std::max(0.05f, max_x-min_x);
     float e_h=std::max(0.05f, max_y-min_y);
-    float params_roi_expand_ratio=ut->params_roi_expand_ratio;
-    min_x=std::max(0.0f, std::min(1.0f, min_x-params_roi_expand_ratio*0.5f*e_w));
-    min_y=std::max(0.0f, std::min(1.0f, min_y-params_roi_expand_ratio*0.5f*e_h));
-    max_x=std::max(0.0f, std::min(1.0f, max_x+params_roi_expand_ratio*0.5f*e_w));
-    max_y=std::max(0.0f, std::min(1.0f, max_y+params_roi_expand_ratio*0.5f*e_h));
+    float param_roi_expand_ratio=ut->param_roi_expand_ratio;
+    min_x=std::max(0.0f, std::min(1.0f, min_x-param_roi_expand_ratio*0.5f*e_w));
+    min_y=std::max(0.0f, std::min(1.0f, min_y-param_roi_expand_ratio*0.5f*e_h));
+    max_x=std::max(0.0f, std::min(1.0f, max_x+param_roi_expand_ratio*0.5f*e_w));
+    max_y=std::max(0.0f, std::min(1.0f, max_y+param_roi_expand_ratio*0.5f*e_h));
 
     roi_t roi;
     roi.box[0]=min_x;
     roi.box[1]=min_y;
     roi.box[2]=max_x;
     roi.box[3]=max_y;
-    FILE_TRACE("Predicted position ROI (post expand %0.3f) [%0.4f,%0.4f,%0.4f,%0.4f]",params_roi_expand_ratio,roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
+    FILE_TRACE("Predicted (TS %f) position ROI (post expand %0.3f) [%0.4f,%0.4f,%0.4f,%0.4f] ",rtp_time,roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
+
+    if (ut->param_simple)
+    {
+        roi.box[0]=0;
+        roi.box[1]=0;
+        roi.box[2]=1;
+        roi.box[3]=1;
+    }
     return roi;
 }
 
@@ -335,6 +354,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
                 }
             }
         }
+        utdet->det.overlap_mask=box_to_8x8_mask(utdet->det.x0, utdet->det.y0, utdet->det.x1, utdet->det.y1);
         //printf("adjusted %f (pose %f %f)\n",utdet->adjusted_confidence, pose, pose_conf);
         utdet->track_state=TRACKSTATE_NEW;
         utdet->matched=false;
@@ -346,7 +366,8 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     for(int i=0;i<num_det;i++)
     {
         utdet_t *utdet=dets[i];
-        FILE_TRACE("Initial det %2d conf %0.4f box [%0.4f,%0.4f,%0.4f,%0.4f]", i, utdet->adjusted_confidence,
+        FILE_TRACE("Initial det %2d msk %016lx conf %0.4f box [%0.4f,%0.4f,%0.4f,%0.4f]", i,
+                    utdet->det.overlap_mask, utdet->adjusted_confidence,
                     utdet->det.x0, utdet->det.y0, utdet->det.x1, utdet->det.y1);
     }
 
@@ -391,6 +412,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     mc.param_kf_warmup=ut->param_kf_warmup;
     mc.param_fuse_scores=ut->param_fuse_scores;
     mc.param_sim_weight=ut->param_sim_weight;
+    mc.param_simple=ut->param_simple;
 
     for(int pass=0;pass<3;pass++)
     {
@@ -399,21 +421,21 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
 
         if (pass==0)
         {
-            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_initial_thresh; };
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_initial_thr; };
             track_filter_func=[ut](utdet_t* x){return x->matched==false && x->track_state!=TRACKSTATE_LOST; };
-            mc.match_thr=ut->param_match_thresh_initial;
+            mc.match_thr=ut->param_match_thr_initial;
         }
         else if (pass==1)
         {
-            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_high_thresh; };
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_high_thr; };
             track_filter_func=[ut](utdet_t* x){return x->matched==false;};
-            mc.match_thr=ut->param_match_thresh_high;
+            mc.match_thr=ut->param_match_thr_high;
         }
         else // pass==2
         {
-            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_low_thresh; };
+            det_filter_func=[ut](utdet_t* x){return x->matched==false && x->adjusted_confidence>ut->param_track_low_thr; };
             track_filter_func=[ut](utdet_t* x){return x->matched==false;};
-            mc.match_thr=ut->param_match_thresh_low;
+            mc.match_thr=ut->param_match_thr_low;
         }
 
         utdet_t *det_filtered[num_det];
@@ -466,6 +488,9 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             Vector4f v(new_obj->det.x0, new_obj->det.y0, new_obj->det.x1, new_obj->det.y1);
             new_obj->kf->update(v, rtp_time);
 
+            float ema=0.5;
+            for(int i=0;i<REID_VECTOR_LEN;i++) new_obj->det.reid[i]=ema*new_obj->det.reid[i]+(1.0-ema)*old_obj->det.reid[i];
+
             if ((pass==0)||(pass==1))
                 new_obj->track_state=TRACKSTATE_TRACKED;
             else if (old_obj->track_state==TRACKSTATE_LOST)
@@ -487,16 +512,15 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         utdet_t *det=dets[i];
         if (det->matched) continue;
         debugf("Unmatched new obj %lx conf %0.3f", det->det.track_id, det->det.conf);
-        if (det->adjusted_confidence>ut->param_new_track_thresh)
+        if (det->adjusted_confidence>ut->param_new_track_thr)
         {
             assert(det->det.track_id==0xdeaddead);
             det->det.track_id=ut->next_track_id++;
-            //obj.kf=kalman.KalmanBoxTracker(obj.box, time)
             Vector4f v(det->det.x0, det->det.y0, det->det.x1, det->det.y1);
             det->kf=new KalmanBoxTracker(v, rtp_time);
             det->last_detect_time=rtp_time;
             det->num_missed=0;
-            if (det->adjusted_confidence>ut->param_immediate_confirm_thresh)
+            if (det->adjusted_confidence>ut->param_immediate_confirm_thr)
                 det->track_state=TRACKSTATE_TRACKED;
             assert(num_output_objects<MAX_TRACKED);
             output_objects[num_output_objects++]=(utdet_t *)block_reference(det);
@@ -566,7 +590,11 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
                                  (detection_t **)tracked, num_tracked,
                                  lost_object_match_score, &ut->param_delete_dup_iou,
                                  new_ind, old_ind);
-    for (int i=0;i<n;i++) tracked[old_ind[i]]->track_state=TRACKSTATE_REMOVED;
+    for (int i=0;i<n;i++)
+    {
+        assert(tracked[old_ind[i]]->track_state==TRACKSTATE_LOST);
+        tracked[old_ind[i]]->track_state=TRACKSTATE_REMOVED;
+    }
 
     int num_not_removed=0;
     for(int i=0;i<num_tracked;i++)
@@ -595,6 +623,15 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             out_list->det[out_list->num_detections++]=(detection_t *)block_reference(tdet);
         }
     }
+
+    for(int i=0;i<num_tracked;i++)
+    {
+        utdet_t *tdet=tracked[i];
+        FILE_TRACE("FINAL tracked %2d ID=%lx [%.4f %.4f %.4f %.4f] MSS %d OBS %d TSS %5.3f TS %d",
+            i, tdet->det.track_id, tdet->det.x0,tdet->det.y0,tdet->det.x1,tdet->det.y1,
+            tdet->num_missed,tdet->observations, rtp_time-tdet->last_detect_time, tdet->track_state);
+    }
+
     //detection_list_show(out_list);
     return out_list;
 }

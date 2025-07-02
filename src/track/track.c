@@ -44,6 +44,7 @@ struct track_stream
     utrack_t *utrack;
     image_format_t stream_image_format;
     //
+    double start_time; // ignore frames until >= this time
     double last_run_time;
     double min_time_delta_process;
     double min_time_delta_full_roi;
@@ -88,9 +89,9 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     std::string trt_file=inferenceConfigNode["trt"].as<std::string>();
     const char *inference_yaml=yaml_to_cstring(inferenceConfigNode);
     infer_config_t config={};
-    config.det_thr=yaml_base["conf_thresh"].as<float>();
+    config.det_thr=yaml_base["conf_thr"].as<float>();
     config.set_det_thr=true;
-    config.nms_thr=yaml_base["nms_thresh"].as<float>();
+    config.nms_thr=yaml_base["nms_thr"].as<float>();
     config.set_nms_thr=true;
     tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml, &config);
     tss->md=infer_thread_get_model_description(tss->infer_thread);
@@ -319,17 +320,16 @@ void track_stream_run(track_stream_t *ts, image_t *img, double time)
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img)
 {
     assert(img!=0);
-    double time=img->timestamp/90000.0;
-    track_stream_run(ts, img, time);
+    track_stream_run(ts, img, img->time);
 }
 
 static void track_run_video_process_image(void *context, image_t *img)
 {
     track_stream_t *ts=(track_stream_t *)context;
-    if (img!=0) track_stream_run_frame_time(ts, img);
+    if (img!=0 && img->time>=ts->start_time) track_stream_run_frame_time(ts, img);
 }
 
-void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double max_time)
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time)
 {
     FILE *input = fopen(file, "rb");
     if (!input)
@@ -339,8 +339,9 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
     }
 
     simple_decoder_t *decoder = simple_decoder_create(ts, track_run_video_process_image, codec);
+    ts->start_time=start_time;
     simple_decoder_set_framerate(decoder, video_fps);
-    simple_decoder_set_max_time(decoder, max_time);
+    simple_decoder_set_max_time(decoder, end_time);
     uint8_t buffer[4096];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), input)) > 0)

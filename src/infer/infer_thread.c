@@ -276,7 +276,7 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
 {
     if (!h || !img) return NULL;
 
-    FILE_TRACE("infer_thread img %dx%d TS %ld [%.4f,%.4f,%.4f,%.4f]", img->width,img->height,img->timestamp, roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
+    FILE_TRACE("infer_thread img %dx%d TS %f [%.4f,%.4f,%.4f,%.4f]", img->width,img->height,img->time, roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
 
     // Allocate and initialize a new result handle
     infer_thread_result_handle_t *handle = (infer_thread_result_handle_t *)malloc(sizeof(infer_thread_result_handle_t));

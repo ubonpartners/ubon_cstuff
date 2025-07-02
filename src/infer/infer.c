@@ -20,6 +20,7 @@
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 #include "log.h"
+#include "misc.h"
 #include "cuda_nms.h"
 #include "yaml_stuff.h"
 #include "trt_stuff.h"
@@ -701,13 +702,13 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
 
         max_w=std::max(max_w, scale_w);
         max_h=std::max(max_h, scale_h);
-        debugf("%d) %dx%d->%dx%d fmt %d\n",i,img->width,img->height,scale_w,scale_h, img->format);
+        FILE_TRACE("%d) TS %f %dx%d->%dx%d fmt %d hash %lx",i,img->time,img->width,img->height,scale_w,scale_h, img->format, image_hash(img_list[i]));
     }
     inf_max_w=std::max(inf->inf_limit_min_width, inf_max_w);
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
     int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
     int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
-    debugf("INFER SIZE %dx%d (limit %dx%d)\n",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
+    FILE_TRACE("INFER SIZE %dx%d (limit %dx%d)",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
 
     bool do_testimage=false;
 
@@ -849,7 +850,10 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         detection_list_generate_overlap_masks(dets[i]);
         if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i]);
     }
-    //detection_list_show(dets[0]);
+    if (file_trace_enabled)
+    {
+        detection_list_show(dets[0], true /* log only*/);
+    }
 }
 
 detection_list_t *infer(infer_t *inf, image_t *img)
