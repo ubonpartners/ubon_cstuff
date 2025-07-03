@@ -238,7 +238,11 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     double time_delta=0;
     if (ts->frame_count==0) ts->last_run_time=time-10.0;
 
-    assert(time>=ts->last_run_time);
+    if ((time<ts->last_run_time) || (time>=ts->last_run_time+5.0))
+    {
+        log_warn("unexpected time jump %f->%f; resetting time",ts->last_run_time,time);
+        ts->last_run_time=time-10.0;
+    }
     time_delta=time-ts->last_run_time+1e-7;
     ts->frame_count++;
     //printf("time %f delta %f min %f skip %d\n",time,time_delta,ts->min_time_delta_process,(time_delta<ts->min_time_delta_process));

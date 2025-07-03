@@ -69,7 +69,7 @@ static void process_image(void *context, image_t *img) {
     {
         s->decoded_macroblocks+=(img->width * img->height) / (16 * 16);
         s->decoded_frames++;
-        //track_stream_run_frame_time(s->ts, img);
+        track_stream_run_frame_time(s->ts, img);
     }
     if (1)
     {
@@ -193,23 +193,23 @@ static const char* get_last_path_part(const char* path) {
 }
 
 test_clip_t clips[]={
-    {"Ind office, 720p, 7.5fps,  H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 7.5},
+    {"Ind office, 720p, 7.5fps,  H265", "/mldata/video/ind_off_1280x720_7.5fps.265", 7.5},
     {"MOT20-05    720p, 6.25fps, H265", "/mldata/video/MOT20-05_1280x1080_6.25fps.265", 6.25},
 
-    {"Ind office, 720p, 7.5fps,  H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 7.5},
+    {"Ind office, 720p, 7.5fps,  H264", "/mldata/video/ind_off_1280x720_7.5fps.264", 7.5},
     {"MOT20-05    720p, 6.25fps, H264", "/mldata/video/MOT20-05_1280x1080_6.25fps.264", 6.25},
-    {"UK office,  720p, 6.25fps, H264", "/mldata/video/UKof_LD_Indoor_Light_OHcam_004_1280x720_6.25fps.264", 6.25},
-    {"Bcam,       720p, 7.5fps,  H264", "/mldata/video/bc_1280x720_7.5fps.264", 7.5},
+    {"UK office,  720p, 6.25fps, H264", "/mldata/video/uk_off_1280x720_6.25fps.264", 6.25},
+    {"Bcam,       720p, 7.5fps,  H264", "/mldata/video/bc1_1280x720_7.5fps.264", 7.5},
 
-    {"Ind office, 1080p, 15fps,  H264","/mldata/video/INof_FD_OutFD_Light_FFcam_001.264", 15.0},
-    {"MOT20-05    1080p, 25fps,  H264","/mldata/video/MOT20-05.264", 25},
-    {"UK office, 1512p, 12.5fps, H264","/mldata/video/UKof_LD_Indoor_Light_OHcam_004.264", 12.5},
-    {"Bcam,      1080p,  30fps,  H264","/mldata/video/bc1.264", 29.97},
+    {"Ind office, 1080p, 15fps,  H264","/mldata/video/ind_off_1920x1080_15fps.264", 15.0},
+    {"MOT20-05    1080p, 25fps,  H264","/mldata/video/MOT20-05_1654x1080_25fps.264", 25},
+    {"UK office, 1512p, 12.5fps, H264","/mldata/video/uk_off_2688x1512_12.5fps.264", 12.5},
+    {"Bcam,      1080p,  30fps,  H264","/mldata/video/bc1_1920x1080_30fps.264", 29.97},
 
     {"Ind office, 1080p, 15fps,  H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001.265", 15.0},
-    {"MOT20-05    1080p, 25fps,  H265", "/mldata/video/MOT20-05.265", 25},
-    {"UK office, 1512p, 12.5fps, H265", "/mldata/video/UKof_LD_Indoor_Light_OHcam_004.265", 12.5},
-    {"Bcam,      1080p,  30fps,  H265", "/mldata/video/bc1.265", 29.97},
+    {"MOT20-05    1080p, 25fps,  H265", "/mldata/video/MOT20-05_1654x1080_25fps.265", 25},
+    {"UK office, 1512p, 12.5fps, H265", "/mldata/video/uk_off_2688x1512_12.5fps.265", 12.5},
+    {"Bcam,      1080p,  30fps,  H265", "/mldata/video/bc1_1920x1080_30fps.265", 29.97},
 
 };
 
@@ -223,12 +223,12 @@ int main(int argc, char *argv[]) {
 
     std::ostringstream oss, hdr;
 
-    hdr   << std::setw(40)  << "Test Description" << " "
+    hdr   << std::setw(42)  << "Test Description" << " "
           << std::setw(20)  << "Cfg" << " "
           << std::setw(4)   << "Str" << " "
           << std::setw(8)   << "Dec" << " "
           << std::setw(5)   << "FPS" << " "
-          << std::setw(4)   << "Skip" << " "
+          << std::setw(4)   << "Skp%" << " "
           << std::setw(8)   << "ImgMem" << " "
           << std::setw(8)   << "TRTMem" << " "
           << std::setw(8)   << "CudaHWM" << " "
@@ -239,7 +239,7 @@ int main(int argc, char *argv[]) {
 
     test_config_t dconfig={0};
     sprintf(dconfig.name, "default");
-    dconfig.yaml_config = "/mldata/config/track/trackers/uc_test.yaml";
+    dconfig.yaml_config = "/mldata/config/track/trackers/uc_reid.yaml";
     dconfig.input_clip = &clips[0];
     dconfig.duration_sec = 10;
     dconfig.track_framerate = 8;
@@ -256,6 +256,15 @@ int main(int argc, char *argv[]) {
         config[nconfig].input_clip = &clips[12];
         config[nconfig].num_threads=1;
         sprintf(config[nconfig++].name, "%s",clips[12].friendly_name);
+    }
+
+    for(int i=0;i<4;i++)
+    {
+        config[nconfig].testset="Vary tracker";
+        config[nconfig].input_clip = &clips[i/2];
+        config[nconfig].num_threads=8;
+        if ((i&1)==1) config[nconfig].yaml_config = "/mldata/config/track/trackers/uc_bytetrack.yaml";
+        sprintf(config[nconfig++].name, "%s:%s",((i&1)==1) ? "Bytetrack" : "UC-Reid", clips[i/2].friendly_name);
     }
 
     for(int i=0;i<14;i++)
@@ -323,7 +332,7 @@ int main(int argc, char *argv[]) {
             oss << "\n== " << this_config->testset << " ==\n";
             oss << hdr.str();
         }
-        oss     << std::setw(40) << this_config->name
+        oss     << std::setw(42) << this_config->name
                 << " " << std::setw(20) << get_last_path_part(this_config->yaml_config)
                 << " " << std::setw(4)  << this_config->num_threads
                 << " " << std::setw(8)  << ((int)(this_config->mbps/3600.0))
