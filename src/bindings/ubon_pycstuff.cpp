@@ -396,10 +396,11 @@ public:
         infer_config_t config{};
         apply_infer_config(config_dict, config);
 
-        thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str(), &config);
+        thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str());
         if (!thread) {
             throw std::runtime_error("Failed to start infer_thread");
         }
+        infer_thread_configure(thread, &config);
     }
 
     ~c_infer_thread() {
@@ -493,8 +494,8 @@ public:
     infer_aux_t* aux;
     int embedding_size;
 
-    c_infer_aux(const std::string& trt_file) {
-        aux = infer_aux_create(trt_file.c_str());
+    c_infer_aux(const std::string& trt_file, const std::string& yaml_config) {
+        aux = infer_aux_create(trt_file.c_str(), yaml_config.c_str());
         if (!aux) {
             throw std::runtime_error("Failed to create infer_aux_t");
         }
@@ -1030,7 +1031,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("get_model_description", &c_infer_thread::get_model_description, "Get model description");
 
     py::class_<c_infer_aux, std::shared_ptr<c_infer_aux>>(m, "c_infer_aux")
-        .def(py::init<const std::string&>(), py::arg("trt_file"))
+        .def(py::init<const std::string&, const std::string&>(), py::arg("trt_file"), py::arg("yaml config string"))
         .def("run", &c_infer_aux::run,
             py::arg("image"), py::arg("keypoints") = py::none(),
             "Run auxiliary inference on a single image and optional keypoints (keypoints=None=>images already aligned)")

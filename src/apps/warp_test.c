@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    infer_aux_t *inf=infer_aux_create("/mldata/facerec/r18_glint360k-dyn.trt");
+    infer_aux_t *inf=infer_aux_create("/mldata/facerec/r18_glint360k-dyn.trt", 0);
 
 
 }

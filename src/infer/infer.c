@@ -66,6 +66,7 @@ struct infer
     size_t max_output_tensor_bytes;
     const char *input_tensor_name;
     const char *output_tensor_name;
+    pthread_mutex_t lock;
     model_description_t md;
 };
 
@@ -250,6 +251,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     inf->inf_allow_upscale=false; // true- to be like ultralytics
     inf->do_fuse_face_person=true;
     inf->dynamic_workspace_sizing=false; // if true, (re-)allocate buffers for NMS etc based on worse case inputs seen so far
+    pthread_mutex_init(&inf->lock, NULL);
 
     cudaStreamCreate(&inf->stream);
 
@@ -435,6 +437,7 @@ void infer_destroy(infer_t *inf)
     if (inf->output_mem_host_fp32!=0) cuda_free_host(inf->output_mem_host_fp32);
     if (inf->output_mem_host_fp16!=0) cuda_free_host(inf->output_mem_host_fp16);
     if (inf->md.engineInfo) free((void*)inf->md.engineInfo);
+    pthread_mutex_destroy(&inf->lock);
     free(inf);
 }
 
@@ -686,6 +689,8 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         for(int i=0;i<num;i+=max_batch) infer_batch(inf, img_list+i, dets+i, std::min(num-i, max_batch));
         return;
     }
+
+    pthread_mutex_lock(&inf->lock);
     int inf_max_w=std::min(inf->inf_limit_max_width, inf->max_w);
     int inf_max_h=std::min(inf->inf_limit_max_height, inf->max_h);
 
@@ -854,6 +859,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     {
         detection_list_show(dets[0], true /* log only*/);
     }
+    pthread_mutex_unlock(&inf->lock);
 }
 
 detection_list_t *infer(infer_t *inf, image_t *img)
@@ -869,6 +875,7 @@ void infer_configure(infer_t *inf, infer_config_t *config)
 {
     if (!inf) return;
     if (!config) return;
+    pthread_mutex_lock(&inf->lock);
     if (config->set_det_thr) inf->det_thr=config->det_thr;
     if (config->set_nms_thr) inf->nms_thr=config->nms_thr;
     if (config->set_use_cuda_nms) inf->use_cuda_nms=config->use_cuda_nms;
@@ -886,4 +893,5 @@ void infer_configure(infer_t *inf, infer_config_t *config)
         inf->nms=0;
         inf->max_detections=config->max_detections;
     }
+    pthread_mutex_unlock(&inf->lock);
 }

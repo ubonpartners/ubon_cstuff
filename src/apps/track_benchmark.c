@@ -97,9 +97,8 @@ static void *run_track_worker(void *arg) {
         return !keep_running;
     };
 
-    while(keep_running){
-        decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
-    }
+    // decode_file continues (looping if necessary) until 'stop callback'
+    decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
 
     pthread_mutex_lock(args->lock);
     *args->total_tracked_nonskip += s.tracked_frames_nonskip;

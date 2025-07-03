@@ -25,7 +25,7 @@ struct infer_aux {
 
 enum { TRT_OUTPUT_BUFFER_COUNT=1 };
 
-infer_aux_t* infer_aux_create(const char* model_trt) {
+infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
     trt_init();
 
     // Load serialized engine

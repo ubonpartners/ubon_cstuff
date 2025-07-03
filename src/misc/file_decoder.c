@@ -93,14 +93,21 @@ void decode_file(const char *file, void *context,
         }
         char buffer[4096];
         size_t bytes_read;
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0)
+        while(1)
         {
-            simple_decoder_decode(dec, (uint8_t *)buffer, bytes_read);
-            if (stop_callback)
+            bool stop=false;
+            while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0)
             {
-                bool stop=stop_callback(context);
-                if (stop) break;
+                simple_decoder_decode(dec, (uint8_t *)buffer, bytes_read);
+                if (stop_callback)
+                {
+                    stop=stop_callback(context);
+                    if (stop) break;
+                }
             }
+            if (stop) break;
+            if (!stop_callback) break;
+            fseek(f, 0, SEEK_SET); // loop
         }
         fclose(f);
         simple_decoder_destroy(dec);

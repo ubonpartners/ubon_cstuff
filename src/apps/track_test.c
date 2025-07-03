@@ -55,11 +55,11 @@ int main(int argc, char *argv[])
     init_cuda_stuff();
     image_init();
 
-    trackset_t *ts=trackset_load("/mldata/tracking/cevo/annotation/UKof_HD_Indoor_Light_OHcam_001.json");
+    //trackset_t *ts=trackset_load("/mldata/tracking/cevo/annotation/UKof_HD_Indoor_Light_OHcam_001.json");
 
     state_t s;
     memset(&s, 0, sizeof(state_t));
-    s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_bytetrack.yaml");
+    s.tss=track_shared_state_create("/mldata/config/track/trackers/uc_reid.yaml");
     s.ts=track_stream_create(s.tss, &s, track_result);
     s.start_time=profile_time();
     track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);

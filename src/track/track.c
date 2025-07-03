@@ -17,13 +17,17 @@
 
 #define debugf if (0) log_debug
 
+#define MAX_AUX_INFER_THREAD   2
+
 struct track_shared_state
 {
     const char *config_yaml;
     int max_width, max_height;
     int num_worker_threads;
-    float motiontrack_min_roi;
+    float motiontrack_min_roi_after_skip;
+    float motiontrack_min_roi_after_nonskip;
     infer_thread_t *infer_thread;
+    infer_thread_t *aux_infer_thread[MAX_AUX_INFER_THREAD];
     const char *tracker_type;
     model_description_t *md;
     ctpl::thread_pool *thread_pool;
@@ -48,9 +52,11 @@ struct track_stream
     double last_run_time;
     double min_time_delta_process;
     double min_time_delta_full_roi;
+    bool last_skip;
     roi_t motion_roi;
     roi_t inference_roi;
     roi_t tracked_object_roi;
+    image_t *inference_image;
     detection_list_t *inference_detections;
     //
     std::vector<track_results_t> track_results;
@@ -76,7 +82,8 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     tss->max_width=yaml_get_int_value(yaml_base["max_width"], 1280);
     tss->max_height=yaml_get_int_value(yaml_base["max_height"], 1280);
     tss->num_worker_threads=yaml_get_int_value(yaml_base["num_worker_threads"], 4);
-    tss->motiontrack_min_roi=yaml_get_float_value(yaml_base["motiontrack_min_roi"], 0.05);
+    tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
+    tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
     tss->tracker_type=strdup(tracker_type.c_str());
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
@@ -93,10 +100,29 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     config.set_det_thr=true;
     config.nms_thr=yaml_get_float_value(yaml_base["nms_thr"], 0.45);
     config.set_nms_thr=true;
-    tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml, &config);
+    tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml);
+    infer_thread_configure(tss->infer_thread, &config);
     tss->md=infer_thread_get_model_description(tss->infer_thread);
     free((void*)inference_yaml);
 
+    // set up aux inference from config
+    YAML::Node auxInferenceConfigNode = yaml_base["inference_aux_config"];
+    if (auxInferenceConfigNode && auxInferenceConfigNode.IsDefined())
+    {
+        int n=0;
+        assert(auxInferenceConfigNode.IsMap());
+        for (const auto& kv : auxInferenceConfigNode) {
+            std::string aux_name = kv.first.as<std::string>();
+            const YAML::Node& entry = kv.second;
+            std::string trt_file=entry["trt"].as<std::string>();
+            const char *inference_yaml=yaml_to_cstring(entry);
+            log_debug("create aux inference Name %s trt %s cfg %s",aux_name.c_str(), trt_file.c_str(), inference_yaml);
+            tss->aux_infer_thread[n]=infer_thread_start(trt_file.c_str(), inference_yaml, true);
+            free((void*)inference_yaml);
+            n++;
+            assert(n<=MAX_AUX_INFER_THREAD);
+        }
+    }
     // done
     return tss;
 }
@@ -112,6 +138,7 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     tss->thread_pool->stop();
     delete tss->thread_pool;
     infer_thread_destroy(tss->infer_thread);
+    for(int i=0;i<MAX_AUX_INFER_THREAD;i++) if (tss->aux_infer_thread[i]) infer_thread_destroy(tss->aux_infer_thread[i]);
     free((void *)tss->config_yaml);
     free((void *)tss->tracker_type);
     free(tss);
@@ -137,6 +164,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
         ts->utrack=utrack_create(tss->config_yaml);
     ts->min_time_delta_process=0.0;
     ts->min_time_delta_full_roi=120.0;
+    ts->last_skip=false;
     ts->tracked_object_roi=ROI_ZERO;
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     return ts;
@@ -159,8 +187,39 @@ void track_stream_destroy(track_stream_t *ts)
     free(ts);
 }
 
+static void face_embedding_callback(void *context, infer_thread_result_data_t *rd)
+{
+    //printf("face embedding! %d\n",rd->embedding_len);
+    free(rd->embedding);
+}
+
 static void process_results(track_stream_t *ts, track_results_t *r)
 {
+    if (r->track_dets)
+    {
+        track_shared_state_t *tss=ts->tss;
+        for(int i=0;i<r->track_dets->num_detections;i++)
+        {
+            detection_t *det=r->track_dets->det[i];
+            if (det->num_face_points>0)
+            {
+                assert(det->num_face_points==5);
+                float fp[10];
+                int num_ok=0;
+                for(int i=0;i<5;i++)
+                {
+                    fp[i*2+0]=det->face_points[i].x;
+                    fp[i*2+1]=det->face_points[i].y;
+                    num_ok+=(det->face_points[i].conf>0.1);
+                }
+                if (num_ok==5)
+                {
+                    infer_thread_infer_async_callback_facepoints(tss->aux_infer_thread[0],
+                                      ts->inference_image, fp, face_embedding_callback, 0);
+                }
+            }
+        }
+    }
     if (ts->result_callback)
         ts->result_callback(ts->result_callback_context, r);
     else
@@ -209,6 +268,8 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     }
 
     process_results(ts, &r);
+    destroy_image(ts->inference_image);
+    ts->inference_image=0;
     pthread_mutex_unlock(&ts->run_mutex);
 }
 
@@ -238,7 +299,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     double time_delta=0;
     if (ts->frame_count==0) ts->last_run_time=time-10.0;
 
-    if ((time<ts->last_run_time) || (time>=ts->last_run_time+5.0))
+    if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
     {
         log_warn("unexpected time jump %f->%f; resetting time",ts->last_run_time,time);
         ts->last_run_time=time-10.0;
@@ -275,9 +336,10 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     image_check(image_scaled);
 
     roi_t motion_roi=motion_track_get_roi(ts->mt);
-    if (roi_area(&motion_roi)<tss->motiontrack_min_roi)
+    float skip_roi_thr=(ts->last_skip) ? tss->motiontrack_min_roi_after_skip : tss->motiontrack_min_roi_after_nonskip;
+    if (roi_area(&motion_roi)<skip_roi_thr)
     {
-        debugf("skip inference ROI area %f < %f", roi_area(&motion_roi), tss->motiontrack_min_roi);
+        debugf("skip inference ROI area %f < %f", roi_area(&motion_roi), skip_roi_thr);
         motion_track_set_roi(ts->mt, ROI_ZERO);
         destroy_image(image_scaled);
 
@@ -290,12 +352,12 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
         r.track_dets=0;
         r.inference_dets=0;
         ts->last_run_time=time;
-
+        ts->last_skip=true;
         process_results(ts, &r);
         pthread_mutex_unlock(&ts->run_mutex);
         return;
     }
-
+    ts->last_skip=false;
     // now we are definitely doing a full run
     ts->last_run_time=time;
     ts->motion_roi=motion_roi;
@@ -309,7 +371,8 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     }
 
     infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
-    destroy_image(image_scaled);
+    assert(ts->inference_image==0);
+    ts->inference_image=image_scaled;
 }
 
 void track_stream_run(track_stream_t *ts, image_t *img, double time)
