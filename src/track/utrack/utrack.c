@@ -55,10 +55,8 @@ struct utrack
     float param_face_weight;
     float param_kf_weight;
     float param_kf_warmup;
-    float param_kp_weight;
     float param_sim_weight;
     float param_delete_dup_iou;
-    float param_kp_distance_scale;
     float param_track_buffer_seconds;
     float param_fuse_scores;
     float param_pose_conf;
@@ -101,10 +99,8 @@ utrack_t *utrack_create(const char *yaml_config)
     ut->param_face_weight=yaml_get_float_value(yaml_base["face_weight"], 0.020f);
     ut->param_kf_weight=yaml_get_float_value(yaml_base["kf_weight"], 1.0f);
     ut->param_kf_warmup=yaml_get_float_value(yaml_base["kf_warmup"], 0.7f);
-    ut->param_kp_weight=yaml_get_float_value(yaml_base["kp_weight"], 0.2f);
     ut->param_sim_weight=yaml_get_float_value(yaml_base["sim_weight"], 0.2f);
     ut->param_delete_dup_iou=yaml_get_float_value(yaml_base["delete_dup_iou"], 0.82f);
-    ut->param_kp_distance_scale=yaml_get_float_value(yaml_base["kp_distance_scale"], 15.4f);
     ut->param_track_buffer_seconds=yaml_get_float_value(yaml_base["track_buffer_seconds"], 2.0f);
     ut->param_fuse_scores=yaml_get_float_value(yaml_base["fuse_scores"], 0.94f);
     ut->param_pose_conf=yaml_get_float_value(yaml_base["pose_conf"], 0.004f);
@@ -139,7 +135,7 @@ static void utrack_normalize_reid_vectors(utdet_t **dets, int num_det, utdet_t *
 typedef struct match_context
 {
     float match_thr;
-    float param_kp_weight, param_kf_weight;
+    float param_kf_weight;
     float param_kf_warmup;
     float param_fuse_scores;
     float param_sim_weight;
@@ -178,7 +174,6 @@ static float match_cost(const detection_t *det, const detection_t *old, void *ct
     utdet_t *tdet_new=(utdet_t *)det;
 
     float kf_weight=mc->param_kf_weight;
-    float kp_weight=mc->param_kp_weight;
     float of_weight=1.0;
 
     float kf_score=iou(det, tdet->kf_predicted_box);
@@ -264,7 +259,23 @@ roi_t utrack_predict_positions(utrack_t *ut, double rtp_time, motion_track_t *mt
         max_x=std::max(max_x, tdet->of_predicted_box[2]);
         max_y=std::max(max_y, tdet->of_predicted_box[3]);
 
+        // predict box motion by some random points
         motion_track_predict_box_inplace(mt, tdet->of_predicted_box);
+        // enlarge predicted box by predicted motion of pose points, if any
+        for(int j=0;j<tdet->det.num_pose_points;j++)
+        {
+            if (tdet->det.pose_points[j].conf>0.05f)
+            {
+                float pt[2];
+                pt[0]=tdet->det.pose_points[j].x;
+                pt[1]=tdet->det.pose_points[j].y;
+                motion_track_predict_point_inplace(mt, pt);
+                tdet->of_predicted_box[0]=std::min(tdet->of_predicted_box[0], pt[0]);
+                tdet->of_predicted_box[1]=std::min(tdet->of_predicted_box[1], pt[1]);
+                tdet->of_predicted_box[2]=std::max(tdet->of_predicted_box[2], pt[0]);
+                tdet->of_predicted_box[3]=std::max(tdet->of_predicted_box[3], pt[1]);
+            }
+        }
         min_x=std::min(min_x, tdet->of_predicted_box[0]);
         min_y=std::min(min_y, tdet->of_predicted_box[1]);
         max_x=std::max(max_x, tdet->of_predicted_box[2]);
@@ -408,7 +419,6 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
 
     match_context_t mc;
     mc.param_kf_weight=ut->param_kf_weight;
-    mc.param_kp_weight=ut->param_kp_weight;
     mc.param_kf_warmup=ut->param_kf_warmup;
     mc.param_fuse_scores=ut->param_fuse_scores;
     mc.param_sim_weight=ut->param_sim_weight;
@@ -614,6 +624,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     // output objects
 
     detection_list_t *out_list=detection_list_create(num_tracked);
+    out_list->md=dets_in->md;
     out_list->num_detections=0;
     for(int i=0;i<num_tracked;i++)
     {

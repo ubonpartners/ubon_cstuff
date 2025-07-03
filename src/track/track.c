@@ -73,9 +73,9 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     memset(tss, 0, sizeof(track_shared_state_t));
     debugf("Track shared state create");
     tss->config_yaml=yaml_to_cstring(yaml_base);
-    tss->max_width=yaml_base["max_width"].as<int>();
-    tss->max_height=yaml_base["max_height"].as<int>();
-    tss->num_worker_threads=yaml_base["num_worker_threads"].as<int>();
+    tss->max_width=yaml_get_int_value(yaml_base["max_width"], 1280);
+    tss->max_height=yaml_get_int_value(yaml_base["max_height"], 1280);
+    tss->num_worker_threads=yaml_get_int_value(yaml_base["num_worker_threads"], 4);
     tss->motiontrack_min_roi=yaml_get_float_value(yaml_base["motiontrack_min_roi"], 0.05);
     tss->tracker_type=strdup(tracker_type.c_str());
     // create worker threads
@@ -89,9 +89,9 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     std::string trt_file=inferenceConfigNode["trt"].as<std::string>();
     const char *inference_yaml=yaml_to_cstring(inferenceConfigNode);
     infer_config_t config={};
-    config.det_thr=yaml_base["conf_thr"].as<float>();
+    config.det_thr=yaml_get_float_value(yaml_base["conf_thr"], 0.05);
     config.set_det_thr=true;
-    config.nms_thr=yaml_base["nms_thr"].as<float>();
+    config.nms_thr=yaml_get_float_value(yaml_base["nms_thr"], 0.45);
     config.set_nms_thr=true;
     tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml, &config);
     tss->md=infer_thread_get_model_description(tss->infer_thread);
@@ -128,10 +128,9 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->result_callback_context=result_callback_context;
     ts->result_callback=result_callback;
     ts->mt=motion_track_create(tss->config_yaml);
-    bool use_bytetracker=(strcmp(tss->tracker_type, "upyc")==0);
-    use_bytetracker|=(strcmp(tss->tracker_type, "upyc-bytetracker")==0);
+    bool use_bytetracker=(strcmp(tss->tracker_type, "upyc-bytetrack")==0);
     bool use_utrack=(strcmp(tss->tracker_type, "upyc-utrack")==0);
-    assert(use_bytetracker||use_utrack);
+    assert(use_bytetracker||use_utrack); // only supported trackers right now
     if (use_bytetracker)
         ts->bytetracker=new BYTETracker(tss->config_yaml);
     else
