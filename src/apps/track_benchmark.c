@@ -205,7 +205,7 @@ test_clip_t clips[]={
     {"UK office, 1512p, 12.5fps, H264","/mldata/video/uk_off_2688x1512_12.5fps.264", 12.5},
     {"Bcam,      1080p,  30fps,  H264","/mldata/video/bc1_1920x1080_30fps.264", 29.97},
 
-    {"Ind office, 1080p, 15fps,  H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001.265", 15.0},
+    {"Ind office, 1080p, 15fps,  H265", "/mldata/video/ind_off_1920x1080_15fps.265", 15.0},
     {"MOT20-05    1080p, 25fps,  H265", "/mldata/video/MOT20-05_1654x1080_25fps.265", 25},
     {"UK office, 1512p, 12.5fps, H265", "/mldata/video/uk_off_2688x1512_12.5fps.265", 12.5},
     {"Bcam,      1080p,  30fps,  H265", "/mldata/video/bc1_1920x1080_30fps.265", 29.97},
@@ -242,7 +242,7 @@ int main(int argc, char *argv[]) {
     dconfig.input_clip = &clips[0];
     dconfig.duration_sec = 10;
     dconfig.track_framerate = 8;
-    dconfig.num_threads = 8;
+    dconfig.num_threads = 16;
     dconfig.infer_w = 640;
     dconfig.infer_h = 640;
 
@@ -261,7 +261,6 @@ int main(int argc, char *argv[]) {
     {
         config[nconfig].testset="Vary tracker";
         config[nconfig].input_clip = &clips[i/2];
-        config[nconfig].num_threads=8;
         if ((i&1)==1) config[nconfig].yaml_config = "/mldata/config/track/trackers/uc_bytetrack.yaml";
         sprintf(config[nconfig++].name, "%s:%s",((i&1)==1) ? "Bytetrack" : "UC-Reid", clips[i/2].friendly_name);
     }
@@ -284,7 +283,7 @@ int main(int argc, char *argv[]) {
         sprintf(config[nconfig++].name, "Infer max @ %dx%d", size, size);
     }
 
-    for(int i=0;i<4;i++)
+    /*for(int i=0;i<4;i++)
     {
         config[nconfig].testset="Vary quantization";
         int quant=i/2;
@@ -294,7 +293,7 @@ int main(int argc, char *argv[]) {
             ? "/mldata/config/track/trackers/uc_test.yaml"
             : "/mldata/config/track/trackers/uc_test_fp16.yaml";
         sprintf(config[nconfig++].name, " %s %s", clips[clip].friendly_name, (quant==1) ? "fp16" : "int8");
-    }
+    }*/
     for(int i=0;i<6;i++)
     {
         config[nconfig].testset="Vary number of streams";

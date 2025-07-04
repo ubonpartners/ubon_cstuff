@@ -369,10 +369,9 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     {
         expanded_roi=utrack_predict_positions(ts->utrack, time, ts->mt, expanded_roi);
     }
-
-    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
     assert(ts->inference_image==0);
     ts->inference_image=image_scaled;
+    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
 }
 
 void track_stream_run(track_stream_t *ts, image_t *img, double time)

@@ -560,6 +560,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         double time_since_detection=rtp_time-tdet->last_detect_time;
         bool keep=time_since_detection<ut->param_track_buffer_seconds && tdet->num_missed<10;
         keep=keep||(tdet->track_state==TRACKSTATE_TRACKED);
+        keep&=(num_output_objects<MAX_TRACKED);
         if (keep)
         {
             assert(tdet!=0);
