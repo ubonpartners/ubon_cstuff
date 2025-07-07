@@ -1,5 +1,6 @@
 // infer_thread.c
 #include <unistd.h>
+#include <mutex>
 #include "infer_thread.h"
 #include "cuda_stuff.h"
 #include "image.h"
@@ -12,6 +13,7 @@
 #include "display.h"
 #include "profile.h"
 #include "misc.h"
+#include "memory_stuff.h"
 
 /*
  * Internal job struct: holds the image, ROI, and result handle
@@ -19,7 +21,9 @@
 typedef struct infer_job {
     image_t *img;
     roi_t roi;
+    embedding_t *embedding;
     float fp[10];
+    int num_fp;
     infer_thread_result_handle_t *handle;
     void (*callback)(void *context, infer_thread_result_data_t *rd);
     void *callback_context;
@@ -48,6 +52,7 @@ struct infer_thread_result_handle {
  */
 struct infer_thread {
     pthread_t thread_handle;
+    infer_thread_type_t type;
     infer_t *infer;
     infer_aux_t *infer_aux;
     model_description_t *md;
@@ -60,6 +65,14 @@ struct infer_thread {
     int stop;
     infer_thread_stats_t stats;
 };
+
+static std::once_flag initFlag;
+static block_allocator_t *infer_job_allocator;
+
+static void infer_thread_init()
+{
+    infer_job_allocator=block_allocator_create("infer job", sizeof(infer_job_t));
+}
 
 /*
  * Worker thread function: waits for jobs on the queue, processes them one by one,
@@ -121,7 +134,7 @@ static void *infer_thread_fn(void *arg)
         infer_thread_result_data_t d[count];
         memset(&d[0], 0, count*sizeof(infer_thread_result_data_t));
 
-        if (h->infer)
+        if (h->type==INFER_THREAD_DETECTION)
         {
             // normal inference case
 
@@ -158,25 +171,35 @@ static void *infer_thread_fn(void *arg)
             }
         }
         else {
-            // auxilliary face embedding network case
+            // auxilliary face or clip embedding network case
             image_t *imgs[INFER_THREAD_MAX_BATCH];
-            float face_points[10*count];
-            for(int i=0;i<count;i++)
-            {
-                imgs[i]=jobs[i]->img;
-                for(int j=0;j<10;j++) face_points[10*i+j]=jobs[i]->fp[j];
-
-            }
+            embedding_t *e[INFER_THREAD_MAX_BATCH];
             int embedding_len=h->md_aux->embedding_size;
-            float *ret=infer_aux_batch(h->infer_aux, imgs, face_points, count);
-            assert(ret!=0);
-            for (int i = 0; i < count; ++i)
+            if (h->type==INFER_THREAD_AUX_FACE)
             {
-                d[i].embedding=(float *)malloc(embedding_len*sizeof(float));
-                memcpy(d[i].embedding, ret+i*embedding_len, embedding_len*sizeof(float));
-                d[i].embedding_len=embedding_len;
+                float face_points[10*count];
+                for(int i=0;i<count;i++)
+                {
+                    imgs[i]=jobs[i]->img;
+                    e[i]=jobs[i]->embedding;
+                    embedding_check(e[i]);
+                    for(int j=0;j<jobs[i]->num_fp;j++) face_points[10*i+j]=jobs[i]->fp[j];
+
+                }
+                infer_aux_batch(h->infer_aux, imgs, e, face_points, count);
+                for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }
-            free(ret);
+            else if (h->type==INFER_THREAD_AUX_CLIP) {
+                for(int i=0;i<count;i++)
+                {
+                    roi_t inference_roi;
+                    imgs[i]=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi);
+                    e[i]=jobs[i]->embedding;
+                }
+                infer_aux_batch(h->infer_aux, imgs, e, 0, 0);
+                for(int i=0;i<count;i++) destroy_image(imgs[i]);
+                for(int i=0;i<count;i++) embedding_destroy(e[i]);
+            }
         }
 
         // 5) Signal each job’s result handle, passing back its own detection_list_t*
@@ -190,17 +213,20 @@ static void *infer_thread_fn(void *arg)
             else
             {
                 infer_thread_result_handle_t *rh = jobs[i]->handle;
-                pthread_mutex_lock(&rh->mutex);
-                rh->results=d[i];
-                rh->done = 1;
-                pthread_cond_signal(&rh->cond);
-                pthread_mutex_unlock(&rh->mutex);
+                if (rh!=0)
+                {
+                    pthread_mutex_lock(&rh->mutex);
+                    rh->results=d[i];
+                    rh->done = 1;
+                    pthread_cond_signal(&rh->cond);
+                    pthread_mutex_unlock(&rh->mutex);
+                }
             }
 
             // Free the job struct itself (we do NOT free img or dets here;
             //  - img memory is owned by the caller,
             //  - dets_arr[i] is now owned by the caller once they call wait_result).
-            free(jobs[i]);
+            block_free(jobs[i]);
         }
         // Loop back to see if more jobs are queued (or block if none).
     }
@@ -208,14 +234,15 @@ static void *infer_thread_fn(void *arg)
     return NULL;
 }
 
-infer_thread_t *infer_thread_start(const char *model_trt, const char *config_yaml, bool is_aux)
+infer_thread_t *infer_thread_start(const char *model_trt, const char *config_yaml, infer_thread_type_t type)
 {
+    std::call_once(initFlag, infer_thread_init);
     infer_thread_t *h = (infer_thread_t *)malloc(sizeof(infer_thread_t));
     assert(h != NULL);
     memset(h, 0, sizeof(infer_thread_t));
-
+    h->type=type;
     // Create and configure the synchronous infer_t instance
-    if (is_aux)
+    if (type!=INFER_THREAD_DETECTION)
     {
         h->infer_aux = infer_aux_create(model_trt, config_yaml);
         h->md_aux=infer_aux_get_model_description(h->infer_aux);
@@ -263,7 +290,7 @@ void infer_thread_destroy(infer_thread_t *h)
         job->handle->done = 1;
         pthread_cond_signal(&job->handle->cond);
         pthread_mutex_unlock(&job->handle->mutex);
-        free(job);
+        block_free(job);
         job = next;
     }
     h->job_head = h->job_tail = NULL;
@@ -283,11 +310,14 @@ void infer_thread_destroy(infer_thread_t *h)
 
 model_description_t *infer_thread_get_model_description(infer_thread_t *h)
 {
+    assert(h->type==INFER_THREAD_DETECTION);
+    assert(h->md!=0);
     return h->md;
 }
 
 aux_model_description_t *infer_thread_get_aux_model_description(infer_thread_t *h)
 {
+    assert(h->type!=INFER_THREAD_DETECTION);
     return h->md_aux;
 }
 
@@ -309,7 +339,7 @@ void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t ro
 {
     if (!h || !img) return;
     // Allocate and fill in a new job
-    infer_job_t *job = (infer_job_t *)malloc(sizeof(infer_job_t));
+    infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
     assert(job != NULL);
     memset(job, 0, sizeof(infer_job_t));
     job->img = image_reference(img);
@@ -320,11 +350,33 @@ void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t ro
     infer_thread_infer_enqueue_job(h, job);
 }
 
+embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t *kp, int num_kp)
+{
+    assert(h->md_aux!=0);
+    int sz=h->md_aux->embedding_size;
+    assert(num_kp<=5);
+    embedding_t *e=embedding_create(sz, img->time);
+    infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
+    assert(job != NULL);
+    memset(job, 0, sizeof(infer_job_t));
+    job->img = image_reference(img);
+    for(int i=0;i<num_kp;i++)
+    {
+        job->fp[2*i+0]=kp[i].x;
+        job->fp[2*i+1]=kp[i].y;
+    }
+    job->num_fp=num_kp*2;
+    job->embedding=embedding_reference(e);
+    assert(block_reference_count(e)>=2);
+    job->next = NULL;
+    infer_thread_infer_enqueue_job(h, job);
+    return e;
+}
 void infer_thread_infer_async_callback_facepoints(infer_thread_t *h, image_t *img, float *fp, void (*callback)(void *context, infer_thread_result_data_t *rd), void *callback_context)
 {
     if (!h || !img) return;
     // Allocate and fill in a new job
-    infer_job_t *job = (infer_job_t *)malloc(sizeof(infer_job_t));
+    infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
     assert(job != NULL);
     memset(job, 0, sizeof(infer_job_t));
     job->img = image_reference(img);
@@ -349,7 +401,7 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
     pthread_cond_init(&handle->cond, NULL);
 
     // Allocate and fill in a new job
-    infer_job_t *job = (infer_job_t *)malloc(sizeof(infer_job_t));
+    infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
     assert(job != NULL);
     memset(job, 0, sizeof(infer_job_t));
     job->img = image_reference(img);

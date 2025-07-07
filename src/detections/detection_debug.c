@@ -149,6 +149,8 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
         char text[256];
         snprintf(text, 255, "ID:%lx %s",det->track_id,classname);
         image_draw_text(x, det->x0, det->y0, text, 0xffffff);
+        snprintf(text, 255, "FQ:%0.4f",detection_face_quality_score(det));
+        image_draw_text(x, det->x0, det->y0+0.02, text, 0xffffff);
 
     }
     return x;

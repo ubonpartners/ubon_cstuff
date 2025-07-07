@@ -383,6 +383,12 @@ void *block_reference(void *block) {
     return block;
 }
 
+int block_reference_count(void *block)
+{
+    block_header_t *bh = (block_header_t*)((uint8_t*)block - sizeof(block_header_t));
+    return (int)__sync_fetch_and_add(&bh->ref_count, 0);
+}
+
 void block_free(void *block) {
     if (!block) return;
     block_header_t *bh = (block_header_t*)((uint8_t*)block - sizeof(block_header_t));

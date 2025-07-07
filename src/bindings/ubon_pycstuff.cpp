@@ -396,7 +396,7 @@ public:
         infer_config_t config{};
         apply_infer_config(config_dict, config);
 
-        thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str());
+        thread = infer_thread_start(trt_file.c_str(), yaml_file.c_str(), INFER_THREAD_DETECTION);
         if (!thread) {
             throw std::runtime_error("Failed to start infer_thread");
         }

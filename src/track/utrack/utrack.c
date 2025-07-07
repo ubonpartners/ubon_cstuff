@@ -111,10 +111,15 @@ utrack_t *utrack_create(const char *yaml_config)
     return ut;
 }
 
+void utdet_destroy(utdet_t *utdet)
+{
+    detection_destroy((detection_t *)utdet);
+}
+
 void utrack_destroy(utrack_t *ut)
 {
     if (!ut) return;
-    for(int i=0;i<ut->num_tracked;i++) block_free(ut->tracked[i]);
+    for(int i=0;i<ut->num_tracked;i++) utdet_destroy(ut->tracked[i]);
     free(ut);
 }
 
@@ -540,7 +545,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     // done with detections now
     for(int i=0;i<num_det;i++)
     {
-        block_free(dets[i]);
+        utdet_destroy(dets[i]);
         dets[i]=0;
     }
 
@@ -553,7 +558,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         {
             // got replaced by a matched new object
             if (tdet->kf) delete tdet->kf;
-            block_free(tdet);
+            utdet_destroy(tdet);
             continue;
         }
         tdet->num_missed++;
@@ -572,7 +577,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             tdet->track_state=TRACKSTATE_REMOVED;
             debugf("Deleting object %p:%d:%lx",tdet,i,tdet->det.track_id);
             if (tdet->kf) delete tdet->kf;
-            block_free(tdet);
+            utdet_destroy(tdet);
             tracked[i]=0;
         }
     }
@@ -616,7 +621,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         else
         {
             if (tdet->kf) delete tdet->kf;
-            block_free(tdet);
+            utdet_destroy(tdet);
         }
     }
     num_tracked=ut->num_tracked=num_not_removed;
@@ -625,15 +630,13 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     // output objects
 
     detection_list_t *out_list=detection_list_create(num_tracked);
+    out_list->time=rtp_time;
     out_list->md=dets_in->md;
     out_list->num_detections=0;
     for(int i=0;i<num_tracked;i++)
     {
         utdet_t *tdet=tracked[i];
-        if (tdet->track_state==TRACKSTATE_TRACKED)
-        {
-            out_list->det[out_list->num_detections++]=(detection_t *)block_reference(tdet);
-        }
+        out_list->det[out_list->num_detections++]=(detection_t *)block_reference(tdet);
     }
 
     for(int i=0;i<num_tracked;i++)

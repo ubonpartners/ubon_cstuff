@@ -148,7 +148,8 @@ static void benchmark(benchmark_config_t *config, benchmark_result_t *result)
     pthread_barrier_init(&bc.start_barrier, NULL, config->num_threads + 1);
 
     bc.display=false;
-    bc.infer_thread = infer_thread_start(config->trt_model, config->trt_model_config, &icfg);
+    bc.infer_thread = infer_thread_start(config->trt_model, config->trt_model_config);
+    infer_thread_configure(bc.infer_thread, &icfg);
     assert(bc.infer_thread!=0);
     bc.num_images = load_images_from_folder(config->image_folder, &bc.images[0],
                                             config->num_images < MAX_IMAGES ? config->num_images : MAX_IMAGES);

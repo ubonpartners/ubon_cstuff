@@ -44,6 +44,8 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_cont
 // min_full_ROI is an interval that specifies how often to ignore the motiontracker and run on the whole frame
 // - this is useful to stop things getting "stuck".
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
+// enabled face-rec embedding generation
+void track_stream_enable_face_embeddings(track_stream_t *ts, bool enabled, float min_quality);
 // returns the preferred image format for this stream
 image_format_t track_stream_get_stream_image_format(track_stream_t *ts);
 void track_stream_destroy(track_stream_t *ts);

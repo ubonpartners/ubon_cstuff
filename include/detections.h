@@ -16,6 +16,8 @@ typedef struct kp
 
 typedef struct detection detection_t;
 
+#include "embedding.h"
+
 struct detection
 {
     uint32_t marker;
@@ -23,6 +25,8 @@ struct detection
     // with respect to the original image not the detection ROI
     float x0,y0,x1,y1;
     float conf;
+    //
+    double last_seen_time;
     // class index
     unsigned short cl;
     // original anchor box index (debug)
@@ -54,6 +58,9 @@ struct detection
     // opaque vector for REID, can compare with cosine similarity
     // to check how 'similar' people look
     float reid[REID_MAX_VECTOR_LEN];
+    // embeddings
+    embedding_t *face_embedding;
+    embedding_t *clip_embedding;
 };
 
 typedef struct detection_list
@@ -61,6 +68,7 @@ typedef struct detection_list
     // model description is defined in infer.h
     // this lets you get the class names list, attribute list, etc
     model_description_t *md;
+    double time;
     int num_detections;
     int max_detections;
     int num_person_detections;
@@ -95,6 +103,8 @@ void detection_list_show(detection_list_t *dets, bool log_only=false);
 void detection_list_generate_overlap_masks(detection_list_t *dets);
 void detection_list_fuse_face_person(detection_list_t *dets);
 const char *detection_list_get_classname(detection_list_t *dets, int cl);
+
+float detection_face_quality_score(detection_t *det);
 
 float detection_box_iou(const detection_t *da, const detection_t *db);
 int match_detections_greedy(

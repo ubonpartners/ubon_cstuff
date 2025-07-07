@@ -67,7 +67,8 @@ int main(int argc, char *argv[])
     config.set_nms_thr=true;
 
     infer_thread=infer_thread_start("/mldata/weights/trt/yolo11l-dpa-250525-dyn.trt",
-                                    "/mldata/config/train/train_attr.yaml", &config);
+                                    "/mldata/config/train/train_attr.yaml");
+    infer_thread_configure(infer_thread, &config);
 
     model_description_t *md=infer_thread_get_model_description(infer_thread);
     infer_print_model_description(md);

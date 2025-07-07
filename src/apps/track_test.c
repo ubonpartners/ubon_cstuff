@@ -23,7 +23,7 @@ typedef struct state
 static void track_result(void *context, track_results_t *r)
 {
     state_t *s=(state_t *)context;
-    printf("result type %d time %f\n",r->result_type,r->time);
+    //printf("result type %d time %f\n",r->result_type,r->time);
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);

@@ -261,21 +261,23 @@ detection_list_t *BYTETracker::update(detection_list_t *dets, double rtp_time)
 		}
 	}
 
-	detection_list_t *out_dets=detection_list_create(output_stracks.size());
-	for (int i = 0; i < (int)output_stracks.size(); i++)
+	detection_list_t *out_dets=detection_list_create(this->tracked_stracks.size());
+	out_dets->time=rtp_time;
+	for (int i = 0; i < (int)this->tracked_stracks.size(); i++)
 	{
         detection_t *det=detection_list_add_end(out_dets);
-        float x=output_stracks[i].tlwh[0];
-        float y=output_stracks[i].tlwh[1];
-        float w=output_stracks[i].tlwh[2];
-        float h=output_stracks[i].tlwh[3];
+        float x=this->tracked_stracks[i].tlwh[0];
+        float y=this->tracked_stracks[i].tlwh[1];
+        float w=this->tracked_stracks[i].tlwh[2];
+        float h=this->tracked_stracks[i].tlwh[3];
         det->x0=(x)/640.0;
         det->x1=(x+w)/640.0;
         det->y0=(y)/640.0;
         det->y1=(y+h)/640.0;
         det->cl=0;
         det->conf=1.0;
-		det->track_id=output_stracks[i].track_id;
+		det->track_id=this->tracked_stracks[i].track_id;
+		det->last_seen_time=this->tracked_stracks[i].time;
     }
 	return out_dets;
 }

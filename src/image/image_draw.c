@@ -39,7 +39,7 @@ void image_draw_text(image_t *img, float x_norm, float y_norm, const char *text,
         g_font_initialized = 1;
     }
 
-    float font_height = 16.0f;
+    float font_height = 18.0f;
     float scale = stbtt_ScaleForPixelHeight(&g_font, font_height);
 
     int x_pix = (int)(x_norm * img->width);

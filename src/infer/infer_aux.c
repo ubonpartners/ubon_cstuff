@@ -168,6 +168,18 @@ float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
     return h_out;
 }
 
+void infer_aux_batch(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, float *kp, int n)
+{
+    float *p=infer_aux_batch(inf, img, kp, n);
+    int sz=(int)inf->md.embedding_size;
+    for(int i=0;i<n;i++)
+    {
+        embedding_check(ret_emb[i]);
+        embedding_set_data(ret_emb[i], p+sz*n, sz);
+    }
+    free(p);
+}
+
 aux_model_description_t *infer_aux_get_model_description(infer_aux_t *inf)
 {
     return &inf->md;

@@ -71,5 +71,6 @@ void block_free(void *block);
 void *block_reference(void *block);
 void block_set_free_callback(void *block, void *context, void (*free_callback)(void *context, void *block));
 void block_check(void *block);
+int block_reference_count(void *block);
 
 #endif

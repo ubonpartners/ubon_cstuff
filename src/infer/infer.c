@@ -226,7 +226,11 @@ void infer_print_model_description(model_description_t *desc)
 
 model_description_t *infer_get_model_description(infer_t *inf)
 {
-    if (!inf) return 0;
+    if (!inf)
+    {
+        log_fatal("inf is null");
+        return 0;
+    }
     return &inf->md;
 }
 
@@ -259,8 +263,10 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
     if ((yaml_config==0)||(strlen(yaml_config)==0))
     {
-        log_info("infer_create: No config specified; trying default:");
-        yaml_config=default_config;
+        log_fatal("infer_create: no yaml config specified");
+        assert(0);
+        //log_info("infer_create: No config specified; trying default:");
+        //yaml_config=default_config;
     }
 
     YAML::Node config = yaml_load(yaml_config);
@@ -836,8 +842,14 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     }
 
     destroy_image(inf_image);
-    for(int i=0;i<num;i++) destroy_image(image_scaled_conv[i]);
+    for(int i=0;i<num;i++)
+    {
+        double t=image_scaled_conv[i]->time;
+        dets[i]->time=t;
+        for(int j=0;j<dets[i]->num_detections;j++) dets[i]->det[j]->last_seen_time=t;
 
+        destroy_image(image_scaled_conv[i]);
+    }
     // map detections to the original image
 
     for(int i=0;i<num;i++)

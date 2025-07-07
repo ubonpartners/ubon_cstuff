@@ -40,6 +40,7 @@ typedef struct {
     float video_file_framerate;
     int thread_id;
     float track_framerate;
+    float face_embedding_min_quality;
     unsigned int *total_tracked;
     unsigned int *total_tracked_nonskip;
     uint64_t *total_decoded_macroblocks;
@@ -85,6 +86,7 @@ static void *run_track_worker(void *arg) {
 
     s.ts = track_stream_create(args->tss, &s, track_result);
     track_stream_set_minimum_frame_intervals(s.ts, 1.0/args->track_framerate, 10.0);
+    track_stream_enable_face_embeddings(s.ts, args->face_embedding_min_quality<1, args->face_embedding_min_quality);
 
     const char *filename = args->video_file_filename;
     FILE *input = fopen(filename, "rb");
@@ -121,6 +123,7 @@ typedef struct test_config
     int num_threads;
     int infer_w, infer_h;
     float track_framerate;
+    float face_embedding_min_quality;
     //
     float fps;
     float fps_nonskip;
@@ -151,6 +154,7 @@ static void run_one_test(test_config_t *config)
         args[i].video_file_filename = config->input_clip->filename;
         args[i].video_file_framerate= config->input_clip->fps;
         args[i].track_framerate = config->track_framerate;
+        args[i].face_embedding_min_quality=config->face_embedding_min_quality;
         args[i].thread_id = i;
         args[i].total_tracked = &total_tracked;
         args[i].total_tracked_nonskip = &total_tracked_nonskip;
@@ -242,6 +246,7 @@ int main(int argc, char *argv[]) {
     dconfig.input_clip = &clips[0];
     dconfig.duration_sec = 10;
     dconfig.track_framerate = 8;
+    dconfig.face_embedding_min_quality=0.01;
     dconfig.num_threads = 16;
     dconfig.infer_w = 640;
     dconfig.infer_h = 640;
@@ -249,6 +254,15 @@ int main(int argc, char *argv[]) {
     test_config_t config[64];
     for(int i=0;i<64;i++) config[i]=dconfig;
     int nconfig;
+
+    for(int i=0;i<8;i++)
+    {
+        static float q[4]={1.0, 0.1, 0.01, 0};
+        config[nconfig].testset="Vary face embeddings";
+        config[nconfig].input_clip = &clips[i/4];
+        config[nconfig].face_embedding_min_quality=q[i%4];
+        sprintf(config[nconfig++].name, "FaceQ %s:%.3f",clips[i/4].friendly_name,q[i%4]);
+    }
 
     {
         config[nconfig].testset="Single test UK OF 1512p H265";

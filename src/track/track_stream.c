@@ -14,28 +14,16 @@
 #include "utrack.h"
 #include "simple_decoder.h"
 #include "yaml_stuff.h"
+#include "track_shared.h"
+#include "track_aux.h"
+
 
 #define debugf if (0) log_debug
-
-#define MAX_AUX_INFER_THREAD   2
-
-struct track_shared_state
-{
-    const char *config_yaml;
-    int max_width, max_height;
-    int num_worker_threads;
-    float motiontrack_min_roi_after_skip;
-    float motiontrack_min_roi_after_nonskip;
-    infer_thread_t *infer_thread;
-    infer_thread_t *aux_infer_thread[MAX_AUX_INFER_THREAD];
-    const char *tracker_type;
-    model_description_t *md;
-    ctpl::thread_pool *thread_pool;
-};
 
 struct track_stream
 {
     track_shared_state_t *tss;
+    track_aux_t *taux;
     //
     void *result_callback_context;
     void (*result_callback)(void *context, track_results_t *results);
@@ -62,88 +50,6 @@ struct track_stream
     std::vector<track_results_t> track_results;
 };
 
-static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
-{
-    debugf("starting ctpl thread %d",id);
-    cuda_thread_init();
-    pthread_barrier_wait(barrier);
-}
-
-track_shared_state_t *track_shared_state_create(const char *yaml_config)
-{
-    YAML::Node yaml_base=yaml_load(yaml_config);
-    std::string tracker_type=yaml_base["tracker_type"].as<std::string>();
-
-    track_shared_state_t *tss=(track_shared_state_t *)malloc(sizeof(track_shared_state_t));
-    assert(tss!=0);
-    memset(tss, 0, sizeof(track_shared_state_t));
-    debugf("Track shared state create");
-    tss->config_yaml=yaml_to_cstring(yaml_base);
-    tss->max_width=yaml_get_int_value(yaml_base["max_width"], 1280);
-    tss->max_height=yaml_get_int_value(yaml_base["max_height"], 1280);
-    tss->num_worker_threads=yaml_get_int_value(yaml_base["num_worker_threads"], 4);
-    tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
-    tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
-    tss->tracker_type=strdup(tracker_type.c_str());
-    // create worker threads
-    tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
-    pthread_barrier_t barrier;
-    pthread_barrier_init(&barrier, nullptr, tss->num_worker_threads);
-    for(int i=0;i<tss->num_worker_threads;i++) tss->thread_pool->push(ctpl_thread_init, &barrier);
-
-    // setup inference from yaml config
-    YAML::Node inferenceConfigNode = yaml_base["inference_config"];
-    std::string trt_file=inferenceConfigNode["trt"].as<std::string>();
-    const char *inference_yaml=yaml_to_cstring(inferenceConfigNode);
-    infer_config_t config={};
-    config.det_thr=yaml_get_float_value(yaml_base["conf_thr"], 0.05);
-    config.set_det_thr=true;
-    config.nms_thr=yaml_get_float_value(yaml_base["nms_thr"], 0.45);
-    config.set_nms_thr=true;
-    tss->infer_thread=infer_thread_start(trt_file.c_str(), inference_yaml);
-    infer_thread_configure(tss->infer_thread, &config);
-    tss->md=infer_thread_get_model_description(tss->infer_thread);
-    free((void*)inference_yaml);
-
-    // set up aux inference from config
-    YAML::Node auxInferenceConfigNode = yaml_base["inference_aux_config"];
-    if (auxInferenceConfigNode && auxInferenceConfigNode.IsDefined())
-    {
-        int n=0;
-        assert(auxInferenceConfigNode.IsMap());
-        for (const auto& kv : auxInferenceConfigNode) {
-            std::string aux_name = kv.first.as<std::string>();
-            const YAML::Node& entry = kv.second;
-            std::string trt_file=entry["trt"].as<std::string>();
-            const char *inference_yaml=yaml_to_cstring(entry);
-            log_debug("create aux inference Name %s trt %s cfg %s",aux_name.c_str(), trt_file.c_str(), inference_yaml);
-            tss->aux_infer_thread[n]=infer_thread_start(trt_file.c_str(), inference_yaml, true);
-            free((void*)inference_yaml);
-            n++;
-            assert(n<=MAX_AUX_INFER_THREAD);
-        }
-    }
-    // done
-    return tss;
-}
-
-model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss)
-{
-    return tss->md;
-}
-
-void track_shared_state_destroy(track_shared_state_t *tss)
-{
-    if (!tss) return;
-    tss->thread_pool->stop();
-    delete tss->thread_pool;
-    infer_thread_destroy(tss->infer_thread);
-    for(int i=0;i<MAX_AUX_INFER_THREAD;i++) if (tss->aux_infer_thread[i]) infer_thread_destroy(tss->aux_infer_thread[i]);
-    free((void *)tss->config_yaml);
-    free((void *)tss->tracker_type);
-    free(tss);
-}
-
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_callback_context, void (*result_callback)(void *context, track_results_t *results))
 {
     track_stream_t *ts=(track_stream_t *)malloc(sizeof(track_stream_t));
@@ -167,6 +73,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->last_skip=false;
     ts->tracked_object_roi=ROI_ZERO;
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
+    ts->taux=track_aux_create(tss);
     return ts;
 }
 
@@ -183,43 +90,17 @@ void track_stream_destroy(track_stream_t *ts)
     motion_track_destroy(ts->mt);
     if (ts->bytetracker) delete ts->bytetracker;
     if (ts->utrack) utrack_destroy(ts->utrack);
+    track_aux_destroy(ts->taux);
     pthread_mutex_destroy(&ts->run_mutex);
     free(ts);
 }
 
-static void face_embedding_callback(void *context, infer_thread_result_data_t *rd)
-{
-    //printf("face embedding! %d\n",rd->embedding_len);
-    free(rd->embedding);
-}
 
 static void process_results(track_stream_t *ts, track_results_t *r)
 {
-    if (r->track_dets)
-    {
-        track_shared_state_t *tss=ts->tss;
-        for(int i=0;i<r->track_dets->num_detections;i++)
-        {
-            detection_t *det=r->track_dets->det[i];
-            if (det->num_face_points>0)
-            {
-                assert(det->num_face_points==5);
-                float fp[10];
-                int num_ok=0;
-                for(int i=0;i<5;i++)
-                {
-                    fp[i*2+0]=det->face_points[i].x;
-                    fp[i*2+1]=det->face_points[i].y;
-                    num_ok+=(det->face_points[i].conf>0.1);
-                }
-                if (num_ok==5)
-                {
-                    infer_thread_infer_async_callback_facepoints(tss->aux_infer_thread[0],
-                                      ts->inference_image, fp, face_embedding_callback, 0);
-                }
-            }
-        }
-    }
+    track_shared_state_t *tss=ts->tss;
+    track_aux_run(ts->taux, ts->inference_image, r->track_dets);
+
     if (ts->result_callback)
         ts->result_callback(ts->result_callback_context, r);
     else
@@ -288,6 +169,13 @@ void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_pro
     pthread_mutex_lock(&ts->run_mutex);
     ts->min_time_delta_process=min_process;
     ts->min_time_delta_full_roi=min_full_roi;
+    pthread_mutex_unlock(&ts->run_mutex);
+}
+
+void track_stream_enable_face_embeddings(track_stream_t *ts, bool enabled, float min_quality)
+{
+    pthread_mutex_lock(&ts->run_mutex);
+    track_aux_enable_face_embeddings(ts->taux, enabled, min_quality);
     pthread_mutex_unlock(&ts->run_mutex);
 }
 
@@ -371,7 +259,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     }
     assert(ts->inference_image==0);
     ts->inference_image=image_scaled;
-    infer_thread_infer_async_callback(tss->infer_thread, image_scaled, expanded_roi, infer_done_callback, ts);
+    infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
 }
 
 void track_stream_run(track_stream_t *ts, image_t *img, double time)
@@ -430,5 +318,5 @@ std::vector<track_results_t> track_stream_get_results(track_stream_t *ts)
 void track_shared_state_configure_inference(track_shared_state_t *tss, infer_config_t *config)
 {
     if (!tss || !config) return;
-    infer_thread_configure(tss->infer_thread, config);
+    infer_thread_configure(tss->infer_thread[INFER_THREAD_DETECTION], config);
 }

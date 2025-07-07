@@ -34,6 +34,11 @@ detection_t *detection_create()
 
 void detection_destroy(detection_t *d)
 {
+    if (block_reference_count(d)==1)
+    {
+        if (d->clip_embedding) embedding_destroy(d->clip_embedding);
+        if (d->face_embedding) embedding_destroy(d->face_embedding);
+    }
     block_free(d);
 }
 
@@ -244,4 +249,51 @@ detection_list_t *detection_list_join(detection_list_t *dets1, detection_list_t 
     for(int i=0;i<dets1->num_detections;i++) detection_list_append_copy(ret, dets1->det[i]);
     for(int i=0;i<dets2->num_detections;i++) detection_list_append_copy(ret, dets2->det[i]);
     return ret;
+}
+
+float detection_face_quality_score(detection_t *det) {
+    kp_t *face_points=det->face_points;
+    if (det->num_face_points!=5) return -1;
+    // --- 1) Confidence aggregates ---
+    float conf_eye  = 0.5f * (face_points[0].conf + face_points[1].conf);
+    float conf_nose = face_points[2].conf;
+    float conf_mouth = 0.5f * (face_points[3].conf + face_points[4].conf);
+    // overall mean conf
+    float conf_overall = (conf_eye + conf_nose + conf_mouth) / 3.0f;
+    if (conf_overall<0.1) return 0.0f;
+
+    // --- 2) Size factor (inter‐ocular distance) ---
+    float dx = face_points[1].x - face_points[0].x;
+    float dy = face_points[1].y - face_points[0].y;
+    float iod = sqrtf(dx*dx + dy*dy);              // normalized [0,√2]
+    float size_score = fminf(1.0f, iod * 1.5f);    // tune 1.5→ desired scale
+    size_score *= conf_eye;                        // down‐weight if eyes are uncertain
+    // --- 3) Roll (eye‐line tilt) ---
+    float roll = fabsf(atan2f(dy, dx));            // radians
+    const float MAX_ROLL = 30.0f * (M_PI/180.0f);   // 30°
+    float roll_score = (roll >= MAX_ROLL)
+                     ? 0.1f
+                     : 1.0f - (roll / MAX_ROLL);
+    roll_score *= conf_eye;                        // again weight by eye conf
+
+    // --- 4) Yaw proxy (nose offset) ---
+    float ex = 0.5f * (face_points[0].x + face_points[1].x);
+    float nx = face_points[2].x;
+    float offset = fabsf(nx - ex);
+    float offset_ratio = (iod > 0.0f) ? (offset / iod) : 1.0f;
+    float yaw_score = (offset_ratio >= 1.0f)
+                    ? 0.1f
+                    : 1.0f - offset_ratio;
+    // weight by the weaker of (eyes, nose)
+    float conf_yaw = fminf(conf_eye, conf_nose);
+    yaw_score *= conf_yaw;
+
+    // --- 5) Combine components and overall conf ---
+    float combined = size_score * roll_score * yaw_score;
+    float final_score = combined * conf_overall;
+
+    // clamp
+    if (final_score < 0.0f) final_score = 0.0f;
+    if (final_score > 1.0f) final_score = 1.0f;
+    return final_score;
 }
