@@ -57,6 +57,8 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
 // if you do not provide a result callback then the results are cumulated into a vector
 // (one entry per frame) and can be retrieved with the below
-std::vector<track_results_t> track_stream_get_results(track_stream_t *ts);
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts);
+track_results_t *track_results_create();
+void track_results_destroy(track_results_t *tr);
 
 #endif

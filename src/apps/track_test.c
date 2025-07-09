@@ -27,6 +27,23 @@ static void track_result(void *context, track_results_t *r)
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);
+        for(int i=0;i<r->track_dets->num_detections;i++)
+        {
+            detection_t *det=r->track_dets->det[i];
+            /*if (det->face_jpeg)
+            {
+                size_t data_size=0;
+                uint8_t *data=jpeg_get_data(det->face_jpeg, &data_size);
+                static int n=0;
+                char temp[200];
+                snprintf(temp, 199, "jpeg_face_%0d.jpg",n++);
+                FILE *f=fopen(temp, "wb");
+                fwrite(data, 1, data_size, f);
+                fclose(f);
+                printf("Written face %s; %d bytes\n",temp,(int)data_size);
+            }*/
+        }
+
         image_t *img=image_reference(s->img);
         image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
         display_image("video", out_frame_rgb);
@@ -37,6 +54,18 @@ static void track_result(void *context, track_results_t *r)
         }
         destroy_image(out_frame_rgb);
         destroy_image(img);
+    }
+    if (r->track_dets && r->track_dets->frame_jpeg)
+    {
+        size_t data_size=0;
+        uint8_t *data=jpeg_get_data(r->track_dets->frame_jpeg, &data_size);
+        static int n=0;
+        char temp[200];
+        snprintf(temp, 199, "jpeg_%0d.jpg",n++);
+        FILE *f=fopen(temp, "wb");
+        fwrite(data, 1, data_size, f);
+        fclose(f);
+        printf("Written %s; %d bytes\n",temp,(int)data_size);
     }
 }
 

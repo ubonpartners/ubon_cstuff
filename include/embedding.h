@@ -15,5 +15,7 @@ embedding_t *embedding_reference(embedding_t *e);
 void embedding_check(embedding_t *e);
 void embedding_set_quality(embedding_t *e, float q);
 float embedding_get_quality(embedding_t *e);
+void embedding_set_time(embedding_t *e, double t);
+double embedding_get_time(embedding_t *e);
 
 #endif

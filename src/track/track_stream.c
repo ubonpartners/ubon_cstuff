@@ -3,6 +3,7 @@
 #include <cassert>
 #include <string.h>
 #include <unistd.h>
+#include <mutex>
 #include "track.h"
 #include "image.h"
 #include "motion_track.h"
@@ -14,11 +15,15 @@
 #include "utrack.h"
 #include "simple_decoder.h"
 #include "yaml_stuff.h"
+#include "jpeg_thread.h"
+#include "memory_stuff.h"
 #include "track_shared.h"
 #include "track_aux.h"
 
-
 #define debugf if (0) log_debug
+
+static std::once_flag initFlag;
+static block_allocator_t *track_results_allocator;
 
 struct track_stream
 {
@@ -47,11 +52,35 @@ struct track_stream
     image_t *inference_image;
     detection_list_t *inference_detections;
     //
-    std::vector<track_results_t> track_results;
+    std::vector<track_results_t *> track_results_vec;
 };
+
+static void track_stream_init()
+{
+    track_results_allocator=block_allocator_create("track_result", sizeof(track_results_t));
+}
+
+track_results_t *track_results_create()
+{
+    track_results_t *tr=(track_results_t *)block_alloc(track_results_allocator, sizeof(track_results_t));
+    memset(tr, 0, sizeof(track_results_t));
+    return tr;
+}
+
+void track_results_destroy(track_results_t *r)
+{
+    if (block_reference_count(r)==1)
+    {
+        if (r->inference_dets) detection_list_destroy(r->inference_dets);
+        if (r->track_dets) detection_list_destroy(r->track_dets);
+    }
+    block_free(r);
+}
 
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_callback_context, void (*result_callback)(void *context, track_results_t *results))
 {
+    std::call_once(initFlag, track_stream_init);
+
     track_stream_t *ts=(track_stream_t *)malloc(sizeof(track_stream_t));
     assert(ts!=0);
     memset(ts, 0, sizeof(track_stream_t));
@@ -102,45 +131,47 @@ static void process_results(track_stream_t *ts, track_results_t *r)
     track_aux_run(ts->taux, ts->inference_image, r->track_dets);
 
     if (ts->result_callback)
+    {
         ts->result_callback(ts->result_callback_context, r);
+        track_results_destroy(r);
+    }
     else
-        ts->track_results.push_back(*r);
+        ts->track_results_vec.push_back(r);
 }
 
 static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
 {
-    track_results_t r;
-    memset(&r, 0, sizeof(track_results_t));
+    track_results_t *r=track_results_create();
 
     motion_track_set_roi(ts->mt, ts->inference_roi);
     //detection_list_show(ts->inference_detections);
 
-    r.result_type=TRACK_FRAME_TRACKED_ROI;
-    r.time=ts->last_run_time;
+    r->result_type=TRACK_FRAME_TRACKED_ROI;
+    r->time=ts->last_run_time;
     if (ts->bytetracker)
-        r.track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
+        r->track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
     else if (ts->utrack)
-        r.track_dets=utrack_run(ts->utrack, ts->inference_detections, ts->last_run_time);
+        r->track_dets=utrack_run(ts->utrack, ts->inference_detections, ts->last_run_time);
     else
     {
         assert(0);
     }
-    r.inference_dets=ts->inference_detections;
-    r.motion_roi=ts->motion_roi;
-    r.inference_roi=ts->inference_roi;
+    r->inference_dets=ts->inference_detections;
+    r->motion_roi=ts->motion_roi;
+    r->inference_roi=ts->inference_roi;
 
-    if (r.track_dets->num_detections!=0)
+    if (r->track_dets->num_detections!=0)
     {
         float x0=1.0;
         float x1=0.0;
         float y0=1.0;
         float y1=0.0;
-        for(int i=0;i<r.track_dets->num_detections;i++)
+        for(int i=0;i<r->track_dets->num_detections;i++)
         {
-            x0=std::min(x0, r.track_dets->det[i]->x0);
-            y0=std::min(y0, r.track_dets->det[i]->y0);
-            x1=std::min(x1, r.track_dets->det[i]->x1);
-            y1=std::min(y1, r.track_dets->det[i]->y1);
+            x0=std::min(x0, r->track_dets->det[i]->x0);
+            y0=std::min(y0, r->track_dets->det[i]->y0);
+            x1=std::min(x1, r->track_dets->det[i]->x1);
+            y1=std::min(y1, r->track_dets->det[i]->y1);
         }
         ts->tracked_object_roi.box[0]=x0;
         ts->tracked_object_roi.box[1]=y0;
@@ -148,7 +179,7 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
         ts->tracked_object_roi.box[3]=y1;
     }
 
-    process_results(ts, &r);
+    process_results(ts, r);
     destroy_image(ts->inference_image);
     ts->inference_image=0;
     pthread_mutex_unlock(&ts->run_mutex);
@@ -198,15 +229,10 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
         if (img!=0) destroy_image(img);
-        track_results_t r;
-        memset(&r, 0, sizeof(track_results_t));
-        r.result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
-        r.time=time;
-        r.motion_roi=ROI_ZERO;
-        r.inference_roi=ROI_ZERO;
-        r.track_dets=0;
-        r.inference_dets=0;
-        process_results(ts, &r);
+        track_results_t *r=track_results_create();
+        r->result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
+        r->time=time;
+        process_results(ts, r);
         pthread_mutex_unlock(&ts->run_mutex);
         return;
     }
@@ -231,17 +257,16 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
         motion_track_set_roi(ts->mt, ROI_ZERO);
         destroy_image(image_scaled);
 
-        track_results_t r;
-        memset(&r, 0, sizeof(track_results_t));
-        r.result_type=TRACK_FRAME_SKIP_NO_MOTION;
-        r.time=time;
-        r.motion_roi=motion_roi;
-        r.inference_roi=ROI_ZERO;
-        r.track_dets=0;
-        r.inference_dets=0;
+        track_results_t *r=track_results_create();
+        r->result_type=TRACK_FRAME_SKIP_NO_MOTION;
+        r->time=time;
+        r->motion_roi=motion_roi;
+        r->inference_roi=ROI_ZERO;
+        r->track_dets=0;
+        r->inference_dets=0;
         ts->last_run_time=time;
         ts->last_skip=true;
-        process_results(ts, &r);
+        process_results(ts, r);
         pthread_mutex_unlock(&ts->run_mutex);
         return;
     }
@@ -306,11 +331,11 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
     fclose(input);
 }
 
-std::vector<track_results_t> track_stream_get_results(track_stream_t *ts)
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
 {
     pthread_mutex_lock(&ts->run_mutex);
-    std::vector<track_results_t> ret=ts->track_results;
-    ts->track_results.clear();
+    std::vector<track_results_t *> ret=ts->track_results_vec;
+    ts->track_results_vec.clear();
     pthread_mutex_unlock(&ts->run_mutex);
     return ret;
 }

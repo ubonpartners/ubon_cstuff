@@ -38,6 +38,7 @@ void detection_destroy(detection_t *d)
     {
         if (d->clip_embedding) embedding_destroy(d->clip_embedding);
         if (d->face_embedding) embedding_destroy(d->face_embedding);
+        if (d->face_jpeg) jpeg_destroy(d->face_jpeg);
     }
     block_free(d);
 }
@@ -71,6 +72,7 @@ static void detection_list_free_callback(void *context, void *block)
 {
     detection_list_t *dets=(detection_list_t *)block;
     for(int i=0;i<dets->num_detections;i++) detection_destroy(dets->det[i]);
+    if (dets->frame_jpeg) jpeg_destroy(dets->frame_jpeg);
 }
 
 detection_list_t *detection_list_create(int max_detections)

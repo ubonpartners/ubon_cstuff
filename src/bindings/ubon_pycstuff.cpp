@@ -233,6 +233,27 @@ static py::list convert_float_array(float *a, int n)
     return pt_list;
 }
 
+static py::dict convert_embedding(embedding_t *e)
+{
+    py::dict d;
+    embedding_sync(e);
+    d["data"]=convert_float_array(embedding_get_data(e), embedding_get_size(e));
+    d["time"]=embedding_get_time(e);
+    d["quality"]=embedding_get_quality(e);
+    return d;
+}
+
+static py::object convert_jpeg(jpeg_t *j)
+{
+    py::dict d;
+    size_t sz=0;
+    uint8_t *data=jpeg_get_data(j, &sz);
+    if (sz==0) return py::none();
+    d["data"]=py::bytes(reinterpret_cast<const char*>(data), sz);
+    d["time"]=jpeg_get_time(j);
+    return d;
+}
+
 static void apply_infer_config(py::dict cfg_dict, infer_config_t& config) {
     py::dict cfg_copy(cfg_dict);  // Mutable copy
 
@@ -322,6 +343,9 @@ static py::object convert_detections(detection_list_t *dets)
         if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
         if (det->num_attr>0) item["attrs"]=convert_float_array(det->attr, det->num_attr);
         if (det->reid_vector_len>0) item["reid_vector"] = convert_float_array(det->reid, det->reid_vector_len);
+        if (det->face_embedding!=0) item["face_embedding"]= convert_embedding(det->face_embedding);
+        if (det->clip_embedding!=0) item["clip_embedding"]= convert_embedding(det->clip_embedding);
+        if (det->face_jpeg) item["face_jpeg"]=convert_jpeg(det->face_jpeg);
         results.append(item);
     }
     return results;
@@ -845,13 +869,15 @@ public:
         auto results = track_stream_get_results(stream);
         for (auto& res : results) {
             py::dict d;
-            d["result_type"] = res.result_type;
-            d["time"] = res.time;
-            d["motion_roi"] = convert_roi(res.motion_roi);
-            d["inference_roi"] = convert_roi(res.inference_roi);
-            d["track_dets"] = convert_detections(res.track_dets);
-            d["inference_dets"] = convert_detections(res.inference_dets);
+            d["result_type"] = res->result_type;
+            d["time"] = res->time;
+            d["motion_roi"] = convert_roi(res->motion_roi);
+            d["inference_roi"] = convert_roi(res->inference_roi);
+            d["track_dets"] = convert_detections(res->track_dets);
+            d["inference_dets"] = convert_detections(res->inference_dets);
+            if (res->track_dets && res->track_dets->frame_jpeg) d["frame_jpeg"]=convert_jpeg(res->track_dets->frame_jpeg);
             results_out.push_back(d);
+            track_results_destroy(res);
         }
         return results_out;
     }

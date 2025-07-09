@@ -14,6 +14,7 @@ struct track_shared_state
     const char *tracker_type;
     model_description_t *md;
     ctpl::thread_pool *thread_pool;
+    jpeg_thread_t *jpeg_thread;
 };
 
 #endif

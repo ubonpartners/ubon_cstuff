@@ -13,6 +13,7 @@
 #include "BYTETracker.h"
 #include "utrack.h"
 #include "simple_decoder.h"
+#include "jpeg_thread.h"
 #include "yaml_stuff.h"
 #include "track_aux.h"
 #include "track_shared.h"
@@ -21,7 +22,7 @@
 
 static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
 {
-    debugf("starting ctpl thread %d",id);
+    debugf("starting track_shared ctpl thread %d",id);
     cuda_thread_init();
     pthread_barrier_wait(barrier);
 }
@@ -42,11 +43,14 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
     tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
     tss->tracker_type=strdup(tracker_type.c_str());
+
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
     pthread_barrier_t barrier;
-    pthread_barrier_init(&barrier, nullptr, tss->num_worker_threads);
+    pthread_barrier_init(&barrier, nullptr, tss->num_worker_threads+1);
     for(int i=0;i<tss->num_worker_threads;i++) tss->thread_pool->push(ctpl_thread_init, &barrier);
+    pthread_barrier_wait(&barrier);
+    pthread_barrier_destroy(&barrier);
 
     // set up aux inference from config
     YAML::Node auxInferenceConfigNode = yaml_base["inference_config"];
@@ -74,7 +78,7 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
 
             std::string trt_file=entry["trt"].as<std::string>();
             const char *inference_yaml=yaml_to_cstring(entry);
-            log_debug("create inference Name '%s' trt '%s' yaml '%s'",aux_name.c_str(), trt_file.c_str(), inference_yaml);
+            log_debug("create inference Name '%s' trt '%s'",aux_name.c_str(), trt_file.c_str());
             assert(tss->infer_thread[index]==0);
             tss->infer_thread[index]=infer_thread_start(trt_file.c_str(), inference_yaml, index);
             free((void*)inference_yaml);
@@ -98,6 +102,8 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
             }
         }
     }
+
+    tss->jpeg_thread=jpeg_thread_create(tss->config_yaml);
     // done
     return tss;
 }
@@ -113,6 +119,7 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     tss->thread_pool->stop();
     delete tss->thread_pool;
     for(int i=0;i<INFER_THREAD_NUM_TYPES;i++) if (tss->infer_thread[i]) infer_thread_destroy(tss->infer_thread[i]);
+    jpeg_thread_destroy(tss->jpeg_thread);
     free((void *)tss->config_yaml);
     free((void *)tss->tracker_type);
     free(tss);

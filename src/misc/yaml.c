@@ -5,6 +5,9 @@
 #include <cassert>
 #include <cstring>
 #include <stdio.h>
+#include <vector>
+#include <yaml-cpp/yaml.h>
+#include <cstdarg>
 #include "yaml_stuff.h"
 #include "log.h"
 
@@ -63,7 +66,7 @@ float yaml_get_float_value(YAML::Node node, float dv)
 int yaml_get_int_value(YAML::Node node, int dv)
 {
     if (node && node.IsDefined()) {
-        return node.as<float>();
+        return node.as<int>();
     }
     return dv;
 }
@@ -74,4 +77,66 @@ bool yaml_get_bool_value(YAML::Node node, bool dv)
         return node.as<bool>();
     }
     return dv;
+}
+
+
+const YAML::Node* yaml_traverse_path_count(const YAML::Node& base, int count, va_list args) {
+    std::vector<YAML::Node> stack;
+    stack.clear();
+    stack.push_back(base);
+
+    const YAML::Node* current = &base;
+    for (int i = 0; i < count; ++i) {
+        const char* key = va_arg(args, const char*);
+        if (!current->IsMap())
+            return nullptr;
+        YAML::Node next = (*current)[key];
+        if (!next)
+            return nullptr;
+        stack.push_back(next);
+        current = &stack.back();
+    }
+
+    return current;
+}
+
+template<typename T>
+T yaml_get_value_count(const YAML::Node& base, int count, T default_value, va_list args, T(*converter)(const YAML::Node&)) {
+    const YAML::Node* final = yaml_traverse_path_count(base, count, args);
+    if (final && final->IsDefined() && final->IsScalar()) {
+        try {
+            return converter(*final);
+        } catch (const YAML::Exception&) {}
+    }
+    return default_value;
+}
+
+// Type-specific converters
+int yaml_node_as_int(const YAML::Node& node) { return node.as<int>(); }
+bool yaml_node_as_bool(const YAML::Node& node) { return node.as<bool>(); }
+float yaml_node_as_float(const YAML::Node& node) { return node.as<float>(); }
+
+// Entry-point wrappers with variadic unpacking
+int yaml_get_int(const YAML::Node& base, int default_value, int count, ...) {
+    va_list args;
+    va_start(args, count);
+    int val = yaml_get_value_count(base, count, default_value, args, yaml_node_as_int);
+    va_end(args);
+    return val;
+}
+
+bool yaml_get_bool(const YAML::Node& base, bool default_value, int count, ...) {
+    va_list args;
+    va_start(args, count);
+    bool val = yaml_get_value_count(base, count, default_value, args, yaml_node_as_bool);
+    va_end(args);
+    return val;
+}
+
+float yaml_get_float(const YAML::Node& base, float default_value, int count, ...) {
+    va_list args;
+    va_start(args, count);
+    float val = yaml_get_value_count(base, count, default_value, args, yaml_node_as_float);
+    va_end(args);
+    return val;
 }

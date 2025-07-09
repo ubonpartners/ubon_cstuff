@@ -9,4 +9,8 @@ float yaml_get_float_value(YAML::Node node, float dv);
 int yaml_get_int_value(YAML::Node node, int dv);
 bool yaml_get_bool_value(YAML::Node node, bool  dv);
 
+int yaml_get_int(const YAML::Node& base, int default_value, int count,  ...);
+bool yaml_get_bool(const YAML::Node& base, bool default_value, int count,  ...);
+float yaml_get_float(const YAML::Node& base, float default_value, int count,  ...);
+
 #endif

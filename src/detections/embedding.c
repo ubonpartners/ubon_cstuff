@@ -109,3 +109,13 @@ float embedding_get_quality(embedding_t *e)
     if (e==0) return 0.0f;
     return(e->quality);
 }
+
+void embedding_set_time(embedding_t *e, double t)
+{
+    e->time=t;
+}
+
+double embedding_get_time(embedding_t *e)
+{
+    return e->time;
+}

@@ -17,6 +17,7 @@ typedef struct kp
 typedef struct detection detection_t;
 
 #include "embedding.h"
+#include "jpeg_thread.h"
 
 struct detection
 {
@@ -58,9 +59,10 @@ struct detection
     // opaque vector for REID, can compare with cosine similarity
     // to check how 'similar' people look
     float reid[REID_MAX_VECTOR_LEN];
-    // embeddings
+    // embeddings + jpegs
     embedding_t *face_embedding;
     embedding_t *clip_embedding;
+    jpeg_t *face_jpeg;
 };
 
 typedef struct detection_list
@@ -75,6 +77,8 @@ typedef struct detection_list
     int num_face_detections;
     detection_t **person_dets; // points into the 'det' array above
     detection_t **face_dets;   // points into the 'det' array above
+    // images
+    jpeg_t *frame_jpeg; // jpeg of the overall image (if present)
     // must be last!
     detection_t *det[1];
 } detection_list_t;

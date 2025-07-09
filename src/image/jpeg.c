@@ -412,6 +412,100 @@ static int save_jpeg_rgb24(const char *filename, image_t *img, int quality)
     return 0;
 }
 
+uint8_t *save_jpeg_to_buffer(size_t *outsize, image_t *img, int quality)
+{
+    if (!img || img->format != IMAGE_FORMAT_YUV420_HOST || !outsize)
+        return 0;
+
+    image_sync(img);
+
+    //printf("Encode jpeg %dx%d\n",img->width,img->height);
+
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
+
+    // Use in-memory destination
+    uint8_t *outbuf=0;
+    unsigned long jpeg_size = 0;
+    jpeg_mem_dest(&cinfo, &outbuf, &jpeg_size);
+
+    cinfo.image_width = img->width;
+    cinfo.image_height = img->height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_YCbCr;
+
+    jpeg_set_defaults(&cinfo);
+    cinfo.raw_data_in = TRUE;
+    cinfo.jpeg_color_space = JCS_YCbCr;
+    jpeg_set_quality(&cinfo, quality, TRUE);
+
+    // Set sampling factors for YUV420
+    cinfo.comp_info[0].h_samp_factor = 2;
+    cinfo.comp_info[0].v_samp_factor = 2;
+    cinfo.comp_info[1].h_samp_factor = 1;
+    cinfo.comp_info[1].v_samp_factor = 1;
+    cinfo.comp_info[2].h_samp_factor = 1;
+    cinfo.comp_info[2].v_samp_factor = 1;
+
+    jpeg_start_compress(&cinfo, TRUE);
+
+    int y_stride = img->stride_y;
+    int uv_stride = img->stride_uv;
+    int width = img->width;
+    int height = img->height;
+
+    JSAMPARRAY y_rows = (JSAMPARRAY)malloc(sizeof(JSAMPROW) * 16);
+    JSAMPARRAY u_rows = (JSAMPARRAY)malloc(sizeof(JSAMPROW) * 8);
+    JSAMPARRAY v_rows = (JSAMPARRAY)malloc(sizeof(JSAMPROW) * 8);
+    JSAMPIMAGE planes = (JSAMPIMAGE)malloc(sizeof(JSAMPARRAY) * 3);
+    if (!y_rows || !u_rows || !v_rows || !planes) {
+        jpeg_destroy_compress(&cinfo);
+        free(y_rows); free(u_rows); free(v_rows); free(planes);
+        return 0;
+    }
+
+    planes[0] = y_rows;
+    planes[1] = u_rows;
+    planes[2] = v_rows;
+
+    const int MCU_Y  = cinfo.comp_info[0].v_samp_factor * DCTSIZE;   // 16
+    const int MCU_UV = MCU_Y / 2;                                    // 8
+
+    while (cinfo.next_scanline < height) {
+        /* build Y pointer table */
+        for (int i = 0; i < MCU_Y; ++i) {
+            int src = cinfo.next_scanline + (i < height - cinfo.next_scanline
+                                            ? i : height - cinfo.next_scanline - 1);
+            y_rows[i] = img->y + src * y_stride;
+        }
+        /* build U/V pointer tables */
+        int uv_start = cinfo.next_scanline / 2;
+        int uv_rows  = (height + 1) / 2;                // total chroma rows in the image
+        for (int i = 0; i < MCU_UV; ++i) {
+            int src = uv_start + (i < uv_rows - uv_start
+                                ? i : uv_rows - uv_start - 1);
+            u_rows[i] = img->u + src * uv_stride;
+            v_rows[i] = img->v + src * uv_stride;
+        }
+
+        jpeg_write_raw_data(&cinfo, planes, MCU_Y);     // **always 16**
+    }
+
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+
+    free(y_rows);
+    free(u_rows);
+    free(v_rows);
+    free(planes);
+
+    *outsize=jpeg_size;
+    return outbuf;
+}
+
 void save_jpeg(const char *filename, image_t *img)
 {
     if (!img) return;

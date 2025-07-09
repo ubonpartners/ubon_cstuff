@@ -356,6 +356,7 @@ embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t 
     int sz=h->md_aux->embedding_size;
     assert(num_kp<=5);
     embedding_t *e=embedding_create(sz, img->time);
+    embedding_set_time(e, img->time);
     infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
     assert(job != NULL);
     memset(job, 0, sizeof(infer_job_t));
