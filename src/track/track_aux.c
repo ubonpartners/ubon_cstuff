@@ -28,7 +28,9 @@ typedef struct aux_data
     uint64_t track_id;
     double last_live_time;
     embedding_t *face_embedding;
+    embedding_t *clip_embedding;
     jpeg_t *face_jpeg;
+    jpeg_t *clip_jpeg;
 } aux_data_t;
 
 using MapType = std::unordered_map<uint64_t, aux_data_t*>;
@@ -38,6 +40,7 @@ struct track_aux
     track_shared_state *tss;
     MapType* map;
     infer_thread_t *face_infer_thread;
+    infer_thread_t *clip_infer_thread;
 
     double main_jpeg_last_time;
     bool main_jpeg_enabled;
@@ -56,6 +59,14 @@ struct track_aux
     int face_jpeg_max_width;
     int face_jpeg_max_height;
     int face_jpeg_quality;
+
+    bool clip_embeddings_enabled;
+    bool clip_jpegs_enabled;
+    int clip_jpeg_min_width;
+    int clip_jpeg_min_height;
+    int clip_jpeg_max_width;
+    int clip_jpeg_max_height;
+    int clip_jpeg_quality;
 };
 
 static void track_aux_init()
@@ -73,8 +84,10 @@ track_aux_t *track_aux_create(track_shared_state *tss)
 
     ta->map = new MapType;
     ta->face_infer_thread=tss->infer_thread[INFER_THREAD_AUX_FACE];
+    ta->clip_infer_thread=tss->infer_thread[INFER_THREAD_AUX_CLIP];
 
     YAML::Node yaml_base=yaml_load(tss->config_yaml);
+
     ta->main_jpeg_enabled=yaml_get_bool(yaml_base, false, 2, "main_jpeg", "enabled");
     ta->main_jpeg_max_width=yaml_get_int(yaml_base, 320, 2, "main_jpeg", "max_width");
     ta->main_jpeg_max_height=yaml_get_int(yaml_base, 320, 2, "main_jpeg", "max_height");
@@ -93,6 +106,13 @@ track_aux_t *track_aux_create(track_shared_state *tss)
     ta->face_min_quality_increment=yaml_get_float(yaml_base, 0.02, 2, "faces", "min_quality_increment");
     ta->face_min_quality_multiple=yaml_get_float(yaml_base, 1.2, 2, "faces", "min_quality_multiple");
 
+    ta->clip_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "embeddings_enabled");
+    ta->clip_jpegs_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "jpegs_enabled");
+    ta->clip_jpeg_min_width=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_min_width");
+    ta->clip_jpeg_min_height=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_min_height");
+    ta->clip_jpeg_max_width=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_max_width");
+    ta->clip_jpeg_max_height=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_max_height");
+    ta->clip_jpeg_quality=yaml_get_int(yaml_base, 90, 2, "clip", "jpeg_quality");
 
     return ta;
 }
@@ -202,6 +222,33 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
                         embedding_set_quality(aux->face_embedding, q);
                         debugf("Generate new face embedding Q=%f->%f",existing_score,q);
                     }
+                }
+            }
+        }
+
+        if ((ta->clip_infer_thread!=0) && (ta->clip_embeddings_enabled))
+        {
+            float w=det->x1-det->x0;
+            float h=det->y1-det->y0;
+            int iw=(int)(w*img->width);
+            int ih=(int)(h*img->height);
+            float expand=0.2f;
+            if (iw>=ta->clip_jpeg_min_width && ih>=ta->clip_jpeg_min_height)
+            {
+                if (true)
+                {
+                    printf("Gen clip %dx%d\n",iw,ih);
+                    if (aux->clip_embedding) embedding_destroy(aux->clip_embedding);
+                    roi_t clip_roi;
+                    clip_roi.box[0]=std::max(0.0f, det->x0-w*expand);
+                    clip_roi.box[1]=std::max(0.0f, det->y0-h*expand);
+                    clip_roi.box[2]=std::min(1.0f, det->x1+w*expand);
+                    clip_roi.box[3]=std::min(1.0f, det->y1+h*expand);
+                    //aux->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, clip_roi);
+                    if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
+                    //aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, ta->clip_jpeg_quality);
+                    //embedding_set_quality(aux->clip_embedding, q);
+                    printf("Generate new CLIP embedding\n");
                 }
             }
         }

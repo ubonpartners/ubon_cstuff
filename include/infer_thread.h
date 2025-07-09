@@ -50,7 +50,7 @@ void infer_thread_wait_result(infer_thread_result_handle_t *h, infer_thread_resu
 
 void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t roi, void (*callback)(void *context, infer_thread_result_data_t *rd), void *callback_context);
 //void infer_thread_infer_async_callback_facepoints(infer_thread_t *h, image_t *img, float *fp, void (*callback)(void *context, infer_thread_result_data_t *rd), void *callback_context);
-embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t *kp, int num_kp);
+embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t *kp=0, int num_kp=0, roi_t roi=ROI_ZERO);
 
 void infer_thread_get_stats(infer_thread_t *h, infer_thread_stats_t *s);
 void infer_thread_print_stats(infer_thread_t *h);

@@ -195,6 +195,7 @@ static void *infer_thread_fn(void *arg)
                     roi_t inference_roi;
                     imgs[i]=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi);
                     e[i]=jobs[i]->embedding;
+                    embedding_check(e[i]);
                 }
                 infer_aux_batch(h->infer_aux, imgs, e, 0, 0);
                 for(int i=0;i<count;i++) destroy_image(imgs[i]);
@@ -350,7 +351,7 @@ void infer_thread_infer_async_callback(infer_thread_t *h, image_t *img, roi_t ro
     infer_thread_infer_enqueue_job(h, job);
 }
 
-embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t *kp, int num_kp)
+embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t *kp, int num_kp, roi_t roi)
 {
     assert(h->md_aux!=0);
     int sz=h->md_aux->embedding_size;
@@ -368,6 +369,7 @@ embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t 
     }
     job->num_fp=num_kp*2;
     job->embedding=embedding_reference(e);
+    job->roi=roi;
     assert(block_reference_count(e)>=2);
     job->next = NULL;
     infer_thread_infer_enqueue_job(h, job);
