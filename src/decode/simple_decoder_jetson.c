@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 
 #if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
+#include <queue>
 #include "cudaEGL.h"
 #include "NvUtils.h"
 #include "NvVideoDecoder.h"
@@ -20,6 +21,8 @@
 
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
+
+using namespace std;
 
 #define CHECK_ERROR(cond, str) \
     if(cond) { \
@@ -67,6 +70,14 @@ typedef struct decctx_cfg_s {
     float fps;
 }decctx_cfg_t;
 
+typedef struct q_ctx_s {
+    pthread_mutex_t q_mutex; // queue mutex
+    std::queue < dma_fd_t * > *mq; // empty queue
+    std::queue < dma_fd_t * > *fq; // filled queue
+    int32_t mq_len; // empty queue length
+    int32_t fq_len; // filled queue length
+}q_ctx_t;
+
 struct simple_decoder
 {
     int is_h265;
@@ -75,9 +86,13 @@ struct simple_decoder
     uint32_t decoder_pixfmt;
     int32_t min_dec_capture_buffers;
     NvBufSurfaceColorFormat fmt;
+
     dma_fd_t dma_fd[NR_CAPTURE_BUF];
+    q_ctx_t *q_ctx;
+
+    int nr_capture; // number of frames from capture plane
+    int nr_output; // number of buffers enqueued to output plane
     pthread_t dec_capture_loop;
-    int do_exit;
     bool got_error;
     bool got_eos;
 
@@ -96,6 +111,35 @@ static void nvdec_abort_ctx(simple_decoder_t *ctx)
     ctx->dec->abort();
     abort();
 }
+
+static int print_input_metadata(simple_decoder_t *ctx,
+    v4l2_ctrl_videodec_inputbuf_metadata *d)
+{
+    int l = 0;
+    char b[1024];
+    uint32_t frame_num;
+
+    frame_num = ctx->dec->output_plane.getTotalDequeuedBuffers() - 1;
+    l += snprintf(b + l, sizeof(b) - l, "Frame: [%d] ", frame_num);
+
+    if (d->nBitStreamError & V4L2_DEC_ERROR_SPS) {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_SPS ");
+    } else if (d->nBitStreamError & V4L2_DEC_ERROR_PPS) {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_PPS ");
+    } else if (d->nBitStreamError & V4L2_DEC_ERROR_SLICE_HDR) {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_SLICE_HDR ");
+    } else if (d->nBitStreamError & V4L2_DEC_ERROR_MISSING_REF_FRAME) {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_MISSING_REF_FRAME ");
+    } else if (d->nBitStreamError & V4L2_DEC_ERROR_VPS) {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_VPS ");
+    } else {
+        l += snprintf(b + l, sizeof(b) - l, "ERROR_NONE ");
+    }
+    log_info("%s:%d %s\n",  __func__, __LINE__, b);
+
+    return 0;
+}
+
 
 static int print_metadata(simple_decoder_t *ctx,
     v4l2_ctrl_videodec_outputbuf_metadata *d)
@@ -164,6 +208,50 @@ static int print_metadata(simple_decoder_t *ctx,
     return 0;
 }
 
+/**
+  * Print plane param for debug purpose
+  */
+void print_plane_param(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
+{
+    int l = 0;
+    char b[1024];
+    NvBufSurfaceParams *surface_list = nvbuf_surf->surfaceList;
+    NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
+    NvBufSurfaceMappedAddr *maddr = &nvbuf_surf->surfaceList->mappedAddr;
+
+    //return; /* uncomment to use */
+
+    l += snprintf(b + l, sizeof(b) -l,
+        "[%5d] [0: %d %d %d %d] [1: %d %d %d %d] [2: %d %d %d %d] ",
+        ctx->nr_capture,
+        pp->width[0], pp->height[0], pp->bytesPerPix[0], pp->pitch[0],
+        pp->width[1], pp->height[1], pp->bytesPerPix[1], pp->pitch[1],
+        pp->width[2], pp->height[2], pp->bytesPerPix[2], pp->pitch[2]);
+    l += snprintf(b + l, sizeof(b) - l,
+        "  [w %u h %u p %u fmt 0x%x datasz %d] ",
+        surface_list->width, surface_list->height, surface_list->pitch,
+        surface_list->colorFormat, surface_list->dataSize);
+    if(surface_list->colorFormat == NVBUF_COLOR_FORMAT_RGBA) {
+        l += snprintf(b + l, sizeof(b) - l, "RGBA ");
+    }
+    if(surface_list->colorFormat == NVBUF_COLOR_FORMAT_YUV420) {
+        l += snprintf(b + l, sizeof(b) - l, "YUV420 ");
+    }
+    log_info("\n%s", b);
+
+
+    return;
+}
+
+void create_image_forward(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
+{
+    /*
+     image_t *dec_img = create_image();
+    copy_image()
+    ctx->frame_callback(ctx->context, dec_img);
+    */
+}
+
 static uint32_t find_v4l2_pixfmt(int is_h265)
 {
     uint32_t pixfmt = 0;
@@ -175,6 +263,85 @@ static uint32_t find_v4l2_pixfmt(int is_h265)
     }
 
     return pixfmt;
+}
+
+static int register_new_dma_fd(simple_decoder_t *ctx, dma_fd_t *dma_fd)
+{
+    int qlen;
+    q_ctx_t *q_ctx = ctx->q_ctx;
+
+    pthread_mutex_lock(&q_ctx->q_mutex);
+    do {
+        q_ctx->mq->push(dma_fd);
+        q_ctx->mq_len++;
+        qlen = q_ctx->mq_len;
+    } while(0);
+    pthread_mutex_unlock(&q_ctx->q_mutex);
+
+    return qlen;
+}
+
+static dma_fd_t *get_dma_fd2(simple_decoder_t *ctx, q_ctx_t *q_ctx, int *type)
+{
+    dma_fd_t *dma_fd;
+
+    if(q_ctx->mq_len > 0) {
+        dma_fd = q_ctx->mq->front();
+        q_ctx->mq->pop();
+        q_ctx->mq_len--;
+        *type = 0x01;
+        return dma_fd;
+    }
+    /* return NULL; */
+    if(q_ctx->fq_len > 0) {
+        dma_fd = q_ctx->fq->front();
+        q_ctx->fq->pop();
+        q_ctx->fq_len--;
+        *type = 0x02;
+        return dma_fd;
+    }
+
+    log_error("%s:%d both queue empty %d %d\n",
+        __func__, __LINE__, q_ctx->mq_len, q_ctx->fq_len);
+    nvdec_abort_ctx(ctx);
+
+    return NULL;
+}
+
+static dma_fd_t *get_dma_fd(simple_decoder_t *ctx)
+{
+    int type = 0;
+    dma_fd_t *dma_fd = NULL;
+    q_ctx_t *q_ctx = ctx->q_ctx;
+
+    pthread_mutex_lock(&q_ctx->q_mutex);
+    do {
+        dma_fd = get_dma_fd2(ctx, q_ctx, &type);
+    } while(0);
+    pthread_mutex_unlock(&q_ctx->q_mutex);
+
+    if(dma_fd) {
+    } else {
+        log_error("%s:%d NO DMA FD [m%2d f%2d type %d]\n",
+            __func__, __LINE__, q_ctx->mq_len, q_ctx->fq_len, type);
+    }
+
+    return dma_fd;
+}
+
+static int queue_dma_fd(simple_decoder_t *ctx, dma_fd_t *dma_fd)
+{
+    q_ctx_t *q_ctx = ctx->q_ctx;
+
+    pthread_mutex_lock(&q_ctx->q_mutex);
+    do {
+        gettimeofday(&dma_fd->tv, NULL);
+        q_ctx->fq->push(dma_fd);
+        q_ctx->fq_len++;
+    } while(0);
+    pthread_mutex_unlock(&q_ctx->q_mutex);
+
+    return 0;
 }
 
 static int alloc_dma_bufsurface(int index, simple_decoder_t *ctx,
@@ -192,6 +359,7 @@ static int alloc_dma_bufsurface(int index, simple_decoder_t *ctx,
     params.memtag = NvBufSurfaceTag_VIDEO_CONVERT;
     ret = NvBufSurf::NvAllocate(&params, 1, &dma_fd->fd);
     gettimeofday(&dma_fd->tv, NULL);
+    qlen = register_new_dma_fd(ctx, dma_fd);
     log_info("%s:%d dst_dma_fd[%02d:%02d] %3d / %2d\n",
         __func__, __LINE__, 0, index, dma_fd->fd, qlen);
 
@@ -213,19 +381,6 @@ static int free_dma_bufsurface(int index, simple_decoder_t *ctx, int *dma_fd)
     (void)ctx;
 
     return ret;
-}
-
-static dma_fd_t *get_dma_fd(simple_decoder_t *ctx)
-{
-    dma_fd_t *dma_fd = NULL;
-
-    return dma_fd;
-}
-
-static int queue_dma_fd(simple_decoder_t *ctx, dma_fd_t *dma_fd)
-{
-
-    return 0;
 }
 
 static void query_and_set_capture(simple_decoder_t *ctx, int from)
@@ -255,6 +410,8 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     ctx->cfg.dec_height = crop.c.height;
     ctx->cfg.window_width = ctx->cfg.dec_width;
     ctx->cfg.window_height = ctx->cfg.dec_height;
+    if(ctx->cfg.tr_width == 0)  ctx->cfg.tr_width = ctx->cfg.dec_width;
+    if(ctx->cfg.tr_height == 0)  ctx->cfg.tr_height = ctx->cfg.dec_height;
     log_info("%s:%d video resolution "
         "dec %d x %d => transform %d x %d => window %d x %d\n",
         __func__, __LINE__,
@@ -470,6 +627,8 @@ static int process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
     }
     if(ctx->cfg.out_pixfmt == 2) {
     }
+    print_plane_param(ctx, nvbuf_surf);
+    create_image_forward(ctx, nvbuf_surf);
     if(use_dynamic_egl) {
         if(NvBufSurfaceMapEglImage(nvbuf_surf, 0) != 0) {
             log_error("%s:%d unable to map EGL Image\n",
@@ -573,19 +732,9 @@ static void *dec_capture_loop_fn(void *arg)
                     "capture plane\n", __func__, __LINE__);
                 break;
             }
+            ctx->nr_capture++;
         }
     }
-
-/*
-    for(j = 0; ; j++) {
-        log_info("%s:%d j %6d\n", __func__, __LINE__, j);
-        if(ctx->do_exit) {
-            log_info("%s:%d exiting\n", __func__, __LINE__);
-            break;
-        }
-        usleep(10 * 1000);
-    }
-*/
 
     return NULL;
 }
@@ -595,10 +744,13 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     int j, r;
     NvVideoDecoder *dec = NULL;
     simple_decoder_t *ctx = NULL;
+    q_ctx_t *q_ctx = NULL;
 
     ctx = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
     if (ctx == 0) return 0;
     memset(ctx, 0, sizeof(simple_decoder_t));
+    q_ctx = new q_ctx_t;
+    ctx->q_ctx = q_ctx;
 
     ctx->frame_callback = frame_callback;
     ctx->context = context;
@@ -610,6 +762,12 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     for(j = 0; j < NR_CAPTURE_BUF; j++) {
         ctx->dma_fd[j].fd = -1;
     }
+
+    pthread_mutex_init(&q_ctx->q_mutex, NULL);
+    q_ctx->mq = new queue <dma_fd_t *>;
+    q_ctx->fq = new queue <dma_fd_t *>;
+    q_ctx->mq_len = 0;
+    q_ctx->fq_len = 0;
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
@@ -637,8 +795,9 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     r = dec->output_plane.setStreamStatus(true);
     CHECK_ERROR(r < 0, "Error in output plane stream on");
 
-    ctx->cfg.out_pixfmt = 2; /* YUV420 */
+    /* use YUV420 or RGBA as the output color format */
     ctx->cfg.out_pixfmt = 3; /* RGBA */
+    ctx->cfg.out_pixfmt = 2; /* YUV420 */
 
     log_info("%s:%d creating thread", __func__, __LINE__);
     r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, ctx);
@@ -648,20 +807,104 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
 void simple_decoder_destroy(simple_decoder_t *dec)
 {
-    if(dec == NULL) return;
+    int ret = 0;
+    struct v4l2_buffer v4l2_buf;
+    struct v4l2_plane planes[MAX_PLANES];
+    simple_decoder_t *ctx = dec;
+    q_ctx_t *q_ctx = ctx->q_ctx;
+
+    if(ctx == NULL) return;
 
     log_info("%s:%d stopping", __func__, __LINE__);
-    dec->do_exit = 1;
-    if(dec->dec_capture_loop) pthread_join(dec->dec_capture_loop, NULL);
-    free(dec);
+    /* As EOS, dequeue all the output planes */
+    while(ctx->dec->output_plane.getNumQueuedBuffers() > 0 &&
+           !ctx->got_error && !ctx->dec->isInError()) {
+        memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+        memset(planes, 0, sizeof(planes));
+
+        v4l2_buf.m.planes = planes;
+        ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, NULL, NULL, -1);
+        if(ret < 0) {
+            log_error("%s:%d error dequeuing buffer at output plane\n",
+                __func__, __LINE__);
+            nvdec_abort_ctx(ctx);
+            break;
+        }
+    }
+
+    /* Mark EOS for the decoder capture thread */
+    ctx->got_eos = true;
+
+    sleep(1);
+    pthread_cancel(ctx->dec_capture_loop);
+    sleep(1);
+
+    delete q_ctx->mq;
+    delete q_ctx->fq;
+    delete ctx->q_ctx;
+
+    if(ctx->dec_capture_loop) pthread_join(ctx->dec_capture_loop, NULL);
+    free(ctx);
 
     return;
 }
 
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size)
 {
-    (void)dec; (void)bitstream_data; (void)data_size;
-    //log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+    int ret;
+    simple_decoder_t *ctx = dec;
+    struct v4l2_buffer v4l2_buf;
+    struct v4l2_plane planes[MAX_PLANES];
+    struct timeval tv;
+    NvBuffer *buffer;
+    v4l2_ctrl_videodec_inputbuf_metadata d;
+
+    do {
+        memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+        memset(planes, 0, sizeof(planes));
+        v4l2_buf.m.planes = planes;
+        gettimeofday(&tv, NULL);
+
+        if(ctx->nr_output < ctx->cfg.out_plane_nrbuffer) {
+            buffer = ctx->dec->output_plane.getNthBuffer(ctx->nr_output);
+            v4l2_buf.index = ctx->nr_output;
+        } else {
+            ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, &buffer, NULL, -1);
+            if(ret < 0) {
+                log_error("%s:%d error dequeuing buffer at output plane\n",
+                    __func__, __LINE__);
+                nvdec_abort_ctx(ctx);
+                break;
+            }
+        }
+        if((USE_DEC_METADATA) && (v4l2_buf.flags & V4L2_BUF_FLAG_ERROR)) {
+            ret = ctx->dec->getInputMetadata(v4l2_buf.index, d);
+            print_input_metadata(ctx, &d);
+        }
+        memcpy(buffer->planes[0].data, bitstream_data, data_size);
+        buffer->planes[0].bytesused = data_size;
+        v4l2_buf.m.planes[0].bytesused = buffer->planes[0].bytesused;
+        /* NVDEC currently only preserves timestamp, so
+         * using the timestamp filed to send the buffer index
+         * v4l2_buf timestamp as buffer index */
+        v4l2_buf.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
+        v4l2_buf.timestamp = tv;
+
+        /* Queue an empty buffer to signal EOS to the decoder
+           i.e. set v4l2_buf.m.planes[0].bytesused = 0 and queue the buffer */
+        ret = ctx->dec->output_plane.qBuffer(v4l2_buf, NULL);
+        if(ret < 0) {
+            log_error("%s:%d error queuing buffer at output plane\n",
+                __func__, __LINE__);
+            nvdec_abort_ctx(ctx);
+            break;
+        }
+        if(v4l2_buf.m.planes[0].bytesused == 0) {
+            log_info("%s:%d input completed\n", __func__, __LINE__);
+            break;
+        }
+        ctx->nr_output++;
+    } while(0);
 
     return;
 }
