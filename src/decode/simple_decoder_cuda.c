@@ -4,8 +4,8 @@
 #include <string.h>
 #include <cuda.h>
 #include <assert.h>
-#include "cuviddec.h"
-#include "nvcuvid.h"
+#include "nvdecode/cuviddec.h"
+#include "nvdecode/nvcuvid.h"
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
 #include "log.h"

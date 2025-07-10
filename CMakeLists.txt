@@ -91,18 +91,30 @@ if(DEFINED ENV{JETSON_SOC})
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     list(APPEND PROJECT_INCLUDE_DIRS
+        /usr/src/jetson_multimedia_api/include
+        /usr/src/jetson_multimedia_api/include/libjpeg-8b
         /usr/local/cuda/include
+        /usr/include/libdrm
+    )
+    list(APPEND COMMON_LIBS
+        jetson_multimedia_lib
+        #/usr/local/cuda/lib64/stubs/libnvidia-ml.a
     )
     set(ARCH_LIBS
         -lSDL2 -ljpeg -lopenh264 -lyuv -lpcap -lsrtp2
         -lcuda -lcudart -lnvv4l2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei
         -lnvbufsurface -lnvbufsurftransform
-        -lnvvpi -lnvidia-ml -lnvjpeg -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lnvvpi -lnvjpeg -lnvdla_compiler
+        -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -Wl,-rpath=/usr/lib/aarch64-linux-gnu/nvidia
+        -Wl,-rpath=/usr/local/cuda/lib64
+        -Wl,--disable-new-dtags
         -L/usr/lib/aarch64-linux-gnu
         -L/usr/lib/aarch64-linux-gnu/nvidia
         -L/usr/lib/aarch64-linux-gnu/tegra
         -L/usr/local/cuda/lib64
+        -L/usr/local/cuda/lib64/stubs
     )
 else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=0")
@@ -150,6 +162,12 @@ file(GLOB CUDA_FILES
     ${CMAKE_SOURCE_DIR}/src/cuda/*.cu
 )
 
+if(DEFINED ENV{JETSON_SOC})
+file(GLOB JETSON_MULTIMEDIA_FILES
+    /usr/src/jetson_multimedia_api/samples/common/classes/*.cpp
+)
+endif()
+
 # Force -fPIC on all source files explicitly
 foreach(source_file ${SRC_FILES})
     set_source_files_properties(${source_file} PROPERTIES COMPILE_FLAGS "-fPIC")
@@ -175,6 +193,11 @@ set(APP_MAIN_FILES
 
 add_library(uboncstufflib STATIC ${SRC_FILES} ${CUDA_FILES})
 set_target_properties(uboncstufflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(DEFINED ENV{JETSON_SOC})
+add_library(jetson_multimedia_lib STATIC ${JETSON_MULTIMEDIA_FILES})
+set_target_properties(jetson_multimedia_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 # Helper macro to build each app
 foreach(app_src ${APP_MAIN_FILES})
