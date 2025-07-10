@@ -3,7 +3,7 @@ target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 if(DEFINED ENV{JETSON_SOC})
     list(APPEND COMMON_LIBS
-        /usr/local/cuda/lib64/stubs/libnvidia-ml.a
+        #/usr/local/cuda/lib64/stubs/libnvidia-ml.a
     )
     set(ARCH_LIBS
         pthread SDL2 jpeg openh264 yuv pcap srtp2 yaml-cpp

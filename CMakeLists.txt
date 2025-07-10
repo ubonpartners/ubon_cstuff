@@ -98,7 +98,7 @@ if(DEFINED ENV{JETSON_SOC})
     )
     list(APPEND COMMON_LIBS
         jetson_multimedia_lib
-        /usr/local/cuda/lib64/stubs/libnvidia-ml.a
+        #/usr/local/cuda/lib64/stubs/libnvidia-ml.a
     )
     set(ARCH_LIBS
         -lSDL2 -ljpeg -lopenh264 -lyuv -lpcap -lsrtp2

@@ -9,6 +9,7 @@
 #include <cuda_runtime_api.h>
 #include <cuda_runtime.h>
 
+#if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
 #include "cudaEGL.h"
 #include "NvUtils.h"
 #include "NvVideoDecoder.h"
@@ -33,7 +34,6 @@
 #define CHUNK_SIZE           (4 * 1024 * 1024)
 #define NR_OUTPUT_BUF        (10)
 
-#if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
 typedef struct dma_fd_s {
     int fd;
     int index;
@@ -94,6 +94,7 @@ static void nvdec_abort_ctx(simple_decoder_t *ctx)
     log_error("%s:%d aborting\n", __func__, __LINE__);
     ctx->got_error = true;
     ctx->dec->abort();
+    abort();
 }
 
 static int print_metadata(simple_decoder_t *ctx,
@@ -417,7 +418,6 @@ static int first_resolution_change(simple_decoder_t *ctx)
                 __func__, __LINE__);
             return 0;
         }
-
     }
 
     return ret;
@@ -612,7 +612,8 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     }
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
-    CHECK_ERROR(!ctx->dec, "Could not create the decoder");
+    CHECK_ERROR(!dec, "Could not create the decoder");
+    log_info("%s:%d ctx = %p dec = %p\n",  __func__, __LINE__, ctx, dec); \
     ctx->dec = dec;
     r = dec->subscribeEvent(V4L2_EVENT_RESOLUTION_CHANGE, 0, 0);
     CHECK_ERROR(r < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE");
@@ -640,7 +641,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     ctx->cfg.out_pixfmt = 3; /* RGBA */
 
     log_info("%s:%d creating thread", __func__, __LINE__);
-    r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, dec);
+    r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, ctx);
 
     return ctx;
 }

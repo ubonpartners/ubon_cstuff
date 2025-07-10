@@ -12,7 +12,11 @@
 #include "misc.h"
 #include "memory_stuff.h"
 
+#if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 #define USE_NVML    1
+#else
+#undef USE_NVML
+#endif
 
 static bool cuda_inited=false;
 static allocation_tracker_t cuda_alloc_tracker;
