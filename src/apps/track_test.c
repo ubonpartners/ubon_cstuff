@@ -75,7 +75,8 @@ static void process_image(void *context, image_t *img)
     image_t *old_img=s->img;
     s->img=image_reference(img);
     destroy_image(old_img);
-    track_stream_run_frame_time(s->ts, img);
+    //track_stream_run_frame_time(s->ts, img);
+    track_stream_run_single_frame(s->ts, img);
 }
 
 int main(int argc, char *argv[])

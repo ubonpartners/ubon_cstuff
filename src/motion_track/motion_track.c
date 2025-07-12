@@ -83,6 +83,16 @@ void motion_track_destroy(motion_track_t *mt)
     (mt);
 }
 
+void motion_track_reset(motion_track_t *mt)
+{
+    if (mt->ref)
+    {
+        destroy_image(mt->ref);
+        mt->ref=0;
+    }
+    if (mt->nvof) nvof_reset(mt->nvof);
+}
+
 static int count_leading_zeros(uint64_t x) {
     return x ? __builtin_clzll(x) : 64;
 }

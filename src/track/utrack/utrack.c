@@ -49,6 +49,7 @@ struct utrack
     float param_track_high_thr;
     float param_track_low_thr;
     float param_new_track_thr;
+    float param_person_det_thr_single_frame;
     float param_match_thr_initial;
     float param_match_thr_high;
     float param_match_thr_low;
@@ -93,6 +94,7 @@ utrack_t *utrack_create(const char *yaml_config)
     ut->param_track_high_thr=yaml_get_float_value(yaml_base["track_high_thr"], 0.9f);
     ut->param_track_low_thr=yaml_get_float_value(yaml_base["track_low_thr"], 0.115f);
     ut->param_new_track_thr=yaml_get_float_value(yaml_base["new_track_thr"], 0.57f);
+    ut->param_person_det_thr_single_frame=yaml_get_float_value(yaml_base["person_det_thr_single_frame"], 0.05f);
     ut->param_match_thr_initial=yaml_get_float_value(yaml_base["match_thr_initial"], 0.66f);
     ut->param_match_thr_high=yaml_get_float_value(yaml_base["match_thr_high"], 0.225f);
     ut->param_match_thr_low=yaml_get_float_value(yaml_base["match_thr_low"], 0.022f);
@@ -328,7 +330,7 @@ static int compare_utdet_desc(const void *a, const void *b) {
     return 0;
 }
 
-detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp_time)
+detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp_time, bool single_frame)
 {
     FILE_TRACE("==================================");
     FILE_TRACE("utrack run: time %f; %d detections", rtp_time, dets_in->num_detections);
@@ -387,6 +389,17 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
                     utdet->det.x0, utdet->det.y0, utdet->det.x1, utdet->det.y1);
     }
 
+    if (single_frame)
+    {
+        for(int i=0;i<num_tracked;i++)
+        {
+            utdet_t *tdet=tracked[i];
+            utdet_destroy(tdet);
+            tracked[i]=0;
+        }
+        num_tracked=0;
+    }
+
     for(int i=0;i<num_tracked;i++)
     {
         utdet_t *tdet=tracked[i];
@@ -429,7 +442,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
     mc.param_sim_weight=ut->param_sim_weight;
     mc.param_simple=ut->param_simple;
 
-    for(int pass=0;pass<3;pass++)
+    for(int pass=0;((pass<3) && (single_frame==false));pass++)
     {
         debugf("Start pass %d",pass);
         std::function<bool(utdet_t *)> det_filter_func, track_filter_func;
@@ -527,7 +540,8 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         utdet_t *det=dets[i];
         if (det->matched) continue;
         debugf("Unmatched new obj %lx conf %0.3f", det->det.track_id, det->det.conf);
-        if (det->adjusted_confidence>ut->param_new_track_thr)
+        float thr=(single_frame) ? ut->param_person_det_thr_single_frame : ut->param_new_track_thr;
+        if (det->adjusted_confidence>thr)
         {
             assert(det->det.track_id==0xdeaddead);
             det->det.track_id=ut->next_track_id++;
@@ -535,7 +549,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
             det->kf=new KalmanBoxTracker(v, rtp_time);
             det->last_detect_time=rtp_time;
             det->num_missed=0;
-            if (det->adjusted_confidence>ut->param_immediate_confirm_thr)
+            if ((det->adjusted_confidence>ut->param_immediate_confirm_thr)||single_frame)
                 det->track_state=TRACKSTATE_TRACKED;
             assert(num_output_objects<MAX_TRACKED);
             output_objects[num_output_objects++]=(utdet_t *)block_reference(det);

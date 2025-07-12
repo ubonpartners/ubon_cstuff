@@ -55,7 +55,9 @@ void track_stream_run(track_stream_t *ts, image_t *img, double time);
 void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double start_time=0, double end_time=100000.0);
 // run interface which takes time from img->timestamp - be sure it's monotonic!
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
-// if you do not provide a result callback then the results are cumulated into a vector
+// run inference on a single independent frame
+void track_stream_run_single_frame(track_stream_t *ts, image_t *img);
+// if you do not provide a result callback then the results are accumulated into a vector
 // (one entry per frame) and can be retrieved with the below
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts);
 track_results_t *track_results_create();

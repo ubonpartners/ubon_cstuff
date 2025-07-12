@@ -19,6 +19,7 @@ typedef struct of_results
 } of_results_t;
 
 motion_track_t *motion_track_create(const char *config_yaml);
+void motion_track_reset(motion_track_t *mt);
 void motion_track_destroy(motion_track_t *mt);
 void motion_track_add_frame(motion_track_t *mt, image_t *img);
 roi_t motion_track_get_roi(motion_track_t *mt);

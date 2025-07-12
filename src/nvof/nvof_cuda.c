@@ -244,6 +244,12 @@ nvof_t *nvof_create(void *context, int max_width, int max_height)
     return n;
 }
 
+void nvof_reset(nvof_t *n)
+{
+    if (!n) return;
+    n->count=0;
+}
+
 void nvof_destroy(nvof_t *n)
 {
     if (n)

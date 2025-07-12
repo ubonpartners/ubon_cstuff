@@ -35,6 +35,7 @@ struct track_stream
     //
     pthread_mutex_t run_mutex;
     uint32_t frame_count;
+    bool single_frame; // treat frame as an individual frame, not a video frame
     motion_track_t *mt;
 
     BYTETracker *bytetracker;
@@ -149,9 +150,12 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     r->result_type=TRACK_FRAME_TRACKED_ROI;
     r->time=ts->last_run_time;
     if (ts->bytetracker)
+    {
+        assert(ts->single_frame==false); // fixme if you want bytetracker to support single frame mode
         r->track_dets=ts->bytetracker->update(ts->inference_detections, ts->last_run_time);
+    }
     else if (ts->utrack)
-        r->track_dets=utrack_run(ts->utrack, ts->inference_detections, ts->last_run_time);
+        r->track_dets=utrack_run(ts->utrack, ts->inference_detections, ts->last_run_time, ts->single_frame);
     else
     {
         assert(0);
@@ -210,13 +214,13 @@ void track_stream_enable_face_embeddings(track_stream_t *ts, bool enabled, float
     pthread_mutex_unlock(&ts->run_mutex);
 }
 
-static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img, double time)
+static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img, double time, bool single_frame)
 {
     debugf("thread_stream_run_input_job run");
     track_shared_state_t *tss=ts->tss;
     int scale_w, scale_h;
     double time_delta=0;
-    if (ts->frame_count==0) ts->last_run_time=time-10.0;
+    if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
 
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
     {
@@ -225,6 +229,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     }
     time_delta=time-ts->last_run_time+1e-7;
     ts->frame_count++;
+    ts->single_frame=single_frame;
     //printf("time %f delta %f min %f skip %d\n",time,time_delta,ts->min_time_delta_process,(time_delta<ts->min_time_delta_process));
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
@@ -246,6 +251,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     image_check(image_scaled);
     image_check(img);
     destroy_image(img);
+    if (single_frame) motion_track_reset(ts->mt);
     motion_track_add_frame(ts->mt, image_scaled);
     image_check(image_scaled);
 
@@ -253,6 +259,7 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     float skip_roi_thr=(ts->last_skip) ? tss->motiontrack_min_roi_after_skip : tss->motiontrack_min_roi_after_nonskip;
     if (roi_area(&motion_roi)<skip_roi_thr)
     {
+        assert(ts->single_frame==false); // should never skip single frames
         debugf("skip inference ROI area %f < %f", roi_area(&motion_roi), skip_roi_thr);
         motion_track_set_roi(ts->mt, ROI_ZERO);
         destroy_image(image_scaled);
@@ -287,18 +294,29 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
 }
 
-void track_stream_run(track_stream_t *ts, image_t *img, double time)
+static void do_track_stream_run(track_stream_t *ts, image_t *img, double time, bool single_frame)
 {
     pthread_mutex_lock(&ts->run_mutex);
     debugf("track stream run");
     track_shared_state_t *tss=ts->tss;
-    tss->thread_pool->push(thread_stream_run_input_job, ts, image_reference(img), time);
+    tss->thread_pool->push(thread_stream_run_input_job, ts, image_reference(img), time, single_frame);
+}
+
+void track_stream_run(track_stream_t *ts, image_t *img, double time)
+{
+    do_track_stream_run(ts, img, time, false);
 }
 
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img)
 {
     assert(img!=0);
-    track_stream_run(ts, img, img->time);
+    do_track_stream_run(ts, img, img->time, false);
+}
+
+void track_stream_run_single_frame(track_stream_t *ts, image_t *img)
+{
+    assert(img!=0);
+    do_track_stream_run(ts, img, img->time, true);
 }
 
 static void track_run_video_process_image(void *context, image_t *img)

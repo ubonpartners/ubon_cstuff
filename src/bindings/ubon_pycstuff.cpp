@@ -23,6 +23,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "track.h"
 #include "motion_track.h"
 #include "kalman_tracker.h"
+#include "fiqa.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -347,7 +348,7 @@ static py::object convert_detections(detection_list_t *dets)
         if (det->clip_embedding!=0) item["clip_embedding"]= convert_embedding(det->clip_embedding);
         if (det->face_jpeg) item["face_jpeg"]=convert_jpeg(det->face_jpeg);
         if (det->clip_jpeg) item["clip_jpeg"]=convert_jpeg(det->clip_jpeg);
-        results.append(item);
+        if (det->fiqa_embedding) item["fiqa_score"]=fiqa_embedding_quality(det->fiqa_embedding);
     }
     return results;
 }
@@ -859,6 +860,11 @@ public:
     void run_on_images(const std::vector<std::shared_ptr<c_image>>& images) {
         for (const auto& img : images)
             track_stream_run_frame_time(stream, img->raw());
+    }
+
+    void run_on_individual_images(const std::vector<std::shared_ptr<c_image>>& images) {
+        for (const auto& img : images)
+            track_stream_run_single_frame(stream, img->raw());
     }
 
     void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time) {
