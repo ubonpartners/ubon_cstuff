@@ -1,9 +1,7 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include <future>
+#include <chrono>
 #include <mutex>
-#include <float.h>  // for FLT_MIN
+#include "string.h"
 #include "assert.h"
 #include "memory_stuff.h"
 #include "embedding.h"
@@ -16,60 +14,95 @@ static block_allocator_t *embedding_allocator;
 
 struct embedding
 {
-    double time;
-    float quality;
-    int size;
-    void (*wait_fn)(void *context);
-    void *wait_fn_context;
-    volatile bool ready;
-    float data[1];
+    double                   time;
+    float                    quality;
+    int                      size;
+
+    /*  synchronisation objects are pointers, so no ctors/dtors needed  */
+    std::promise<void>*      promise;
+    std::shared_future<void>*future;
+    bool                     value_set;
+
+    float                    data[1];   /* flexible-array tail */
 };
 
+using embedding_t = embedding;
+
+/*------------------------------------------------------------*/
 static void embedding_init()
 {
-    embedding_allocator=block_allocator_create("embedding", sizeof(embedding_t)+128*sizeof(float));
+    embedding_allocator =
+        block_allocator_create("embedding",
+                               sizeof(embedding_t) + 128 * sizeof(float));
 }
 
+/*------------------------------------------------------------*/
 embedding_t *embedding_create(int size, double time)
 {
     std::call_once(initFlag, embedding_init);
-    embedding_t *e=(embedding_t*)block_alloc(embedding_allocator, sizeof(embedding_t)+size*sizeof(float));
+
+    /* raw storage */
+    embedding_t *e = static_cast<embedding_t *>(
+        block_alloc(embedding_allocator,
+                    sizeof(embedding_t) + size * sizeof(float)));
+
+    /* zero everything so POD fields start clean */
     memset(e, 0, sizeof(embedding_t));
-    e->ready=true;
-    e->size=size;
+
+    /* hand-rolled construction of sync objects */
+    e->promise = new std::promise<void>();
+    e->future  = new std::shared_future<void>(e->promise->get_future().share());
+    e->value_set = false;
+
+    /* metadata */
+    e->size = size;
+    e->time = time;
     return e;
 }
 
+/*------------------------------------------------------------*/
 void embedding_destroy(embedding_t *e)
 {
-    //if (block_reference_count(e)==1) embedding_sync(e);
+    if (block_reference_count(e) == 1)
+    {
+        e->future->wait();            /* wait for producer */
+
+        /* manual destruction of sync objects */
+        delete e->future;
+        delete e->promise;
+    }
     block_free(e);
 }
 
-void embedding_set_wait_function(embedding_t *e, void (*wait)(void *context), void *context)
-{
-    e->wait_fn=wait;
-    e->wait_fn_context=context;
-}
-
+/*------------------------------------------------------------*/
 void embedding_sync(embedding_t *e)
 {
-    while(e->ready==false)
-    {
-        assert(e->wait_fn!=0);
-        e->wait_fn(e->wait_fn_context);
-    }
+    assert(e != nullptr);
+    if (e->value_set) return;
+    e->future->wait();                /* efficient blocking wait */
 }
 
 bool embedding_is_ready(embedding_t *e)
 {
-    assert(e!=0);
-    return e->ready;
+    assert(e != nullptr);
+    return e->value_set;
+    //return e->future->wait_for(std::chrono::seconds(0))== std::future_status::ready;
 }
 
-int embedding_get_size(embedding_t *e)
+/*------------------------------------------------------------*/
+int embedding_get_size   (embedding_t *e)
 {
     return e->size;
+}
+
+float embedding_get_quality(embedding_t *e)
+{
+    return e ? e->quality : 0.0f;
+}
+
+double embedding_get_time (embedding_t *e)
+{
+    return e->time;
 }
 
 float *embedding_get_data(embedding_t *e)
@@ -78,44 +111,38 @@ float *embedding_get_data(embedding_t *e)
     return e->data;
 }
 
-void embedding_set_data(embedding_t *e, float *data, int size)
+/*------------------------------------------------------------*/
+void embedding_set_data(embedding_t *e, float *src, int size)
 {
-    assert(e!=0);
-    assert(e->size==size);
-    assert(block_reference_count(e)>=1);
-    memcpy(e->data, data, sizeof(float)*size);
-    e->ready=true;
-}
+    assert(e                   != nullptr);
+    assert(e->size             == size);
+    assert(block_reference_count(e) >= 1);
 
-embedding_t *embedding_reference(embedding_t *e)
-{
-    return (embedding_t *)block_reference(e);
-}
+    assert(e->value_set==false);
+    memcpy(e->data, src, sizeof(float) * size);
 
-void embedding_check(embedding_t *e)
-{
-    assert(e!=0);
-    assert(block_reference_count(e)>=1);
+    /* fulfil promise exactly once */
+    e->value_set = true;
+    e->promise->set_value();
 }
 
 void embedding_set_quality(embedding_t *e, float q)
 {
-    assert(e!=0);
-    e->quality=q;
-}
-
-float embedding_get_quality(embedding_t *e)
-{
-    if (e==0) return 0.0f;
-    return(e->quality);
+    e->quality = q;
 }
 
 void embedding_set_time(embedding_t *e, double t)
 {
-    e->time=t;
+    e->time= t;
 }
 
-double embedding_get_time(embedding_t *e)
+embedding_t *embedding_reference(embedding_t *e)
 {
-    return e->time;
+    return static_cast<embedding_t *>(block_reference(e));
+}
+
+void embedding_check(embedding_t *e)
+{
+    assert(e != nullptr);
+    assert(block_reference_count(e) >= 1);
 }

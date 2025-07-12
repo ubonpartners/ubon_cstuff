@@ -17,6 +17,7 @@
 #include "track_shared.h"
 #include "track_aux.h"
 #include "yaml_stuff.h"
+#include "fiqa.h"
 
 #define debugf if (0) log_info
 
@@ -29,6 +30,7 @@ typedef struct aux_data
     double last_live_time;
     embedding_t *face_embedding;
     embedding_t *clip_embedding;
+    embedding_t *fiqa_embedding;
     jpeg_t *face_jpeg;
     jpeg_t *clip_jpeg;
 } aux_data_t;
@@ -41,6 +43,7 @@ struct track_aux
     MapType* map;
     infer_thread_t *face_infer_thread;
     infer_thread_t *clip_infer_thread;
+    infer_thread_t *fiqa_infer_thread;
 
     double main_jpeg_last_time;
     bool main_jpeg_enabled;
@@ -62,11 +65,18 @@ struct track_aux
 
     bool clip_embeddings_enabled;
     bool clip_jpegs_enabled;
+    float clip_embeddings_min_quality;
+    float clip_min_quality_increment;
+    float clip_min_quality_multiple;
     int clip_jpeg_min_width;
     int clip_jpeg_min_height;
     int clip_jpeg_max_width;
     int clip_jpeg_max_height;
     int clip_jpeg_quality;
+
+    bool fiqa_enabled;
+    int fiqa_min_width;
+    int fiqa_min_height;
 };
 
 static void track_aux_init()
@@ -85,6 +95,7 @@ track_aux_t *track_aux_create(track_shared_state *tss)
     ta->map = new MapType;
     ta->face_infer_thread=tss->infer_thread[INFER_THREAD_AUX_FACE];
     ta->clip_infer_thread=tss->infer_thread[INFER_THREAD_AUX_CLIP];
+    ta->fiqa_infer_thread=tss->infer_thread[INFER_THREAD_AUX_FIQA];
 
     YAML::Node yaml_base=yaml_load(tss->config_yaml);
 
@@ -113,16 +124,28 @@ track_aux_t *track_aux_create(track_shared_state *tss)
     ta->clip_jpeg_max_width=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_max_width");
     ta->clip_jpeg_max_height=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_max_height");
     ta->clip_jpeg_quality=yaml_get_int(yaml_base, 90, 2, "clip", "jpeg_quality");
+    ta->clip_embeddings_min_quality=yaml_get_float(yaml_base, 0.01, 2, "clip", "min_quality");
+    ta->clip_min_quality_increment=yaml_get_float(yaml_base, 0.02, 2, "clip", "min_quality_increment");
+    ta->clip_min_quality_multiple=yaml_get_float(yaml_base, 1.2, 2, "clip", "min_quality_multiple");
 
+    ta->fiqa_enabled=yaml_get_bool(yaml_base, false, 2, "fiqa", "enabled");
+    ta->fiqa_min_width=yaml_get_int(yaml_base, 32, 2, "fiqa", "min_width");
+    ta->fiqa_min_height=yaml_get_int(yaml_base, 32, 2, "fiqa", "min_height");
     return ta;
 }
 
 void aux_data_destroy(aux_data_t *aux)
 {
     if (aux->face_embedding) embedding_destroy(aux->face_embedding);
+    if (aux->clip_embedding) embedding_destroy(aux->clip_embedding);
+    if (aux->fiqa_embedding) embedding_destroy(aux->fiqa_embedding);
     if (aux->face_jpeg) jpeg_destroy(aux->face_jpeg);
+    if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
     aux->face_embedding=0;
     aux->face_jpeg=0;
+    aux->clip_embedding=0;
+    aux->clip_jpeg=0;
+    aux->fiqa_embedding=0;
     block_free(aux);
 }
 
@@ -228,29 +251,68 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
 
         if ((ta->clip_infer_thread!=0) && (ta->clip_embeddings_enabled))
         {
-            float w=det->x1-det->x0;
-            float h=det->y1-det->y0;
-            int iw=(int)(w*img->width);
-            int ih=(int)(h*img->height);
-            float expand=0.2f;
-            if (iw>=ta->clip_jpeg_min_width && ih>=ta->clip_jpeg_min_height)
+            float q=detection_clip_quality_score(det);
+            if (aux->clip_embedding!=0 && embedding_is_ready(aux->clip_embedding)==false)
+                ; // wait for existing embedding
+            else
             {
-                if (true)
+                float existing_score=embedding_get_quality(aux->clip_embedding);
+                float min_clip_quality=ta->clip_embeddings_min_quality;
+                float w=det->x1-det->x0;
+                float h=det->y1-det->y0;
+                float min_bar=0;
+                int iw=(int)(w*img->width);
+                int ih=(int)(h*img->height);
+                float expand=0.2f;
+                if (iw>=ta->clip_jpeg_min_width && ih>=ta->clip_jpeg_min_height)
                 {
-                    printf("Gen clip %dx%d\n",iw,ih);
-                    if (aux->clip_embedding) embedding_destroy(aux->clip_embedding);
-                    roi_t clip_roi;
-                    clip_roi.box[0]=std::max(0.0f, det->x0-w*expand);
-                    clip_roi.box[1]=std::max(0.0f, det->y0-h*expand);
-                    clip_roi.box[2]=std::min(1.0f, det->x1+w*expand);
-                    clip_roi.box[3]=std::min(1.0f, det->y1+h*expand);
-                    //aux->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, clip_roi);
-                    if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
-                    //aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, ta->clip_jpeg_quality);
-                    //embedding_set_quality(aux->clip_embedding, q);
-                    printf("Generate new CLIP embedding\n");
+                    if (existing_score>0)
+                        min_bar=std::max(ta->clip_min_quality_multiple*existing_score, existing_score+ta->clip_min_quality_increment);
+                    if (q>std::max(min_clip_quality, min_bar))
+                    {
+                        if (aux->clip_embedding) embedding_destroy(aux->clip_embedding);
+                        roi_t clip_roi;
+                        clip_roi.box[0]=std::max(0.0f, det->x0-w*expand);
+                        clip_roi.box[1]=std::max(0.0f, det->y0-h*expand);
+                        clip_roi.box[2]=std::min(1.0f, det->x1+w*expand);
+                        clip_roi.box[3]=std::min(1.0f, det->y1+h*expand);
+                        aux->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, clip_roi);
+                        if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
+                        aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, ta->clip_jpeg_quality);
+                        embedding_set_quality(aux->clip_embedding, q);
+                    }
                 }
             }
+        }
+        debugf("FIQA here0");
+        if ((ta->fiqa_infer_thread!=0) && (ta->fiqa_enabled) && (det->num_face_points>0))
+        {
+            debugf("FIQA here1");
+            assert(det->num_face_points==5);
+            if (aux->fiqa_embedding!=0 && embedding_is_ready(aux->fiqa_embedding)==false)
+            {
+                debugf("not ready"); // wait for existing embedding
+            }
+            else
+            {
+                float w=det->subbox_x1-det->subbox_x0;
+                float h=det->subbox_y1-det->subbox_y0;
+                int iw=(int)(w*img->width);
+                int ih=(int)(h*img->height);
+                debugf("FIQA %dx%d",iw,ih);
+                if (iw>=ta->fiqa_min_width && ih>=ta->fiqa_min_height)
+                {
+                    if (aux->fiqa_embedding)
+                    {
+                        //printf("FIQQ %f\n",fiqa_embedding_quality(aux->fiqa_embedding));
+                        embedding_destroy(aux->fiqa_embedding);
+                    }
+                    aux->fiqa_embedding=infer_thread_infer_embedding(ta->fiqa_infer_thread, img, det->face_points, det->num_face_points);
+                    embedding_set_quality(aux->fiqa_embedding, 1);
+                    debugf("Generate new FIQA embedding len %d", embedding_get_size(aux->fiqa_embedding));
+                }
+            }
+            debugf("FIQA here2");
         }
 
         if (aux->face_embedding!=0)
@@ -259,10 +321,26 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
             det->face_embedding=embedding_reference(aux->face_embedding);
             assert(block_reference_count(aux->face_embedding)>=1);
         }
+        if (aux->clip_embedding!=0)
+        {
+            assert(det->clip_embedding==0);
+            det->clip_embedding=embedding_reference(aux->clip_embedding);
+            assert(block_reference_count(aux->clip_embedding)>=1);
+        }
+        if (aux->fiqa_embedding!=0)
+        {
+            assert(det->fiqa_embedding==0);
+            det->fiqa_embedding=embedding_reference(aux->fiqa_embedding);
+        }
         if (aux->face_jpeg!=0)
         {
             assert(det->face_jpeg==0);
             det->face_jpeg=jpeg_reference(aux->face_jpeg);
+        }
+        if (aux->clip_jpeg!=0)
+        {
+            assert(det->clip_jpeg==0);
+            det->clip_jpeg=jpeg_reference(aux->clip_jpeg);
         }
         aux->last_live_time=time;
     }

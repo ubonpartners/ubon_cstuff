@@ -139,13 +139,11 @@ void display_image(const char *name, image_t *img) {
 void display_image(display_t *d, image_t *img) {
     if (!d || !img) return;
     init_sdl_thread_if_needed();
-
-    image_t *ref = image_reference(img);
-
+    image_check(img);
     cmd_node_t *cmd = (cmd_node_t *)malloc(sizeof(cmd_node_t));
     cmd->type = CMD_DISPLAY_IMAGE;
     cmd->d    = d;
-    cmd->img  = ref;
+    cmd->img  = image_reference(img);
     cmd->name = NULL;
     cmd->next = NULL;
     enqueue_command(cmd);
@@ -298,7 +296,7 @@ static void *sdl_thread_loop(void *arg) {
                 display_t *d       = lookup_or_create_named_display(cmd->name, cmd->img);
                 char     *name_for_free = cmd->name;
                 image_t  *img_for_use   = cmd->img;
-
+                image_check(img_for_use);
                 /* Convert to RGB24 if needed */
                 if (img_for_use->format != IMAGE_FORMAT_RGB24_HOST) {
                     image_t *tmp = image_convert(img_for_use, IMAGE_FORMAT_RGB24_HOST);
@@ -308,7 +306,9 @@ static void *sdl_thread_loop(void *arg) {
 
                 /* Replace current_img: destroy old reference if any */
                 if (d->current_img) {
+                    image_check(d->current_img);
                     destroy_image(d->current_img);
+                    d->current_img=0;
                 }
                 d->current_img = img_for_use;
                 d->img_width   = img_for_use->width;
@@ -365,6 +365,10 @@ static void *sdl_thread_loop(void *arg) {
 
                 /* Render once initially */
                 render_display_with_current_image(d);
+
+                image_check(d->current_img);
+                destroy_image(d->current_img);
+                d->current_img=0;
 
                 free(name_for_free);
             }

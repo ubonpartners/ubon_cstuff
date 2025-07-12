@@ -175,7 +175,7 @@ static void *infer_thread_fn(void *arg)
             image_t *imgs[INFER_THREAD_MAX_BATCH];
             embedding_t *e[INFER_THREAD_MAX_BATCH];
             int embedding_len=h->md_aux->embedding_size;
-            if (h->type==INFER_THREAD_AUX_FACE)
+            if ((h->type==INFER_THREAD_AUX_FACE)||(h->type==INFER_THREAD_AUX_FIQA))
             {
                 float face_points[10*count];
                 for(int i=0;i<count;i++)
@@ -193,11 +193,13 @@ static void *infer_thread_fn(void *arg)
                 for(int i=0;i<count;i++)
                 {
                     roi_t inference_roi;
-                    imgs[i]=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi);
+                    image_t *temp=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi);
+                    imgs[i]=image_scale(temp, 224, 224);
+                    destroy_image(temp);
                     e[i]=jobs[i]->embedding;
                     embedding_check(e[i]);
                 }
-                infer_aux_batch(h->infer_aux, imgs, e, 0, 0);
+                infer_aux_batch(h->infer_aux, imgs, e, 0, count);
                 for(int i=0;i<count;i++) destroy_image(imgs[i]);
                 for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }

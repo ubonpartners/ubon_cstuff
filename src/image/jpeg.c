@@ -294,7 +294,11 @@ static int save_jpeg_yuv420(const char *filename, image_t *img, int quality)
     if (!img || img->format != IMAGE_FORMAT_YUV420_HOST)
         return -1;
 
+    printf("save1\n");
+
     image_sync(img);
+
+    printf("save2\n");
 
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
@@ -341,7 +345,7 @@ static int save_jpeg_yuv420(const char *filename, image_t *img, int quality)
     planes[0] = y_rows;
     planes[1] = u_rows;
     planes[2] = v_rows;
-
+    printf("save3\n");
     while (cinfo.next_scanline < cinfo.image_height) {
         int lines = 16;
         if (cinfo.next_scanline + lines > height)
@@ -509,11 +513,18 @@ uint8_t *save_jpeg_to_buffer(size_t *outsize, image_t *img, int quality)
 void save_jpeg(const char *filename, image_t *img)
 {
     if (!img) return;
+    printf("save jpeg %s %d\n",filename, img->format);
     image_format_t inter=img->format;
     if (img->format==IMAGE_FORMAT_RGB24_HOST)
+    {
         save_jpeg_rgb24(filename, img, 90);
+        return;
+    }
     else if (img->format==IMAGE_FORMAT_YUV420_HOST)
+    {
         save_jpeg_yuv420(filename, img, 90);
+        return;
+    }
     else if ( (img->format==IMAGE_FORMAT_YUV420_DEVICE)
             ||(img->format==IMAGE_FORMAT_NV12_DEVICE)
             ||(img->format==IMAGE_FORMAT_MONO_DEVICE))

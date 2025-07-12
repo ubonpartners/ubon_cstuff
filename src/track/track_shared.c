@@ -71,6 +71,8 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
                 index=INFER_THREAD_AUX_FACE;
             else if (strcmp(aux_name.c_str(), "clip")==0)
                 index=INFER_THREAD_AUX_CLIP;
+             else if (strcmp(aux_name.c_str(), "fiqa")==0)
+                index=INFER_THREAD_AUX_FIQA;
             else{
                 log_fatal("unknown aux inference type %s",aux_name.c_str());
                 assert(0);

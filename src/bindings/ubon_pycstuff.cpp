@@ -346,6 +346,7 @@ static py::object convert_detections(detection_list_t *dets)
         if (det->face_embedding!=0) item["face_embedding"]= convert_embedding(det->face_embedding);
         if (det->clip_embedding!=0) item["clip_embedding"]= convert_embedding(det->clip_embedding);
         if (det->face_jpeg) item["face_jpeg"]=convert_jpeg(det->face_jpeg);
+        if (det->clip_jpeg) item["clip_jpeg"]=convert_jpeg(det->clip_jpeg);
         results.append(item);
     }
     return results;

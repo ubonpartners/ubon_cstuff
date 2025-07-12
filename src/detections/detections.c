@@ -38,7 +38,9 @@ void detection_destroy(detection_t *d)
     {
         if (d->clip_embedding) embedding_destroy(d->clip_embedding);
         if (d->face_embedding) embedding_destroy(d->face_embedding);
+        if (d->fiqa_embedding) embedding_destroy(d->fiqa_embedding);
         if (d->face_jpeg) jpeg_destroy(d->face_jpeg);
+        if (d->clip_jpeg) jpeg_destroy(d->clip_jpeg);
     }
     block_free(d);
 }
@@ -298,4 +300,11 @@ float detection_face_quality_score(detection_t *det) {
     if (final_score < 0.0f) final_score = 0.0f;
     if (final_score > 1.0f) final_score = 1.0f;
     return final_score;
+}
+
+float detection_clip_quality_score(detection_t *det)
+{
+    float score=(det->x1-det->x0)*(det->y1-det->y0);
+    score*=det->conf;
+    return score;
 }

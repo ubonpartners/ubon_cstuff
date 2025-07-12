@@ -13,7 +13,8 @@ typedef enum infer_thread_type
     INFER_THREAD_DETECTION=0,
     INFER_THREAD_AUX_FACE=1,
     INFER_THREAD_AUX_CLIP=2,
-    INFER_THREAD_NUM_TYPES=3
+    INFER_THREAD_AUX_FIQA=3,
+    INFER_THREAD_NUM_TYPES=4
 } infer_thread_type_t;
 
 typedef struct infer_thread infer_thread_t;

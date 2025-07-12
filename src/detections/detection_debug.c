@@ -13,6 +13,7 @@
 #include "match.h"
 #include "log.h"
 #include "misc.h"
+#include "fiqa.h"
 
 detection_list_t *detection_list_load(const char *filename)
 {
@@ -74,17 +75,17 @@ detection_list_t *detection_list_load(const char *filename)
     return dets;
 }
 
-static void draw_cross(image_t *img, float cx, float cy, float w, int clr)
+static void draw_cross(image_t *img, float cx, float cy, float w, uint32_t argb)
 {
-    image_draw_line(img, cx-w, cy-w, cx+w, cy+w, clr);
-    image_draw_line(img, cx-w, cy+w, cx+w, cy-w, clr);
+    image_draw_line(img, cx-w, cy-w, cx+w, cy+w, argb);
+    image_draw_line(img, cx-w, cy+w, cx+w, cy-w, argb);
 }
 
 static void draw_kp_line(image_t *img, kp_t *kp, int a, int b)
 {
     float thr=0.2;
     if ((kp[a].conf<thr) || (kp[b].conf<thr)) return;
-    image_draw_line(img, kp[a].x, kp[a].y, kp[b].x, kp[b].y, 0x0000ff);
+    image_draw_line(img, kp[a].x, kp[a].y, kp[b].x, kp[b].y, 0xff0000ff);
 }
 
 static void draw_kp_line(image_t *img, kp_t *kp, int a, int b, int c)
@@ -92,7 +93,7 @@ static void draw_kp_line(image_t *img, kp_t *kp, int a, int b, int c)
     float thr=0.2;
     if ((kp[a].conf<thr) || (kp[b].conf<thr) || (kp[c].conf<thr)) return;
     image_draw_line(img, kp[a].x, kp[a].y,
-                   0.5*(kp[b].x+kp[c].x), 0.5*(kp[b].y+kp[c].y), 0x0000ff);
+                   0.5*(kp[b].x+kp[c].x), 0.5*(kp[b].y+kp[c].y), 0xff0000ff);
 }
 
 image_t *detection_list_draw(detection_list_t *dets, image_t *img)
@@ -107,17 +108,19 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
         detection_t *det=dets->det[i];
         if (det->cl!=0) continue;
 
-        image_draw_box(x, det->x0, det->y0, det->x1, det->y1, 0xff0000);
+        image_draw_box(x, det->x0, det->y0, det->x1, det->y1, 0xffff0000);
         if (det->subbox_conf>0)
         {
-            image_draw_box(x, det->subbox_x0, det->subbox_y0,det->subbox_x1, det->subbox_y1, 0x00ff00);
+            image_draw_box(x, det->subbox_x0, det->subbox_y0,det->subbox_x1, det->subbox_y1, 0xff00ff00);
         }
 
         for(int j=0;j<det->num_face_points;j++)
         {
-            if (det->face_points[j].conf>0.5)
+            if (det->face_points[j].conf>0.05)
             {
-                draw_cross(x, det->face_points[j].x, det->face_points[j].y, 0.002, 0x00ff00);
+                uint32_t a=255*det->face_points[j].conf;
+                uint32_t clr=0xff00+(a<<24);
+                draw_cross(x, det->face_points[j].x, det->face_points[j].y, 0.002, clr);
             }
         }
 
@@ -147,11 +150,28 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
         draw_kp_line(x, kp, 14, 16);
         const char * classname=detection_list_get_classname(dets, det->cl);
         char text[256];
+        float offs=0;
         snprintf(text, 255, "ID:%lx %s",det->track_id,classname);
-        image_draw_text(x, det->x0, det->y0, text, 0xffffff);
-        snprintf(text, 255, "FQ:%0.4f",detection_face_quality_score(det));
-        image_draw_text(x, det->x0, det->y0+0.02, text, 0xffffff);
+        image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
+        offs+=0.02;
 
+        //snprintf(text, 255, "FQ:%0.4f",detection_face_quality_score(det));
+        //image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
+        //offs+=0.02;
+
+        if (1)
+        {
+            float bf=cevo_bestface_score(det);
+            snprintf(text, 255, "BF:%0.3f",bf);
+            image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
+            offs+=0.02;
+        }
+        if (det->fiqa_embedding!=0)
+        {
+            snprintf(text, 255, "FIQA:%0.3f",fiqa_embedding_quality(det->fiqa_embedding));
+            image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
+            offs+=0.02;
+        }
     }
     return x;
 }

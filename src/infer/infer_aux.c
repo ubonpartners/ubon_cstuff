@@ -112,9 +112,10 @@ float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
     solve_affine_face_points(img, kp, n, inf->md.input_w, inf->md.input_h, M);
 
     image_t *img_yuv[n];
+    for(int i=0;i<n;i++) image_check(img[i]);
     for(int i=0;i<n;i++) img_yuv[i]=image_convert(img[i], IMAGE_FORMAT_YUV420_DEVICE);
 
-    const image_t **img_const = (const image_t**)&img_yuv[0];
+    const image_t **img_const = (const image_t**)img_yuv;
 
     cuda_warp_yuv420_to_planar_float(
         img_const, d_in, n,
@@ -175,7 +176,7 @@ void infer_aux_batch(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, flo
     for(int i=0;i<n;i++)
     {
         embedding_check(ret_emb[i]);
-        embedding_set_data(ret_emb[i], p+sz*n, sz);
+        embedding_set_data(ret_emb[i], p+sz*i, sz);
     }
     free(p);
 }

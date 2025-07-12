@@ -62,7 +62,9 @@ struct detection
     // embeddings + jpegs
     embedding_t *face_embedding;
     embedding_t *clip_embedding;
+    embedding_t *fiqa_embedding;
     jpeg_t *face_jpeg;
+    jpeg_t *clip_jpeg;
 };
 
 typedef struct detection_list
@@ -109,6 +111,7 @@ void detection_list_fuse_face_person(detection_list_t *dets);
 const char *detection_list_get_classname(detection_list_t *dets, int cl);
 
 float detection_face_quality_score(detection_t *det);
+float detection_clip_quality_score(detection_t *det);
 
 float detection_box_iou(const detection_t *da, const detection_t *db);
 int match_detections_greedy(
