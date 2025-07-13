@@ -47,7 +47,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 ---
 
 ## Prerequisities
-
+- sudo apt install nvidia-cuda-toolkit
 - TensorRT installed (libnvinfer10, via apt)
 - sudo apt install libyuv-dev
 - sudo apt install libsdl2-dev
@@ -57,8 +57,10 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - sudo apt install libsrtp2-dev
 - sudo apt install libpcap-dev
 - sudo apt install libeigen3-dev
+- sudo apt install libjpeg-dev
 - sudo apt install libnvjpeg-dev-12-6
 - sudo apt install libnvvpi3 vpi3-dev vpi3-samples
+- Nvidia Video Codec SDK https://developer.nvidia.com/video-codec-sdk (Ugh, sorry...)
 
 ---
 
