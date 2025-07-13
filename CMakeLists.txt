@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.10)
 project(uboncstuff LANGUAGES C CXX CUDA)
+# When scikit-build-core drives CMake (inside `pip install`) it sets the
+# variable `SKBUILD`; turn the apps OFF in that case so the wheel build
+# only compiles the library + Python module.
+option(BUILD_APPS "Build CLI test programs" ON)
+
+if (DEFINED SKBUILD)
+    message(STATUS "skbuild detected – turning BUILD_APPS OFF for wheel build")
+    set(BUILD_APPS OFF)
+endif()
+# -------------------------------------------------------------------
+
 message("")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -176,20 +187,6 @@ foreach(source_file ${CUDA_FILES})
     set_source_files_properties(${source_file} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
 
-set(APP_MAIN_FILES
-    ${CMAKE_SOURCE_DIR}/src/main.c
-    ${CMAKE_SOURCE_DIR}/src/apps/decode_benchmark.c
-    ${CMAKE_SOURCE_DIR}/src/apps/decode_file.c
-    ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
-    ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
-    ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
-    ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
-    ${CMAKE_SOURCE_DIR}/src/apps/run_tests.c
-    ${CMAKE_SOURCE_DIR}/src/apps/track_benchmark.c
-    ${CMAKE_SOURCE_DIR}/src/apps/track_test.c
-    ${CMAKE_SOURCE_DIR}/src/apps/warp_test.c
-)
-
 add_library(uboncstufflib STATIC ${SRC_FILES} ${CUDA_FILES})
 set_target_properties(uboncstufflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -198,17 +195,34 @@ add_library(jetson_multimedia_lib STATIC ${JETSON_MULTIMEDIA_FILES})
 set_target_properties(jetson_multimedia_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-# Helper macro to build each app
-foreach(app_src ${APP_MAIN_FILES})
-    get_filename_component(app_name ${app_src} NAME_WE)
-    add_executable(${app_name} ${app_src})
-    target_link_libraries(${app_name}
-        uboncstufflib
-        yaml-cpp
-        ${COMMON_LIBS}
-        ${ARCH_LIBS}
+# --- Build apps -----------------------------------------
+if (BUILD_APPS)
+    set(APP_MAIN_FILES
+        ${CMAKE_SOURCE_DIR}/src/main.c
+        ${CMAKE_SOURCE_DIR}/src/apps/decode_benchmark.c
+        ${CMAKE_SOURCE_DIR}/src/apps/decode_file.c
+        ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
+        ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
+        ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
+        ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
+        ${CMAKE_SOURCE_DIR}/src/apps/run_tests.c
+        ${CMAKE_SOURCE_DIR}/src/apps/track_benchmark.c
+        ${CMAKE_SOURCE_DIR}/src/apps/track_test.c
+        ${CMAKE_SOURCE_DIR}/src/apps/warp_test.c
     )
-endforeach()
+
+    foreach(app_src ${APP_MAIN_FILES})
+        get_filename_component(app_name ${app_src} NAME_WE)
+        add_executable(${app_name} ${app_src})
+        target_link_libraries(${app_name}
+            uboncstufflib
+            yaml-cpp
+            ${COMMON_LIBS}
+            ${ARCH_LIBS}
+        )
+    endforeach()
+endif()
+# --------------------------------------------------
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11 REQUIRED)
