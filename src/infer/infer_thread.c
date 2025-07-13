@@ -199,7 +199,6 @@ static void *infer_thread_fn(void *arg)
                     embedding_check(e[i]);
                 }
                 infer_aux_batch_roi(h->infer_aux, imgs, e, rois, count);
-                for(int i=0;i<count;i++) destroy_image(imgs[i]);
                 for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }
         }
