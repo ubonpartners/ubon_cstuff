@@ -258,7 +258,13 @@ void cuda_warp_yuv420_to_planar_float(
         resDesc.res.pitch2D.desc        = cudaCreateChannelDesc<unsigned char>();
         // Note; I find you get an error here if the y,u,v pointers are not
         // sufficiently aligned
-        CHECK_CUDA(cudaCreateTextureObject(&texY[i], &resDesc, &texDesc, NULL));
+
+        cudaError_t _status=cudaCreateTextureObject(&texY[i], &resDesc, &texDesc, NULL);
+        if (_status != cudaSuccess) {
+            log_fatal("cudaCreateTextureObject error code %d %s (Y, Align %p %d)",_status,cudaGetErrorString(_status),
+                        resDesc.res.pitch2D.devPtr, resDesc.res.pitch2D.pitchInBytes);
+            exit(1);
+        }
 
         // U plane (half resolution)
         memset(&resDesc, 0, sizeof(resDesc));
@@ -268,8 +274,12 @@ void cuda_warp_yuv420_to_planar_float(
         resDesc.res.pitch2D.height      = inImgs[i]->height/2;
         resDesc.res.pitch2D.pitchInBytes= inImgs[i]->stride_uv;
         resDesc.res.pitch2D.desc        = cudaCreateChannelDesc<unsigned char>();
-        CHECK_CUDA(cudaCreateTextureObject(&texU[i], &resDesc, &texDesc, NULL));
-
+        _status=cudaCreateTextureObject(&texU[i], &resDesc, &texDesc, NULL);
+        if (_status != cudaSuccess) {
+            log_fatal("cudaCreateTextureObject error code %d %s (UV, Align %p %d)",_status,cudaGetErrorString(_status),
+                        resDesc.res.pitch2D.devPtr, resDesc.res.pitch2D.pitchInBytes);
+            exit(1);
+        }
         // V plane (half resolution)
         memset(&resDesc, 0, sizeof(resDesc));
         resDesc.resType                 = cudaResourceTypePitch2D;
