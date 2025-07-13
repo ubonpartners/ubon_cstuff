@@ -349,6 +349,7 @@ static py::object convert_detections(detection_list_t *dets)
         if (det->face_jpeg) item["face_jpeg"]=convert_jpeg(det->face_jpeg);
         if (det->clip_jpeg) item["clip_jpeg"]=convert_jpeg(det->clip_jpeg);
         if (det->fiqa_embedding) item["fiqa_score"]=fiqa_embedding_quality(det->fiqa_embedding);
+        results.append(item);
     }
     return results;
 }
@@ -1090,6 +1091,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def(py::init<std::shared_ptr<PyTrackSharedState>>(), py::arg("shared_state"))
         .def("set_frame_intervals", &PyTrackStream::set_frame_intervals)
         .def("run_on_images", &PyTrackStream::run_on_images)
+        .def("run_on_individual_images", &PyTrackStream::run_on_individual_images)
         .def("run_on_video_file", &PyTrackStream::run_on_video_file)
         .def("get_results", &PyTrackStream::get_results);
 

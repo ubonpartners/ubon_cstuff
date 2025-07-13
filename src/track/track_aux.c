@@ -174,7 +174,7 @@ void track_aux_enable_face_embeddings(track_aux_t *ta, bool enabled, float min_q
     ta->face_embeddings_min_quality=min_quality;
 }
 
-void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
+void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool single_frame)
 {
     if (dets==0) return;
 
@@ -185,7 +185,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
     if (ta->main_jpeg_enabled && img!=0)
     {
         double time_delta=img->time-ta->main_jpeg_last_time;
-        if (time_delta>ta->main_jpeg_min_interval_seconds)
+        if (time_delta>ta->main_jpeg_min_interval_seconds || single_frame)
         {
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
             ta->main_jpeg_last_time=img->time;
@@ -349,7 +349,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets)
         // destroy all objects that are not being tracked any more
         // we can check if 'last_live_time' was updated above
         // - if not, it's no longer tracked
-        if (it->second->last_live_time != time) {
+        if ((it->second->last_live_time != time)||(single_frame)) {
             debugf("Destroy id %llx", (uint64_t)it->first);
             aux_data_destroy((aux_data_t *)it->second);
             it = ta->map->erase(it);  // erase returns the next valid iterator

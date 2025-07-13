@@ -90,6 +90,7 @@ void motion_track_reset(motion_track_t *mt)
         destroy_image(mt->ref);
         mt->ref=0;
     }
+    mt->roi=ROI_ONE;
     if (mt->nvof) nvof_reset(mt->nvof);
 }
 
@@ -314,6 +315,12 @@ of_results_t *motion_track_get_of_results(motion_track_t *mt)
 
 static void motion_track_predict_delta(motion_track_t *mt, float *pt, float *d)
 {
+    if (mt->ref==0)
+    {
+        d[0]=0;
+        d[1]=0;
+        return;
+    }
     int grid_w=mt->of_results.grid_w;
     int grid_h=mt->of_results.grid_h;
     float x=pt[0];

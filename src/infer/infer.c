@@ -25,7 +25,7 @@
 #include "yaml_stuff.h"
 #include "trt_stuff.h"
 
-#define debugf if (0) printf
+#define debugf if (0) log_debug
 
 using namespace nvinfer1;
 using namespace nvonnxparser;

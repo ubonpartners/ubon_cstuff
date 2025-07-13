@@ -129,7 +129,7 @@ void track_stream_destroy(track_stream_t *ts)
 static void process_results(track_stream_t *ts, track_results_t *r)
 {
     track_shared_state_t *tss=ts->tss;
-    track_aux_run(ts->taux, ts->inference_image, r->track_dets);
+    track_aux_run(ts->taux, ts->inference_image, r->track_dets, ts->single_frame);
 
     if (ts->result_callback)
     {
@@ -251,8 +251,10 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
     image_check(image_scaled);
     image_check(img);
     destroy_image(img);
-    if (single_frame) motion_track_reset(ts->mt);
-    motion_track_add_frame(ts->mt, image_scaled);
+    if (single_frame)
+        motion_track_reset(ts->mt);
+    else
+        motion_track_add_frame(ts->mt, image_scaled);
     image_check(image_scaled);
 
     roi_t motion_roi=motion_track_get_roi(ts->mt);

@@ -96,6 +96,13 @@ static void nvof_set_size(nvof_t *v, int width, int height)
     initParams.inputBufferFormat=(v->use_nv12) ?  NV_OF_BUFFER_FORMAT_NV12 : NV_OF_BUFFER_FORMAT_GRAYSCALE8;
     initParams.predDirection = NV_OF_PRED_DIRECTION_FORWARD;
     initParams.enableOutputCost = NV_OF_TRUE;
+
+    if (v->hOf)
+    {
+        CHECK_OF(nvOFAPI.nvOFDestroy(v->hOf));
+        v->hOf=0;
+    }
+    CHECK_OF(nvOFAPI.nvCreateOpticalFlowCuda(get_CUcontext(), &v->hOf));
     CHECK_OF(nvOFAPI.nvOFInit(v->hOf, &initParams));
 
     create_nvof_buffer(v, width, height, NV_OF_BUFFER_USAGE_INPUT, initParams.inputBufferFormat, &v->inputFrame);
@@ -239,7 +246,6 @@ nvof_t *nvof_create(void *context, int max_width, int max_height)
     n->max_width=max_width;
     n->max_height=max_height;
     n->nvof_stream=create_cuda_stream();
-    CHECK_OF(nvOFAPI.nvCreateOpticalFlowCuda(get_CUcontext(), &n->hOf));
 
     return n;
 }
@@ -261,7 +267,10 @@ void nvof_destroy(nvof_t *n)
         destroy_nvof_buffer(n, &n->costBuf);
         if (n->flowBufHost) cuMemFreeHost(n->flowBufHost);
         if (n->costBufHost) cuMemFreeHost(n->costBufHost);
-        CHECK_OF(nvOFAPI.nvOFDestroy(n->hOf));
+        if (n->hOf)
+        {
+            CHECK_OF(nvOFAPI.nvOFDestroy(n->hOf));
+        }
         free(n);
     }
 }

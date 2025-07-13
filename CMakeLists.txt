@@ -127,7 +127,7 @@ else()
         -lnvinfer -lcudart -lcublas -lnvonnxparser
         -lopenh264 -lcuda -lnvcuvid -lyuv -lpcap -lsrtp2
         -lnppc -lnppisu -lnppig -lnppicc -lnppif -lnppist -lnppidei -lSDL2 -ljpeg
-        -lnvvpi -lnvjpeg
+        -lnvjpeg
         -lnvidia-ml
         -lnvidia-opticalflow
     )
@@ -155,7 +155,6 @@ file(GLOB SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/track/*.c
     ${CMAKE_SOURCE_DIR}/src/track/bytetracker/*.cpp
     ${CMAKE_SOURCE_DIR}/src/track/utrack/*.c
-    ${CMAKE_SOURCE_DIR}/src/vpi/*.c
 )
 
 file(GLOB CUDA_FILES
