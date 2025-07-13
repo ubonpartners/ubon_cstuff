@@ -82,18 +82,18 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
 
             std::string trt_file=entry["trt"].as<std::string>();
             log_debug("create inference Name '%s' trt '%s'",aux_name.c_str(), trt_file.c_str());
-            if (access("trt_file", F_OK) != 0)
+            if (access(trt_file.c_str(), F_OK) != 0)
             {
                 if (entry["trt_fallback"])
                 {
                     trt_file=entry["trt_fallback"].as<std::string>();
-                    log_warn("Could not find TRT file; trying fallback 's'", trt_file.c_str());
-                    if (access("trt_file", F_OK) != 0)
-                    {
-                        log_fatal("Could not find TRT file");
-                        assert(0);
-                    }
+                    log_warn("Could not find TRT file; trying fallback '%s'", trt_file.c_str());
                 }
+            }
+            if (access(trt_file.c_str(), F_OK) != 0)
+            {
+                log_fatal("Could not find TRT file %s", trt_file.c_str());
+                assert(0);
             }
             assert(tss->infer_thread[index]==0);
             tss->infer_thread[index]=infer_thread_start(trt_file.c_str(), inference_yaml, index);
