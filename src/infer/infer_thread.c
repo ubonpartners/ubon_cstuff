@@ -174,6 +174,7 @@ static void *infer_thread_fn(void *arg)
             // auxilliary face or clip embedding network case
             image_t *imgs[INFER_THREAD_MAX_BATCH];
             embedding_t *e[INFER_THREAD_MAX_BATCH];
+            roi_t rois[INFER_THREAD_MAX_BATCH];
             int embedding_len=h->md_aux->embedding_size;
             if ((h->type==INFER_THREAD_AUX_FACE)||(h->type==INFER_THREAD_AUX_FIQA))
             {
@@ -192,14 +193,12 @@ static void *infer_thread_fn(void *arg)
             else if (h->type==INFER_THREAD_AUX_CLIP) {
                 for(int i=0;i<count;i++)
                 {
-                    roi_t inference_roi;
-                    image_t *temp=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi);
-                    imgs[i]=image_scale(temp, 224, 224);
-                    destroy_image(temp);
+                    rois[i]=jobs[i]->roi;
+                    imgs[i]=jobs[i]->img;
                     e[i]=jobs[i]->embedding;
                     embedding_check(e[i]);
                 }
-                infer_aux_batch(h->infer_aux, imgs, e, 0, count);
+                infer_aux_batch_roi(h->infer_aux, imgs, e, rois, count);
                 for(int i=0;i<count;i++) destroy_image(imgs[i]);
                 for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }

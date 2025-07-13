@@ -258,6 +258,11 @@ void cuda_warp_yuv420_to_planar_float(
         resDesc.res.pitch2D.desc        = cudaCreateChannelDesc<unsigned char>();
         // Note; I find you get an error here if the y,u,v pointers are not
         // sufficiently aligned
+        // Note this can fail if this ends up getting call on a reference crop subimage
+
+        assert((((uint64_t)inImgs[i]->y) & 255)==0);
+        assert((((uint64_t)inImgs[i]->u) & 255)==0);
+        assert((((uint64_t)inImgs[i]->v) & 255)==0);
 
         cudaError_t _status=cudaCreateTextureObject(&texY[i], &resDesc, &texDesc, NULL);
         if (_status != cudaSuccess) {

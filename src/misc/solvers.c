@@ -82,23 +82,40 @@ void solve_affine_face_points(image_t **images, float *face_points, int n, int d
                 dst5[i][0] = ref_pts[i][0]*ref_scale_x;
                 dst5[i][1] = ref_pts[i][1]*ref_scale_y;
             }
-            /*for(int i=0;i<5;i++)
-            {
-                printf("%d %3f %3f %3f %3f\n",i,src5[i][0],src5[i][1],dst5[i][0],dst5[i][1]);
-            }*/
             compute_affine5(dst5, src5, &M[6*b]);
-            /*for(int i=0;i<6;i++) printf("%f ",M[i]);
-            printf("\n");
-            printf("Test\n");
-            for (int i=0;i<5;i++)
-            {
-                float x=dst5[i][0];
-                float y=dst5[i][1];
-                float x2=x*M[0]+y*M[1]+M[2];
-                float y2=x*M[3]+y*M[4]+M[5];
-                printf("Test %d %f %f->%f %f\n",i,x,y,x2,y2);
-            }*/
-
         }
+    }
+}
+
+static void solve_roi(image_t *img, roi_t roi, int dest_w, int dest_h, float *M)
+{
+    // compute the 6 affine warp parameters
+    // that map the region roi[i] on image[i] to dest_w x dest_h
+
+    // the cuda kernel maps dest pixel (x,y) to source pixel (sx,sy):
+    // float sx = M[0] * x + M[1] * y + M[2];
+    // float sy = M[3] * x + M[4] * y + M[5];
+
+    float src_w=(float)(img->width);
+    float src_h=(float)(img->height);
+    float src_x0=roi.box[0]*src_w;
+    float src_y0=roi.box[1]*src_h;
+    float src_x1=roi.box[2]*src_w;
+    float src_y1=roi.box[3]*src_h;
+
+    M[0]=(src_x1-src_x0)/dest_w;
+    M[1]=0;
+    M[2]=src_x0;
+
+    M[3]=0;
+    M[4]=(src_y1-src_y0)/dest_h;
+    M[5]=src_y0;
+}
+
+void solve_affine_points_roi(image_t **images, roi_t *rois, int n, int dest_w, int dest_h, float *M)
+{
+    for(int i=0;i<n;i++)
+    {
+        solve_roi(images[i], rois[i], dest_w, dest_h, M+6*i);
     }
 }

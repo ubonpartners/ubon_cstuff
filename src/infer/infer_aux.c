@@ -98,18 +98,16 @@ void infer_aux_destroy(infer_aux_t* inf) {
     free(inf);
 }
 
-float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
-    assert(n <= inf->md.max_batch);
+static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, int n)
+{
+    // do inference on images given already computed affine warp parameters M
+    // M should have should be 6 floats per batch entry
 
     // allocate device input
     size_t plane = inf->md.input_w * inf->md.input_h;
     size_t dtype = inf->md.input_fp16 ? 2 : 4;
     void* d_in;
     cudaMalloc(&d_in, n * 3 * plane * dtype);
-
-    // affine transform
-    float* M = (float*)malloc(n * 6 * sizeof(float));
-    solve_affine_face_points(img, kp, n, inf->md.input_w, inf->md.input_h, M);
 
     image_t *img_yuv[n];
     for(int i=0;i<n;i++) image_check(img[i]);
@@ -123,7 +121,6 @@ float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
         M, false, inf->md.input_fp16,
         inf->stream
     );
-    free(M);
 
     // Allocate output buffer
     size_t total = n * inf->md.embedding_size;
@@ -169,6 +166,19 @@ float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
     return h_out;
 }
 
+float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {
+    assert(n <= inf->md.max_batch);
+
+    // affine transform
+    float* M = (float*)malloc(n * 6 * sizeof(float));
+    solve_affine_face_points(img, kp, n, inf->md.input_w, inf->md.input_h, M);
+
+    float *ret=infer_aux_batch_affine(inf, img, M, n);
+
+    free(M);
+    return ret;
+}
+
 void infer_aux_batch(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, float *kp, int n)
 {
     float *p=infer_aux_batch(inf, img, kp, n);
@@ -178,6 +188,27 @@ void infer_aux_batch(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, flo
         embedding_check(ret_emb[i]);
         embedding_set_data(ret_emb[i], p+sz*i, sz);
     }
+    free(p);
+}
+
+void infer_aux_batch_roi(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, roi_t *rois, int n)
+{
+    assert(n <= inf->md.max_batch);
+
+    float* M = (float*)malloc(n * 6 * sizeof(float));
+    solve_affine_points_roi(img, rois, n, inf->md.input_w, inf->md.input_h, M);
+
+    float *p=infer_aux_batch_affine(inf, img, M, n);
+
+    free(M);
+
+    int sz=(int)inf->md.embedding_size;
+    for(int i=0;i<n;i++)
+    {
+        embedding_check(ret_emb[i]);
+        embedding_set_data(ret_emb[i], p+sz*i, sz);
+    }
+
     free(p);
 }
 
