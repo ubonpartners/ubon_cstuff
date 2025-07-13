@@ -25,7 +25,7 @@
 #include "yaml_stuff.h"
 #include "trt_stuff.h"
 
-#define debugf if (0) log_debug
+#define debugf if (0) printf
 
 using namespace nvinfer1;
 using namespace nvonnxparser;
@@ -597,9 +597,10 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
             //printf("%d %d kept %d\n",b,cl,(int)keptIndices[b * nc + cl].size());
             keptPerBatch.push_back(keptIndices[b * nc + cl]);
         }
-
+        uint8_t *out_ptr=(uint8_t *)inf->output_mem;
+        out_ptr+=((inf->md.output_is_fp16 ? 2 : 4)*b*numBoxes*columns);
         cuda_nms_gather_kept_outputs(
-            /*deviceOutputDev=*/ ((float*)inf->output_mem)+b*numBoxes*columns,
+            /*deviceOutputDev=*/ ((float*)out_ptr),
             /*is_fp16*/         inf->md.output_is_fp16,
             /*numBoxes=*/       numBoxes,
             /*rowSize=*/        columns,
