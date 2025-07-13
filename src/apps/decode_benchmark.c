@@ -72,23 +72,21 @@ typedef struct test
 } test_t;
 
 static test_t tests[]={
-    {"UK office 1512p H265", "/mldata/video/UKof_LD_Indoor_Light_OHcam_004.265", 1, 3, false},
-    {"UK office 1512p H265", "/mldata/video/mot_test.265", 1, 3, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 1,   10, true},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 8,   10, true},
-    {"INof 720p, H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 1,   10, true},
-    {"INof 720p, H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 8,   10, true},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 1,   10, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 2,   10, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 4,   10, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 8,   10, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 16,  10, false},
-    {"INof 720p, H265", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.265", 32,  10, false},
-    {"INof 720p, H264", "/mldata/video/INof_FD_OutFD_Light_FFcam_001_1280x720_7.5fps.264", 16,  10, false},
-    {"BC1, 1080p, H265", "/mldata/video/bc1.265", 1, 1, false},
-    {"BC1, 1080p, H264", "/mldata/video/bc1.264", 1, 1, false},
-    {"BC1, 1080p, H265", "/mldata/video/bc1.265", 2, 1, false},
-    {"BC1, 1080p, H264", "/mldata/video/bc1.264", 2, 1, false}
+    {"UK office 1512p H264", "/mldata/video/test/uk_off_2688x1512_12.5fps.264", 1, 3, true},
+    {"UK office 1512p H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265", 1, 3, true},
+    {"INof 720p, H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264", 1,   3, true},
+    {"INof 720p, H265", "/mldata/video/test/ind_off_1280x720_7.5fps.265", 1,   3, true},
+    {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 1, 1, true},
+    {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 1, 1, true},
+
+    {"UK office 1512p H264", "/mldata/video/test/uk_off_2688x1512_12.5fps.264", 8, 2, false},
+    {"UK office 1512p H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265", 8, 2, false},
+    {"INof 720p, H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264", 8,   5, false},
+    {"INof 720p, H265", "/mldata/video/test/ind_off_1280x720_7.5fps.265", 8,   5, false},
+    {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 1, 1, false},
+    {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 1, 1, false},
+    {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 2, 1, false},
+    {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 2, 1, false},
 };
 
 int main(int argc, char *argv[]) {
