@@ -142,6 +142,7 @@ int match_box_iou(
     uint16_t           *out_a_idx,
     uint16_t           *out_b_idx,
     float             iou_thr,
-    match_type_t      match_type
+    match_type_t      match_type,
+    bool              do_debug=false
 );
 #endif

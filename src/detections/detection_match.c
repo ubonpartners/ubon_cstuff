@@ -170,7 +170,8 @@ int match_box_iou(
     uint16_t           *out_a_idx,
     uint16_t           *out_b_idx,
     float              iou_thr,
-    match_type_t      match_type
+    match_type_t      match_type,
+    bool               do_debug
 )
 {
     assert(num_dets_a<=MAX_DETS);
@@ -188,11 +189,11 @@ int match_box_iou(
 
     int ret=0;
     if (match_type==MATCH_TYPE_BOX_IOU)
-        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_box_iou, &iou_thr,out_a_idx, out_b_idx);
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_box_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
     else if (match_type==MATCH_TYPE_FACE_KP)
-        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_facepoint_iou, &iou_thr,out_a_idx, out_b_idx);
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_facepoint_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
     else if (match_type==MATCH_TYPE_POSE_KP)
-        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_posepoint_iou, &iou_thr,out_a_idx, out_b_idx);
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_posepoint_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
     else
     {
         assert(0);

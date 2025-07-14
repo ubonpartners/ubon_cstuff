@@ -73,8 +73,11 @@ typedef struct {
 
 // Comparator for qsort: descending by score
 static int compare_cand_desc(const void *p1, const void *p2) {
-    float s1 = ((const Cand*)p1)->score;
-    float s2 = ((const Cand*)p2)->score;
+    const Cand *c1=((const Cand*)p1);
+    const Cand *c2=((const Cand*)p2);
+    float s1 = c1->score-c1->a;
+    float s2 = c2->score-c2->a;
+
     if (s1 < s2) return  1;
     if (s1 > s2) return -1;
     return 0;
@@ -123,7 +126,9 @@ int match_greedy(
         all[i].score = sc;
     }
 
-    // 3) Sort all candidates by descending score
+    // 3) Sort all candidates-
+    //   - by descending detection order first (=original sort order, usually descending confidence)
+    //   - by descending IOU score second
     qsort(all, num_raw, sizeof(Cand), compare_cand_desc);
 
     // 4) Greedily pick top‐scoring non‐conflicting pairs

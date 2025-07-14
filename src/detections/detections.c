@@ -27,6 +27,10 @@ static void detection_init()
 
 detection_t *detection_create()
 {
+    if (detection_allocator==0)
+    {
+        std::call_once(initFlag, detection_init);
+    }
     detection_t *d=(detection_t*)block_alloc(detection_allocator);
     memset(d, 0, sizeof(detection_t));
     return d;
