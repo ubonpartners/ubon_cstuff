@@ -252,6 +252,7 @@ static py::object convert_jpeg(jpeg_t *j)
     if (sz==0) return py::none();
     d["data"]=py::bytes(reinterpret_cast<const char*>(data), sz);
     d["time"]=jpeg_get_time(j);
+    d["quality"]=jpeg_get_quality(j);
     return d;
 }
 

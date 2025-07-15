@@ -33,7 +33,8 @@ struct jpeg
     roi_t roi;
     int max_w;
     int max_h;
-    int quality;
+    int encode_quality;
+    float quality; // metric how well framed the subject is
     uint8_t *data;
     size_t data_len;
 };
@@ -95,7 +96,7 @@ static bool jpeg_encode_function(int id, jpeg_t *jpeg) {
         if ((jpeg_w>16)&&(jpeg_h>16)) // don't try to encode too small jpeg
         {
             image_t *img_scaled=image_scale_convert(img_cropped, IMAGE_FORMAT_YUV420_HOST, jpeg_w, jpeg_h);
-            data=save_jpeg_to_buffer(&outsize, img_scaled, (jpeg->quality==0) ? 85 : jpeg->quality);
+            data=save_jpeg_to_buffer(&outsize, img_scaled, (jpeg->encode_quality==0) ? 85 : jpeg->encode_quality);
             destroy_image(img_scaled);
         }
         else
@@ -121,7 +122,7 @@ jpeg_t *jpeg_reference(jpeg_t *jpeg)
     return (jpeg_t *)block_reference(jpeg);
 }
 
-jpeg_t *jpeg_thread_encode(jpeg_thread_t *jt, image_t *img, roi_t roi, int max_w, int max_h, int quality)
+jpeg_t *jpeg_thread_encode(jpeg_thread_t *jt, image_t *img, roi_t roi, int max_w, int max_h, float quality, int encode_quality)
 {
     jpeg_t *jpeg=(jpeg_t *)block_alloc(jpeg_allocator, sizeof(jpeg_t));
     memset(jpeg, 0, sizeof(jpeg_t));
@@ -130,6 +131,7 @@ jpeg_t *jpeg_thread_encode(jpeg_thread_t *jt, image_t *img, roi_t roi, int max_w
     jpeg->roi=roi;
     jpeg->max_w=max_w;
     jpeg->max_h=max_h;
+    jpeg->encode_quality=encode_quality;
     jpeg->quality=quality;
     jpeg->time=jpeg->img->time;
     jpeg->jt=jt;
@@ -158,6 +160,11 @@ uint8_t *jpeg_get_data(jpeg_t *jpeg, size_t *ret_size)
 double jpeg_get_time(jpeg_t *jpeg)
 {
     return jpeg->time;
+}
+
+float jpeg_get_quality(jpeg_t *jpeg)
+{
+    return jpeg->quality;
 }
 
 void jpeg_destroy(jpeg_t *jpeg)

@@ -204,6 +204,9 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
             (*ta->map)[det->track_id]=aux;
             aux->track_id=det->track_id;
         }
+        // 'last_live_time' this is used in later loop that will
+        // kill all state for objects that are no longer live
+        aux->last_live_time=time;
 
         if (det->last_seen_time!=dets->time)
         {
@@ -241,7 +244,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
                         face_roi.box[2]=std::min(1.0f, det->subbox_x1+w*expand);
                         face_roi.box[3]=std::min(1.0f, det->subbox_y1+h*expand);
                         if (aux->face_jpeg) jpeg_destroy(aux->face_jpeg);
-                        aux->face_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, face_roi, ta->face_jpeg_max_width, ta->face_jpeg_max_height, ta->face_jpeg_quality);
+                        aux->face_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, face_roi, ta->face_jpeg_max_width, ta->face_jpeg_max_height, q, ta->face_jpeg_quality);
                         embedding_set_quality(aux->face_embedding, q);
                         debugf("Generate new face embedding Q=%f->%f",existing_score,q);
                     }
@@ -278,7 +281,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
                         clip_roi.box[3]=std::min(1.0f, det->y1+h*expand);
                         aux->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, clip_roi);
                         if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
-                        aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, ta->clip_jpeg_quality);
+                        aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, q, ta->clip_jpeg_quality);
                         embedding_set_quality(aux->clip_embedding, q);
                     }
                 }
@@ -342,7 +345,6 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
             assert(det->clip_jpeg==0);
             det->clip_jpeg=jpeg_reference(aux->clip_jpeg);
         }
-        aux->last_live_time=time;
     }
 
     for (auto it = ta->map->begin(); it != ta->map->end(); ) {
