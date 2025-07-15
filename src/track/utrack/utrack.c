@@ -37,6 +37,7 @@ typedef struct utdet
     double time;
     double last_detect_time;
     KalmanBoxTracker *kf;
+    float vbox[4]; // vicinity box, for tracked objects it's an elarged box encompassing the general area the object is
     float kf_predicted_box[4];
     float of_predicted_box[4];
     float reid_norm[REID_VECTOR_LEN];
@@ -50,6 +51,7 @@ struct utrack
     float param_track_low_thr;
     float param_new_track_thr;
     float param_person_det_thr_single_frame;
+    float param_vbox_expand;
     float param_match_thr_initial;
     float param_match_thr_high;
     float param_match_thr_low;
@@ -95,6 +97,7 @@ utrack_t *utrack_create(const char *yaml_config)
     ut->param_track_low_thr=yaml_get_float_value(yaml_base["track_low_thr"], 0.115f);
     ut->param_new_track_thr=yaml_get_float_value(yaml_base["new_track_thr"], 0.57f);
     ut->param_person_det_thr_single_frame=yaml_get_float_value(yaml_base["person_det_thr_single_frame"], 0.05f);
+    ut->param_vbox_expand=yaml_get_float_value(yaml_base["vbox_expand"], 0.1f);
     ut->param_match_thr_initial=yaml_get_float_value(yaml_base["match_thr_initial"], 0.66f);
     ut->param_match_thr_high=yaml_get_float_value(yaml_base["match_thr_high"], 0.225f);
     ut->param_match_thr_low=yaml_get_float_value(yaml_base["match_thr_low"], 0.022f);
@@ -150,6 +153,17 @@ typedef struct match_context
 } match_context_t;
 
 
+static bool intersect(const detection_t *da, float *db)
+{
+    float x_left = fmaxf(da->x0, db[0]);
+    float y_top = fmaxf(da->y0, db[1]);
+    float x_right = fminf(da->x1, db[2]);
+    float y_bottom = fminf(da->y1, db[3]);
+
+    float inter=(x_right - x_left) * (y_bottom - y_top);
+    return inter>0;
+}
+
 static float iou(const detection_t *da, float *db)
 {
     float x_left = fmaxf(da->x0, db[0]);
@@ -174,29 +188,31 @@ static float iou(const detection_t *da, float *db)
     return ret;
 }
 
-static float match_cost(const detection_t *det, const detection_t *old, void *ctx)
+static float match_cost(const detection_t *det_new, const detection_t *det_existing, void *ctx)
 {
     match_context_t *mc=(match_context_t *)ctx;
-    utdet_t *tdet=(utdet_t *)old;
-    utdet_t *tdet_new=(utdet_t *)det;
+    utdet_t *tdet_existing=(utdet_t *)det_existing;
+    utdet_t *tdet_new=(utdet_t *)det_new;
+
+    if (false==intersect(det_new, tdet_existing->vbox)) return 0.0f;
 
     float kf_weight=mc->param_kf_weight;
     float of_weight=1.0;
 
-    float kf_score=iou(det, tdet->kf_predicted_box);
-    float of_score=iou(det, tdet->of_predicted_box);
+    float kf_score=iou(det_new, tdet_existing->kf_predicted_box);
+    float of_score=iou(det_new, tdet_existing->of_predicted_box);
     //if (mc->param_simple) return (of_score+kf_score)/2;
 
     //if ((of_score+kf_score)==0) return 0.0f;
 
-    float sim=vec_dot(tdet->reid_norm, tdet_new->reid_norm, REID_VECTOR_LEN);
+    float sim=vec_dot(tdet_existing->reid_norm, tdet_new->reid_norm, REID_VECTOR_LEN);
     sim*=mc->param_sim_weight;
 
-    if (tdet->observations<2)
+    if (tdet_existing->observations<2)
         kf_weight=0;
     else
     {
-        float f=powf(std::max(0.1f, 1.0f/tdet->observations ), mc->param_kf_warmup);
+        float f=powf(std::max(0.1f, 1.0f/tdet_existing->observations ), mc->param_kf_warmup);
         kf_weight*=(1-f);
     }
     float score=(of_score*of_weight+kf_score*kf_weight)/(of_weight+kf_weight);
@@ -204,7 +220,7 @@ static float match_cost(const detection_t *det, const detection_t *old, void *ct
     score+=sim;
     if (score<mc->match_thr) return 0;
 
-    score=score*powf(det->conf, mc->param_fuse_scores);
+    score=score*powf(det_new->conf, mc->param_fuse_scores);
 
     return score;
 }
@@ -412,11 +428,15 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
         float vbox_y1=std::max(tdet->det.y1, std::max(tdet->of_predicted_box[3], tdet->kf_predicted_box[3]));
         float w=vbox_x1-vbox_x0;
         float h=vbox_y1-vbox_y0;
-        float e=0.1;
+        float e=ut->param_vbox_expand;
         vbox_x0-=(0.5*e*w);
         vbox_y0-=(0.5*e*h);
         vbox_x1+=(0.5*e*w);
         vbox_y1+=(0.5*e*h);
+        tdet->vbox[0]=vbox_x0;
+        tdet->vbox[1]=vbox_y0;
+        tdet->vbox[2]=vbox_x1;
+        tdet->vbox[3]=vbox_y1;
         tdet->det.overlap_mask=box_to_8x8_mask(vbox_x0, vbox_y0, vbox_x1, vbox_y1);
         FILE_TRACE(" MASKGEN %0.4f %0.4f %0.4f %0.4f %016lx", vbox_x0,vbox_y0,vbox_x1,vbox_y1,tdet->det.overlap_mask);
     }
