@@ -980,6 +980,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .value("MATCH_TYPE_BOX_IOU", MATCH_TYPE_BOX_IOU)
         .value("MATCH_TYPE_FACE_KP", MATCH_TYPE_FACE_KP)
         .value("MATCH_TYPE_POSE_KP", MATCH_TYPE_POSE_KP)
+        .value("MATCH_TYPE_FACEPOSE_KP", MATCH_TYPE_FACEPOSE_KP)
         .export_values();
 
     py::class_<c_image, std::shared_ptr<c_image>>(m, "c_image")

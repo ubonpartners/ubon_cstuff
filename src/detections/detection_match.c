@@ -162,6 +162,21 @@ static float score_posepoint_iou(const detection_t *da, const detection_t *db, v
     return iou;
 }
 
+static float score_faceposepoint_iou(const detection_t *da, const detection_t *db, void *ctx)
+{
+    // this is going to be a person detection with face points
+    assert(da->num_face_points==5);
+    assert(db->num_face_points==5);
+    assert(da->cl==db->cl);
+    if (score_box_iou(da, db, ctx)<=0) return 0;
+    const float face_scales[5]={0.025, 0.025, 0.026, 0.025, 0.025};
+    float box_a=(db->x1-db->x0)*(db->y1-db->y0);
+    float iou=kp_iou(da->face_points, db->face_points, face_scales, 5, box_a);
+    float thr=*((float *)ctx);
+    if (iou<thr) return 0.0;
+    return iou;
+}
+
 int match_box_iou(
     detection_t **dets_a,
     int                num_dets_a,
@@ -194,6 +209,8 @@ int match_box_iou(
         ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_facepoint_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
     else if (match_type==MATCH_TYPE_POSE_KP)
         ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_posepoint_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
+    else if (match_type==MATCH_TYPE_FACEPOSE_KP)
+        ret=match_detections_greedy(dets_a, num_dets_a,dets_b, num_dets_b,score_faceposepoint_iou, &iou_thr,out_a_idx, out_b_idx, 0, do_debug);
     else
     {
         assert(0);

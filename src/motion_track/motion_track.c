@@ -28,12 +28,14 @@ struct motion_track
     float *noise_floor;
     float mad_delta;
     float alpha, beta; // alpha and beta for noise floor update
+    float scene_change_sensitivity;
     bool blur;
     float *noise_floor_device;
     uint8_t *row_masks_device, *row_masks_host;
     image_t *ref;
     image_t *in_img;
     roi_t roi;
+    bool scene_change;
     bool generate_of_results;
     of_results_t of_results;
     #ifdef NVOF_SUPPORTED
@@ -60,6 +62,7 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->noise_floor_device=(float *)cuda_malloc(64*64*4);
     mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
     mt->row_masks_host=(uint8_t *)cuda_malloc_host(8*64);
+    mt->scene_change_sensitivity=0.5f;
     #ifdef NVOF_SUPPORTED
     if (mt->generate_of_results) mt->nvof=nvof_create(mt, mt->max_width, mt->max_height);;
     #endif
@@ -91,6 +94,8 @@ void motion_track_reset(motion_track_t *mt)
         mt->ref=0;
     }
     mt->roi=ROI_ONE;
+    mt->scene_change=false;
+    mt->frames_since_reset=0;
     if (mt->nvof) nvof_reset(mt->nvof);
 }
 
@@ -100,6 +105,38 @@ static int count_leading_zeros(uint64_t x) {
 
 static int count_trailing_zeros(uint64_t x) {
     return x ? __builtin_ctzll(x) : 64;
+}
+
+bool motion_track_scene_change(motion_track_t *mt)
+{
+    return mt->scene_change;
+}
+
+static void motion_track_run_optical_flow(motion_track_t *mt, image_t *image_scaled)
+{
+    #ifdef NVOF_SUPPORTED
+    if (mt->nvof)
+    {
+        nvof_results_t *r=nvof_execute(mt->nvof, image_scaled);
+        if (r)
+        {
+            mt->of_results.grid_w=r->grid_w;
+            mt->of_results.grid_h=r->grid_h;
+            mt->of_results.flow=(oflow_vector_t*)r->flow;
+            int total_cost=0;
+            for(int y=0;y<r->grid_w*r->grid_h;y++)
+            {
+                total_cost+=std::max(0, r->costs[y]-5);
+            }
+            float avg_cost=(total_cost*1.0f)/(r->grid_w*r->grid_h);
+            if (mt->scene_change_sensitivity!=0)
+            {
+                mt->scene_change=(avg_cost>16.0*(1.0-mt->scene_change_sensitivity))&&(mt->frames_since_reset>2);
+                if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->time, avg_cost, total_cost, mt->frames_since_reset);
+            }
+        }
+    }
+    #endif
 }
 
 void motion_track_add_frame(motion_track_t *mt, image_t *img)
@@ -122,22 +159,11 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     assert((scale_w&7)==0);
     assert((scale_h&7)==0);
-
-    #ifdef NVOF_SUPPORTED
-    if (mt->nvof)
-    {
-        nvof_results_t *r=nvof_execute(mt->nvof, image_scaled);
-        if (r)
-        {
-            mt->of_results.grid_w=r->grid_w;
-            mt->of_results.grid_h=r->grid_h;
-            mt->of_results.flow=(oflow_vector_t*)r->flow;
-        }
-    }
-    #endif
+    mt->scene_change=false;
 
     if (mt->mad_delta==0)
     {
+        motion_track_run_optical_flow(mt, image_scaled);
         mt->roi=ROI_ONE;
         if (mt->in_img)
         {
@@ -148,6 +174,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         return;
     }
 
+    image_t *nvof_image=image_reference(image_scaled);
     if (mt->blur)
     {
         image_t *image_blurred=image_blur(image_scaled);
@@ -185,6 +212,8 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         mt->noise_floor=(float *)malloc(sizeof(float)*mt->block_w*mt->block_h);
         memset(mt->noise_floor, 0, sizeof(float)*mt->block_w*mt->block_h);
         mt->frames_since_reset=0;
+        motion_track_run_optical_flow(mt, nvof_image);
+        destroy_image(nvof_image);
         return;
     }
 
@@ -254,9 +283,16 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         roi.box[3]=roi_b/image_scaled->height;
         debugf("ROI %.3f %.3f %.3f %.3f A %0.4f",roi.box[0],roi.box[1],roi.box[2],roi.box[3], roi_area(&roi));
     }
-
     assert(roi.box[0]>=0.0f && roi.box[2]<=1.0f && roi.box[1]>=0.0f && roi.box[3]<=1.0f);
 
+    // run optical flow
+
+    if (roi_area(&roi)>0.01)
+        motion_track_run_optical_flow(mt, nvof_image);
+    else if (mt->nvof)
+        nvof_set_no_motion(mt->nvof); // skip running NVOF, frames are too similar
+
+    destroy_image(nvof_image);
     mt->in_img=image_scaled;
     mt->roi=roi;
     mt->frames_since_reset++;

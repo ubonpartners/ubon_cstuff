@@ -257,6 +257,12 @@ static void thread_stream_run_input_job(int id, track_stream_t *ts, image_t *img
         motion_track_add_frame(ts->mt, image_scaled);
     image_check(image_scaled);
 
+    if (motion_track_scene_change(ts->mt))
+    {
+        motion_track_reset(ts->mt);
+        if (ts->utrack) utrack_reset(ts->utrack);
+    }
+
     roi_t motion_roi=motion_track_get_roi(ts->mt);
     float skip_roi_thr=(ts->last_skip) ? tss->motiontrack_min_roi_after_skip : tss->motiontrack_min_roi_after_nonskip;
     if (roi_area(&motion_roi)<skip_roi_thr)

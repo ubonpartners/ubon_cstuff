@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 #include "infer_aux.h"
 #include "solvers.h"
 #include "trt_stuff.h"
@@ -157,6 +158,22 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
     } else {
         cudaMemcpyAsync(h_out, d_out, total * sizeof(float), cudaMemcpyDeviceToHost, inf->stream);
         cudaStreamSynchronize(inf->stream);
+    }
+
+    int sz=inf->md.embedding_size;
+    if (sz!=360) // MDB:HACK FIXME
+    {
+        for(int i=0;i<n;i++)
+        {
+            float norm=0;
+            int sz=inf->md.embedding_size;
+            for(int j=0;j<sz;j++) norm+=(h_out[i*sz+j]*h_out[i*sz+j]);
+            if (norm>0.0f)
+            {
+                float scale=1.0/sqrtf(norm);
+                for(int j=0;j<sz;j++) h_out[i*sz+j]*=scale;
+            }
+        }
     }
 
     // Cleanup

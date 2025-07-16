@@ -346,6 +346,17 @@ static int compare_utdet_desc(const void *a, const void *b) {
     return 0;
 }
 
+void utrack_reset(utrack_t *ut)
+{
+    for(int i=0;i<ut->num_tracked;i++)
+    {
+        utdet_t *tdet=ut->tracked[i];
+        utdet_destroy(tdet);
+        ut->tracked[i]=0;
+    }
+    ut->num_tracked=0;
+}
+
 detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp_time, bool single_frame)
 {
     FILE_TRACE("==================================");

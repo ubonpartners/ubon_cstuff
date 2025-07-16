@@ -50,7 +50,7 @@ void decode_file(const char *file, void *context,
     simple_decoder_t *decoder;
 
     bool is_h264=file_ends(file, ".h264")||file_ends(file, ".264");
-    bool is_h265=file_ends(file, ".h265")||file_ends(file, ".265");
+    bool is_h265=file_ends(file, ".h265")||file_ends(file, ".265")||file_ends(file, ".hevc");
     bool is_pcap=file_ends(file, ".pcap")||file_ends(file, ".pcapng");
 
     if (is_pcap)
@@ -79,6 +79,10 @@ void decode_file(const char *file, void *context,
             {
                 log_warn("No framerate specified in filename %s, using default 30 fps", file);
                 framerate=30.0f;
+            }
+            else
+            {
+                log_info("Found stream '%s' framerate %f fps", file, framerate);
             }
         }
 

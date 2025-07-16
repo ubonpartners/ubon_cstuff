@@ -233,6 +233,13 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     return &v->results;
 }
 
+void nvof_set_no_motion(nvof_t *v)
+{
+    // can run this instead of full run if you know the in/out are sufficiently close
+    memset(v->costBufHost, 0, v->outW*v->outH); // optical flow not run, set costs to zero
+    memset(v->flowBufHost, 0, 4*v->outW*v->outH); // optical flow not run, return zero vectors
+}
+
 nvof_t *nvof_create(void *context, int max_width, int max_height)
 {
     check_cuda_inited();

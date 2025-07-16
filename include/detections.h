@@ -131,7 +131,8 @@ typedef enum match_type
 {
     MATCH_TYPE_BOX_IOU=0,
     MATCH_TYPE_FACE_KP=1,
-    MATCH_TYPE_POSE_KP=2
+    MATCH_TYPE_POSE_KP=2,
+    MATCH_TYPE_FACEPOSE_KP=3
 } match_type_t;
 
 int match_box_iou(

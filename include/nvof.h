@@ -24,5 +24,6 @@ nvof_t *nvof_create(void *context, int w, int h);
 void nvof_destroy(nvof_t *v);
 nvof_results_t *nvof_execute(nvof_t *v, image_t *img);
 void nvof_reset(nvof_t *n);
+void nvof_set_no_motion(nvof_t *v);
 
 #endif
