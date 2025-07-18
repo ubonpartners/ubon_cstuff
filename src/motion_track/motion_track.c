@@ -18,6 +18,9 @@
 #include "misc.h"
 
 #define NVOF_SUPPORTED 1
+#if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
+#undef NVOF_SUPPORTED
+#endif
 #define debugf if (0) log_debug
 
 struct motion_track
@@ -96,7 +99,9 @@ void motion_track_reset(motion_track_t *mt)
     mt->roi=ROI_ONE;
     mt->scene_change=false;
     mt->frames_since_reset=0;
+    #ifdef NVOF_SUPPORTED
     if (mt->nvof) nvof_reset(mt->nvof);
+    #endif
 }
 
 static int count_leading_zeros(uint64_t x) {
@@ -289,8 +294,10 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     if (roi_area(&roi)>0.01)
         motion_track_run_optical_flow(mt, nvof_image);
+    #ifdef NVOF_SUPPORTED
     else if (mt->nvof)
         nvof_set_no_motion(mt->nvof); // skip running NVOF, frames are too similar
+    #endif
 
     destroy_image(nvof_image);
     mt->in_img=image_scaled;

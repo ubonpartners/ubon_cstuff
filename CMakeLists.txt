@@ -53,8 +53,8 @@ set(CMAKE_CXX_COMPILER /usr/bin/g++-11)
 # use cmake -DCMAKE_BUILD_TYPE=Debug
 # or cmake -DCMAKE_BUILD_TYPE=Release
 
-set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
-set(CMAKE_C_FLAGS_DEBUG  "-O1 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
+set(CMAKE_C_FLAGS_DEBUG  "-O0 -g3 -ggdb3 -fvar-tracking -fvar-tracking-assignments")
 set(CMAKE_CUDA_FLAGS_DEBUG "-O1 -G -g")
 
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
