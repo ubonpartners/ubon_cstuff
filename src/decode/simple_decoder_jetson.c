@@ -17,6 +17,7 @@
 #include "NvEglRenderer.h"
 #include "EGL/egl.h"
 #include "EGL/eglext.h"
+#include "NvJpegEncoder.h"
 #include "NvBufSurface.h"
 
 #include "simple_decoder.h"
@@ -32,6 +33,7 @@ using namespace std;
     }
 
 #define USE_DEC_METADATA     (0)
+#define USE_YUV_DUMP         (0)
 #define NR_CAPTURE_BUF       (10)
 #define MAX_FIRST_RESCHANGE  (30)
 #define CHUNK_SIZE           (4 * 1024 * 1024)
@@ -50,14 +52,10 @@ typedef struct dma_fd_s {
 typedef struct decctx_cfg_s {
     int disable_rendering;
     int fullscreen;
-    int do_jpeg;
     uint32_t dec_width; /* decoded video stream */
     uint32_t dec_height; /* decoded video stream */
     uint32_t window_width; /* video window */
     uint32_t window_height; /* video window */
-    uint32_t net_width; /* inference network */
-    uint32_t net_height; /* inference network */
-    uint32_t net_channel; /* inference network */
     uint32_t tr_width; /* transform output */
     uint32_t tr_height; /* transform output */
     uint32_t window_x;
@@ -81,7 +79,10 @@ typedef struct q_ctx_s {
 struct simple_decoder
 {
     int is_h265;
+    int do_jpeg;
+    int do_dump_yuv;
     NvVideoDecoder *dec;
+    NvJPEGEncoder *jenc;
     decctx_cfg_t cfg;
     uint32_t decoder_pixfmt;
     int32_t min_dec_capture_buffers;
@@ -100,6 +101,11 @@ struct simple_decoder
     int height;
     int out_width;
     int out_height;
+
+    image_format_t output_format;
+    double time;
+    double time_increment;
+    double max_time;
     void *context;
     void (*frame_callback)(void *context, image_t *decoded_frame);
 };
@@ -213,24 +219,30 @@ static int print_metadata(simple_decoder_t *ctx,
   */
 void print_plane_param(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
 {
-    int l = 0;
+    int index = 0, l = 0;
     char b[1024];
-    NvBufSurfaceParams *surface_list = nvbuf_surf->surfaceList;
+    NvBufSurfaceParams *surface_list = &nvbuf_surf->surfaceList[index];
     NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
     NvBufSurfaceMappedAddr *maddr = &nvbuf_surf->surfaceList->mappedAddr;
 
     //return; /* uncomment to use */
 
-    l += snprintf(b + l, sizeof(b) -l,
-        "[%5d] [0: %d %d %d %d] [1: %d %d %d %d] [2: %d %d %d %d] ",
-        ctx->nr_capture,
-        pp->width[0], pp->height[0], pp->bytesPerPix[0], pp->pitch[0],
-        pp->width[1], pp->height[1], pp->bytesPerPix[1], pp->pitch[1],
-        pp->width[2], pp->height[2], pp->bytesPerPix[2], pp->pitch[2]);
     l += snprintf(b + l, sizeof(b) - l,
-        "  [w %u h %u p %u fmt 0x%x datasz %d] ",
+        "[%5d] [0: %d %d %d %d %d %d] [1: %d %d %d %d %d %d] [2: %d %d %d %d %d %d] ",
+        ctx->nr_capture,
+        pp->width[0], pp->height[0], pp->pitch[0], pp->bytesPerPix[0],
+        pp->offset[0], pp->psize[0],
+        pp->width[1], pp->height[1], pp->pitch[1], pp->bytesPerPix[1],
+        pp->offset[1], pp->psize[1],
+        pp->width[2], pp->height[2], pp->pitch[2], pp->bytesPerPix[2],
+        pp->offset[2], pp->psize[2]);
+    l += snprintf(b + l, sizeof(b) - l,
+        "  [w %u h %u p %u fmt 0x%x] ",
         surface_list->width, surface_list->height, surface_list->pitch,
-        surface_list->colorFormat, surface_list->dataSize);
+        surface_list->colorFormat);
+    if(surface_list->colorFormat == NVBUF_COLOR_FORMAT_NV12) {
+        l += snprintf(b + l, sizeof(b) - l, "NV12 ");
+    }
     if(surface_list->colorFormat == NVBUF_COLOR_FORMAT_RGBA) {
         l += snprintf(b + l, sizeof(b) - l, "RGBA ");
     }
@@ -239,17 +251,147 @@ void print_plane_param(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
     }
     log_info("\n%s", b);
 
-
     return;
 }
 
-void create_image_forward(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
+static int copy_dmabuf(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf,
+    uint8_t *out, int plane)
 {
+    int index = 0, width, height, pitch, byte_per_pix, len;
+    uint8_t *p;
+    uint8_t *src;
+    uint8_t *dest = out;
+    NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
+    NvBufSurfaceMappedAddr *maddr = &nvbuf_surf->surfaceList->mappedAddr;
+
+    if(NvBufSurfaceMap(nvbuf_surf, index, plane, NVBUF_MAP_READ_WRITE) != 0) {
+        log_error("%s:%d Failed to map NvBufSurface\n", __func__, __LINE__);
+        nvdec_abort_ctx(ctx);
+    }
+
+    if(NvBufSurfaceSyncForCpu(nvbuf_surf, index, plane) != 0) {
+        log_error("%s:%d Failed to sync surface for CPU\n");
+        nvdec_abort_ctx(ctx);
+    }
+    width = pp->width[plane];
+    height = pp->height[plane];
+    pitch = pp->pitch[plane];
+    byte_per_pix = pp->bytesPerPix[plane];
+    src = (uint8_t *)nvbuf_surf->surfaceList->mappedAddr.addr[plane];
+    len = width * byte_per_pix;
+
+    for (int i = 0; i < height; i++) {
+        memcpy(dest, src, len);
+        src += pitch;
+        dest += len;
+    }
+
+    if(NvBufSurfaceUnMap(nvbuf_surf, index, plane) < 0) {
+        log_error("%s:%d Failed to unmap NvBufSurface\n", __func__, __LINE__);
+        nvdec_abort_ctx(ctx);
+    }
+    len = (int)(dest - out);
+
+
+    return len;
+}
+
+static int cuda_memcpy_image(simple_decoder_t *ctx, image_t *dec_img, CUeglFrame *eglFrame)
+{
+    void* y_ptr = eglFrame->frame.pPitch[0]; // Y plane
+    int y_size = ctx->cfg.dec_width *ctx->cfg.dec_height;
+
+    cudaError_t y_result = cudaMemcpy(
+        dec_img->y, // Destination
+        y_ptr, // Source
+        y_size, // Size to copy
+        cudaMemcpyDeviceToHost // GPU to Host
+    );
+    if (y_result != cudaSuccess) {
+        fprintf(stderr, "Y plane copy failed: %s\n", cudaGetErrorString(y_result));
+    }
+
+    return y_size;
+}
+
+int create_image_forward(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf, CUeglFrame *eglFrame)
+{
+    int do_malloc = 0, do_free = 0, do_memset = 1;
+    int index = 0, w, h, ret, stride_y, stride_uv;
+    NvBufSurfaceParams *surface_list = &nvbuf_surf->surfaceList[index];
+    NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
+    image_t *dec_img;
+    char fname[256];
+    FILE *fp = NULL;
+
+    if(surface_list->colorFormat != NVBUF_COLOR_FORMAT_YUV420) {
+        log_error("%s:%d Invalid color format %d\n",
+            __func__, __LINE__, surface_list->colorFormat);
+        nvdec_abort_ctx(ctx);
+    }
+    w = ctx->cfg.dec_width;
+    h = ctx->cfg.dec_height;
+    stride_y = pp->pitch[0];
+    stride_uv = pp->pitch[1];
+
+    dec_img = create_image(w, h, IMAGE_FORMAT_YUV420_HOST);
     /*
-     image_t *dec_img = create_image();
-    copy_image()
-    ctx->frame_callback(ctx->context, dec_img);
+    dec_img = create_image_no_surface_memory(w, h, IMAGE_FORMAT_YUV420_HOST);
     */
+    if(dec_img->width != w || dec_img->height != h) {
+        log_error("%s:%d Size mismatch - NvBufSurface : image struct\n",
+            __func__, __LINE__, surface_list->colorFormat);
+        nvdec_abort_ctx(ctx);
+    }
+    // allocate the yuv buffers
+    if(do_malloc) {
+        dec_img->y = (uint8_t *)malloc(stride_y * h);
+        dec_img->u = (uint8_t *)malloc(stride_uv * (h / 2));
+        dec_img->v = (uint8_t *)malloc(stride_uv * (h / 2));
+        dec_img->stride_y = stride_y;
+        dec_img->stride_uv = stride_uv;
+    }
+
+    // memset the yuv buffers
+    if(do_memset) {
+        memset(dec_img->y, 0, (dec_img->stride_y * h));
+        memset(dec_img->u, 0x80, dec_img->stride_uv * (h / 2));
+        memset(dec_img->v, 0x80, dec_img->stride_uv * (h / 2));
+    }
+
+    //ret = cuda_memcpy_image(ctx, dec_img, eglFrame);
+    if(ctx->do_dump_yuv) {
+        sprintf(fname, "image_%06d.yuv", ctx->nr_capture);
+        fp = fopen(fname, "wb");
+        if(!fp) nvdec_abort_ctx(ctx);
+        log_info("%s:%d yuv file %s\n", __func__, __LINE__, fname);
+    }
+
+    // copy each of the yuv planes to the corresponding buffers
+    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->y, 0);
+    if(fp) fwrite(dec_img->y, 1, ret, fp);
+    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->u, 1);
+    if(fp) fwrite(dec_img->u, 1, ret, fp);
+    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->v, 2);
+    if(fp) fwrite(dec_img->v, 1, ret, fp);
+    if(fp) fclose(fp);
+
+    dec_img->time = ctx->time;
+    ctx->time += ctx->time_increment;
+    // use the frame callback to send the image
+    ctx->frame_callback(ctx->context, dec_img);
+
+    // free the yuv buffers
+    if(do_free) {
+        free(dec_img->y);
+        free(dec_img->u);
+        free(dec_img->v);
+        dec_img->y = dec_img->u = dec_img->v = NULL;
+    }
+    destroy_image(dec_img);
+    (void)ret;
+
+    return 0;
 }
 
 static uint32_t find_v4l2_pixfmt(int is_h265)
@@ -389,6 +531,7 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     NvVideoDecoder *dec = ctx->dec;
     struct v4l2_format format;
     struct v4l2_crop crop;
+    struct timeval tv;
     uint32_t i;
     int32_t min_dec_capture_buffers;
     dma_fd_t *dma_fd;
@@ -397,6 +540,7 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     NvBufSurface *nvbuf_surf = NULL;
     CUresult status;
 
+    gettimeofday(&tv, NULL);
     /* Get capture plane format from the decoder.
        This may change after resolution change event.
        Refer ioctl VIDIOC_G_FMT */
@@ -546,6 +690,12 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
         CHECK_ERROR(ret < 0, "Error Qing buffer at output plane");
     }
 
+    log_info("%s:%d Resolution change successful at %ld.%06ld\n",
+        __func__, __LINE__, tv.tv_sec, tv.tv_usec);
+    log_info("%s:%d min_dec_capture_buffers %d, num_buffers %d\n",
+        __func__, __LINE__,
+        min_dec_capture_buffers, dec->capture_plane.getNumBuffers());
+
     return;
 }
 
@@ -585,6 +735,7 @@ static int process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
     int ret, dst_dma_fd;
     dma_fd_t *dma_fd;
     NvBufSurface *nvbuf_surf = NULL;
+    CUeglFrame *eglFrame;
     EGLImageKHR egl_image = NULL;
     int use_dynamic_egl = 0;
 
@@ -615,6 +766,7 @@ static int process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
         log_error("%s:%d transform failed\n", __func__, __LINE__);
         return -1;
     }
+    eglFrame = &dma_fd->eglFramePtr;
 
     queue_dma_fd(ctx, dma_fd);
 
@@ -627,8 +779,10 @@ static int process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
     }
     if(ctx->cfg.out_pixfmt == 2) {
     }
-    print_plane_param(ctx, nvbuf_surf);
-    create_image_forward(ctx, nvbuf_surf);
+    if((USE_DEC_METADATA) || (ctx->nr_capture < 2)) {
+        print_plane_param(ctx, nvbuf_surf);
+    }
+    create_image_forward(ctx, nvbuf_surf, eglFrame);
     if(use_dynamic_egl) {
         if(NvBufSurfaceMapEglImage(nvbuf_surf, 0) != 0) {
             log_error("%s:%d unable to map EGL Image\n",
@@ -768,6 +922,8 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     q_ctx->fq = new queue <dma_fd_t *>;
     q_ctx->mq_len = 0;
     q_ctx->fq_len = 0;
+    ctx->do_jpeg = 0;
+    ctx->do_dump_yuv = USE_YUV_DUMP;
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
@@ -779,7 +935,11 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
        CHUNK_SIZE, which contains the encoded data in bytes */
     r = dec->setOutputPlaneFormat(ctx->decoder_pixfmt, CHUNK_SIZE);
     CHECK_ERROR(r < 0, "Could not set output plane format");
-    r = dec->setFrameInputMode(0);
+    /* Set V4L2_CID_MPEG_VIDEO_DISABLE_COMPLETE_FRAME_INPUT control to false
+       so that application can send chunks of encoded data instead of forming
+       complete frames. This needs to be done before setting format on the
+       output plane. */
+    r = dec->setFrameInputMode(1);
     CHECK_ERROR(r < 0, "Error in decoder setFrameInputMode");
     /* Request MMAP buffers for writing encoded video data */
     r = dec->output_plane.setupPlane(V4L2_MEMORY_MMAP,
@@ -794,8 +954,11 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     /* Start streaming on decoder output_plane */
     r = dec->output_plane.setStreamStatus(true);
     CHECK_ERROR(r < 0, "Error in output plane stream on");
+    if(ctx->do_jpeg) {
+    }
 
     /* use YUV420 or RGBA as the output color format */
+    ctx->cfg.out_pixfmt = 1; /* NV12 */
     ctx->cfg.out_pixfmt = 3; /* RGBA */
     ctx->cfg.out_pixfmt = 2; /* YUV420 */
 
@@ -903,6 +1066,10 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
             log_info("%s:%d input completed\n", __func__, __LINE__);
             break;
         }
+        if((USE_DEC_METADATA) && (v4l2_buf.flags & V4L2_BUF_FLAG_ERROR)) {
+            ret = ctx->dec->getInputMetadata(v4l2_buf.index, d);
+            print_input_metadata(ctx, &d);
+        }
         ctx->nr_output++;
     } while(0);
 
@@ -911,20 +1078,20 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
 
 void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 {
-    (void)dec; (void)fps;
-    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+    log_info("%s:%d fps = %.3f\n", __func__, __LINE__, fps);
+    if (dec && fps > 0) dec->time_increment = 1.0 / fps;
 }
 
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
 {
-    (void)dec; (void)fmt;
-    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+    log_info("%s:%d fmt = %d\n", __func__, __LINE__, fmt);
+    if (dec) dec->output_format = fmt;
 }
 
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
-    (void)dec; (void)max_time;
-    log_error("%s:%d This feature is not yet implemented", __func__, __LINE__);
+    log_info("%s:%d max_time = %.3f\n", __func__, __LINE__, max_time);
+    if (dec) dec->max_time = max_time;
 }
 
 #endif //(UBONCSTUFF_PLATFORM == 1)
@@ -1149,21 +1316,6 @@ error:
 }
 
 /* -------------------------------------------------------------------------- */
-void simple_decoder_set_framerate(simple_decoder_t *d, double fps)
-{
-    if (d && fps > 0)
-        d->inc = 90000.0 / fps;
-}
-
-void simple_decoder_set_output_format(simple_decoder_t *d, image_format_t fmt)
-{
-    if (d) d->output_fmt = fmt;
-}
-
-void simple_decoder_set_max_time(simple_decoder_t *d, double max_time)
-{
-    if (d) d->max_time = max_time;
-}
 
 /* -------------------------------------------------------------------------- */
 void simple_decoder_decode(simple_decoder_t *d, uint8_t *data, int size)
