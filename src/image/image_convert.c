@@ -184,17 +184,14 @@ static image_t *image_convert_yuv420_device_host(image_t *img, image_format_t fo
     return ret;
 }
 
-static image_t *image_convert_rgb_planar_fp_device_host(image_t *img, image_format_t format)
+static image_t *image_convert_tensor_device_host(image_t *img, image_format_t format)
 {
-    bool src_device=image_format_is_device(img->format);
     bool dest_device=image_format_is_device(format);
-    int bpf=((format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
-             ||(format==IMAGE_FORMAT_RGB_PLANAR_FP16_HOST)) ? 2 : 4;
-
-    image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE : IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
+    int bpf=image_format_bytes_per_component(format);
+    image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*3, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
+    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*img->n*img->c, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
     return ret;
 }
 
@@ -347,18 +344,23 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_rgb24_to_yuv_device, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_yuv420_device_planar_rgb_fp16, IMAGE_FORMAT_NONE, 120},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_yuv420_device_planar_rgb_fp32, IMAGE_FORMAT_NONE, 120},
-    {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, image_convert_rgb24_planar_fp32_device, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB24_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_rgb24_planar_fp16_device, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, image_convert_rgb_planar_fp_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_planar_fp16_rgb24_device, IMAGE_FORMAT_NONE, 110},
     {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB24_DEVICE, image_convert_planar_fp32_rgb24_device, IMAGE_FORMAT_NONE, 110},
     {IMAGE_FORMAT_YUV420_DEVICE, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_mono, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_YUV420_DEVICE, image_convert_mono_yuv420, IMAGE_FORMAT_NONE, 100},
     {IMAGE_FORMAT_MONO_HOST, IMAGE_FORMAT_MONO_DEVICE, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
-    {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_MONO_HOST, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50}
+    {IMAGE_FORMAT_MONO_DEVICE, IMAGE_FORMAT_MONO_HOST, image_convert_yuv420_device_host, IMAGE_FORMAT_NONE, 50},
+
+    {IMAGE_FORMAT_TENSOR_FP16_DEVICE, IMAGE_FORMAT_TENSOR_FP16_HOST, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP32_DEVICE, IMAGE_FORMAT_TENSOR_FP32_HOST, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP16_HOST, IMAGE_FORMAT_TENSOR_FP16_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP32_HOST, IMAGE_FORMAT_TENSOR_FP32_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
 };
 
 static image_conversion_method_t* conversion_table[NUM_IMAGE_FORMATS][NUM_IMAGE_FORMATS] = {0};

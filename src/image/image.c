@@ -138,28 +138,32 @@ static void allocate_image_surfaces(image_t *img)
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE:
+        case IMAGE_FORMAT_TENSOR_FP16_DEVICE:
         {
-            allocate_image_device_mem(img, img->width*img->height*3*2);
+            allocate_image_device_mem(img, img->n*img->c*img->width*img->height*2);
             img->rgb=(uint8_t *)img->device_mem;
             img->stride_rgb=img->width*img->height; // in elements
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE:
+        case IMAGE_FORMAT_TENSOR_FP32_DEVICE:
         {
-            allocate_image_device_mem(img, img->width*img->height*3*4);
+            allocate_image_device_mem(img, img->n*img->c*img->width*img->height*4);
             img->rgb=(uint8_t *)img->device_mem;
             img->stride_rgb=img->width*img->height; // in elements
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST:
+        case IMAGE_FORMAT_TENSOR_FP16_HOST:
         {
-            allocate_image_host_mem(img, img->width*img->height*3*2);
+            allocate_image_host_mem(img, img->n*img->c*img->width*img->height*2);
             img->rgb=(uint8_t *)img->host_mem;
             break;
         }
         case IMAGE_FORMAT_RGB_PLANAR_FP32_HOST:
+        case IMAGE_FORMAT_TENSOR_FP32_HOST:
         {
-            allocate_image_host_mem(img, img->width*img->height*3*4);
+            allocate_image_host_mem(img, img->n*img->c*img->width*img->height*4);
             img->rgb=(uint8_t *)img->host_mem;
             break;
         }
@@ -201,6 +205,8 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
     memset(img, 0, sizeof(image_t));
     img->width=width;
     img->height=height;
+    img->n=1;
+    img->c=((fmt==IMAGE_FORMAT_MONO_DEVICE)||(fmt==IMAGE_FORMAT_MONO_HOST)) ? 1 : 3;
     img->format=fmt;
     img->stream=create_cuda_stream_pool();
     block_set_free_callback(img, 0, image_free_callback);
@@ -211,6 +217,16 @@ image_t *create_image(int width, int height, image_format_t fmt)
 {
     assert(image_inited);
     image_t *ret=create_image_no_surface_memory(width, height, fmt);
+    allocate_image_surfaces(ret);
+    return ret;
+}
+
+image_t *create_image_tensor(int n, int c, int width, int height, image_format_t fmt)
+{
+    assert(image_inited);
+    image_t *ret=create_image_no_surface_memory(width, height, fmt);
+    ret->n=n;
+    ret->c=c;
     allocate_image_surfaces(ret);
     return ret;
 }

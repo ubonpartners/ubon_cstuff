@@ -16,9 +16,13 @@ typedef enum image_format {
   IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE,
   IMAGE_FORMAT_MONO_HOST,               // YUV420 but Y-plane only
   IMAGE_FORMAT_MONO_DEVICE,             // YUV420 but Y-plane only
+  IMAGE_FORMAT_TENSOR_FP32_HOST,
+  IMAGE_FORMAT_TENSOR_FP32_DEVICE,
+  IMAGE_FORMAT_TENSOR_FP16_HOST,
+  IMAGE_FORMAT_TENSOR_FP16_DEVICE,
 } image_format_t;
 
-#define NUM_IMAGE_FORMATS 12
+#define NUM_IMAGE_FORMATS 16
 
 static bool image_format_is_device(image_format_t format)
 {
@@ -27,7 +31,28 @@ static bool image_format_is_device(image_format_t format)
          ||(format==IMAGE_FORMAT_RGB24_DEVICE)
          ||(format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE)
          ||(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE)
-         ||(format==IMAGE_FORMAT_MONO_DEVICE);
+         ||(format==IMAGE_FORMAT_MONO_DEVICE)
+         ||(format==IMAGE_FORMAT_TENSOR_FP32_DEVICE)
+         ||(format==IMAGE_FORMAT_TENSOR_FP16_DEVICE);
+}
+
+static int image_format_bytes_per_component(image_format_t format)
+{
+  switch(format)
+  {
+    case IMAGE_FORMAT_TENSOR_FP32_HOST:
+    case IMAGE_FORMAT_TENSOR_FP32_DEVICE:
+    case IMAGE_FORMAT_RGB_PLANAR_FP32_HOST:
+    case IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE:
+      return 4;
+    case IMAGE_FORMAT_TENSOR_FP16_HOST:
+    case IMAGE_FORMAT_TENSOR_FP16_DEVICE:
+    case IMAGE_FORMAT_RGB_PLANAR_FP16_HOST:
+    case IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE:
+      return 2;
+    default:
+      return 1;
+  }
 }
 
 static bool image_format_is_host(image_format_t format)
@@ -42,6 +67,7 @@ struct image
 {
     int width;
     int height;
+    int n,c; // used for TENSOR format
     image_format_t format;
     double time;
     uint8_t *y;
@@ -70,6 +96,8 @@ const char *image_format_name(image_format_t format);
 
 // create image: allocate a new surface and it's video memory
 image_t *create_image(int width, int height, image_format_t fmt);
+// tensor images
+image_t *create_image_tensor(int n, int c, int width, int height, image_format_t fmt);
 // create_image_no_surface_memory: create an empty shell surface with
 // no underlying video memory. This is useful in cases where different
 // surfaces share underlying memory - e.g. if one is a crop of another
