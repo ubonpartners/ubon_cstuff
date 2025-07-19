@@ -13,9 +13,10 @@ typedef struct aux_model_description aux_model_description_t;
 struct aux_model_description
 {
     int embedding_size;
+    int embedding_size_2nd_output;
     int max_batch;
-    int input_w, input_h;
-    bool input_fp16, output_fp16; // input/output formats for model
+    int input_ch, input_w, input_h;
+    bool input_fp16, output_fp16, output2_fp16; // input/output formats for model
     const char *engineInfo;
 };
 

@@ -10,7 +10,8 @@ void embedding_sync(embedding_t *e);
 bool embedding_is_ready(embedding_t *e);
 int embedding_get_size(embedding_t *e);
 float *embedding_get_data(embedding_t *e);
-void embedding_set_data(embedding_t *e, float *d, int size);
+void embedding_set_data(embedding_t *e, float *d, int size, bool l2_normalize=false);
+void embedding_set_data_half(embedding_t *e, void *src, int size, bool l2_normalize=false); // source is __half fp16 data
 embedding_t *embedding_reference(embedding_t *e);
 void embedding_check(embedding_t *e);
 void embedding_set_quality(embedding_t *e, float q);

@@ -8,6 +8,7 @@
 #include "infer.h"
 #include "log.h"
 #include "misc.h"
+#include "maths_stuff.h"
 
 static std::once_flag initFlag;
 static block_allocator_t *embedding_allocator;
@@ -113,7 +114,7 @@ float *embedding_get_data(embedding_t *e)
 }
 
 /*------------------------------------------------------------*/
-void embedding_set_data(embedding_t *e, float *src, int size)
+void embedding_set_data(embedding_t *e, float *src, int size, bool l2_normalize)
 {
     assert(e                   != nullptr);
     assert(e->size             == size);
@@ -121,6 +122,22 @@ void embedding_set_data(embedding_t *e, float *src, int size)
 
     assert(e->value_set==false);
     memcpy(e->data, src, sizeof(float) * size);
+    if (l2_normalize) vec_l2_norm_inplace(e->data, size);
+    /* fulfil promise exactly once */
+    e->value_set = true;
+    e->promise->set_value();
+}
+
+void embedding_set_data_half(embedding_t *e, void *src, int size, bool l2_normalize)
+{
+    assert(e                   != nullptr);
+    assert(e->size             == size);
+    assert(block_reference_count(e) >= 1);
+
+    assert(e->value_set==false);
+
+    vec_copy_half_to_float(src, e->data, size);
+    if (l2_normalize) vec_l2_norm_inplace(e->data, size);
 
     /* fulfil promise exactly once */
     e->value_set = true;

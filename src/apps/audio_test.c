@@ -9,11 +9,15 @@
 #include "audioframe.h"
 #include "audio_io.h"
 #include "log.h"
+#include "infer_aux.h"
 
 int main(int argc, char *argv[]) {
     log_debug("ubon_cstuff version = %s", ubon_cstuff_get_version());
+    init_cuda_stuff();
 
     wav_reader_t *wr=wav_reader_create("/mldata/video/wav/John_Wick_7dc33fe2bdb0_32000.wav");
+
+    infer_aux_t *inf=infer_aux_create("/mldata/efficientat/trt/efficientat_m10_as.trt", 0);
 
     float d=wav_reader_get_wav_duration(wr);
     printf("WAV file length %f seconds\n",d);
