@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define DETECTION_MAX_ATTR  48
+#define DETECTION_MAX_ATTR  64
 #define REID_MAX_VECTOR_LEN 64
 #define MAX_DETS            65535 // per class
 
@@ -45,6 +45,7 @@ struct detection
     // subbox_conf=0 => not present
     float subbox_x0,subbox_y0,subbox_x1,subbox_y1;
     float subbox_conf;
+    float fiqa_score;
     // optional data items
     uint8_t num_face_points, num_pose_points, num_attr, reid_vector_len;
     // face points are typically Retinaface order

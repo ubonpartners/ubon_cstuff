@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iostream>
 #include <fstream>
+#include <regex>
 #include <cuda_runtime_api.h>
 #include <cuda_fp16.h>
 #include <unistd.h>
@@ -96,6 +97,16 @@ image_t *load_rgb32_tensor(const char *file, int w, int h)
     assert(w*h*4*3==fread(img->rgb, 1, w*h*4*3, f));
     fclose(f);
     return img;
+}
+
+static float extract_fiqa_score(const std::string& input) {
+    std::regex pattern(R"(person_fiqa_([0-9]*\.?[0-9]+))");
+    std::smatch match;
+    if (std::regex_search(input, match, pattern)) {
+        return std::stof(match[1].str());
+    } else {
+        throw std::runtime_error("No valid float found in string");
+    }
 }
 
 static void infer_build(const char *onnx_filename, const char *out_filename)
@@ -273,10 +284,23 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     std::vector<std::string> names = config["dataset"]["names"].as<std::vector<std::string>>();
     std::vector<int> kpt_shape = config["dataset"]["kpt_shape"].as<std::vector<int>>();
     model_description_t md = {};
+    int n_attr=0;
+    float total_fiqa_weight=0;
     for (const auto& name : names)
     {
         if (name.size() >= 7 && name.compare(0, 7, "person_") == 0)
+        {
+            if (name.compare(0, 12, "person_fiqa_") == 0)
+            {
+                float score=extract_fiqa_score(name);
+                md.fiqa_attribute_weight[n_attr]=score+0.1f; // +0.1f is a hack to centre in the range
+                total_fiqa_weight+=(score+0.1f);
+            }
+            md.total_fiqa_weight=total_fiqa_weight;
+            assert(n_attr<DETECTION_MAX_ATTR);
             md.person_attribute_names.push_back(name);
+            n_attr++;
+        }
         else
         {
             if (name.size()==6 && name.compare(0, 6, "person")==0)
@@ -687,6 +711,25 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                         det->face_points[2]=temp[0];
                         det->face_points[3]=temp[18];
                         det->face_points[4]=temp[17];
+
+
+                        det->subbox_conf=det->face_points[0].conf;
+                        det->subbox_x0=det->subbox_x1=det->face_points[0].x;
+                        det->subbox_y0=det->subbox_y1=det->face_points[0].y;
+                        for(int k=1;k<5;k++)
+                        {
+                            det->subbox_conf+=det->face_points[k].conf;
+                            det->subbox_x0=std::min(det->subbox_x0, det->face_points[k].x);
+                            det->subbox_y0=std::min(det->subbox_y0, det->face_points[k].y);
+                            det->subbox_x1=std::max(det->subbox_x1, det->face_points[k].x);
+                            det->subbox_y1=std::max(det->subbox_y1, det->face_points[k].y);
+                            float w=det->subbox_x1-det->subbox_x0;
+                            float h=det->subbox_y1-det->subbox_y0;
+                            det->subbox_x0-=0.15*w;
+                            det->subbox_y0-=0.2*h;
+                            det->subbox_x1+=0.15*w;
+                            det->subbox_y1+=0.2*h;
+                        }
                     }
                     det->num_attr=num_attributes;
                     for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+k];
@@ -882,8 +925,26 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     {
         double t=image_scaled_conv[i]->time;
         dets[i]->time=t;
-        for(int j=0;j<dets[i]->num_detections;j++) dets[i]->det[j]->last_seen_time=t;
-
+        for(int j=0;j<dets[i]->num_detections;j++)
+        {
+            detection_t *list_dets=dets[i]->det[j];
+            if (inf->md.total_fiqa_weight!=0)
+            {
+                float fiqa=0;
+                for(int k=0;k<inf->md.num_person_attributes;k++)
+                {
+                    float v=list_dets->attr[k];
+                    v=std::min(1.0f, v*1.2f);
+                    fiqa+=(inf->md.fiqa_attribute_weight[k]*v);
+                    /*if (inf->md.fiqa_attribute_weight[k]>0)
+                    {
+                        printf(" %d %f %f\n",k,inf->md.fiqa_attribute_weight[k],list_dets->attr[k]);
+                    }*/
+                }
+                list_dets->fiqa_score=fiqa/inf->md.total_fiqa_weight;
+            }
+            list_dets->last_seen_time=t;
+        }
         destroy_image(image_scaled_conv[i]);
     }
     // map detections to the original image

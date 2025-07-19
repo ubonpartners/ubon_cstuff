@@ -165,6 +165,12 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
             image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
             offs+=0.02;
         }
+        if (1)
+        {
+            snprintf(text, 255, "FIQA1:%0.3f", det->fiqa_score);
+            image_draw_text(x, det->x0, det->y0+offs, text, 0xffffffff);
+            offs+=0.02;
+        }
         if (det->fiqa_embedding!=0)
         {
             snprintf(text, 255, "FIQA:%0.3f",fiqa_embedding_quality(det->fiqa_embedding));

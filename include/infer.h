@@ -27,6 +27,8 @@ struct model_description
     int num_person_keypoints;
     int person_keypoint_offset;
     bool input_is_fp16, output_is_fp16; // input/output formats for model
+    float fiqa_attribute_weight[DETECTION_MAX_ATTR];
+    float total_fiqa_weight;
     int min_w, max_w;  // min,max model input width
     int min_h, max_h;  // min,max model input height
     int model_output_dims[3]; // output tensor dimensions
