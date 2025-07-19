@@ -79,6 +79,7 @@ static void detection_list_free_callback(void *context, void *block)
     detection_list_t *dets=(detection_list_t *)block;
     for(int i=0;i<dets->num_detections;i++) detection_destroy(dets->det[i]);
     if (dets->frame_jpeg) jpeg_destroy(dets->frame_jpeg);
+    if (dets->clip_embedding) embedding_destroy(dets->clip_embedding);
 }
 
 detection_list_t *detection_list_create(int max_detections)

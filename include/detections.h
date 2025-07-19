@@ -81,6 +81,7 @@ typedef struct detection_list
     detection_t **face_dets;   // points into the 'det' array above
     // images
     jpeg_t *frame_jpeg; // jpeg of the overall image (if present)
+    embedding_t *clip_embedding; // clip embedding for overall frame (if present)
     // must be last!
     detection_t *det[1];
 } detection_list_t;

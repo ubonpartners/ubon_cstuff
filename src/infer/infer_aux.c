@@ -13,6 +13,7 @@
 #include "solvers.h"
 #include "trt_stuff.h"
 #include <cuda_fp16.h> // for __half
+#include "display.h"
 
 using namespace nvinfer1;
 
@@ -107,8 +108,12 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
     // allocate device input
     size_t plane = inf->md.input_w * inf->md.input_h;
     size_t dtype = inf->md.input_fp16 ? 2 : 4;
-    void* d_in;
-    cudaMalloc(&d_in, n * 3 * plane * dtype);
+    //void* d_in;
+    //(&d_in, n * 3 * plane * dtype);
+
+    //int elt_size=(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
+    image_t *inf_image=create_image(inf->md.input_w, inf->md.input_h*n,
+        inf->md.input_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE: IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
 
     image_t *img_yuv[n];
     for(int i=0;i<n;i++) image_check(img[i]);
@@ -117,7 +122,7 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
     const image_t **img_const = (const image_t**)img_yuv;
 
     cuda_warp_yuv420_to_planar_float(
-        img_const, d_in, n,
+        img_const, inf_image->rgb, n,
         inf->md.input_w, inf->md.input_h,
         M, false, inf->md.input_fp16,
         inf->stream
@@ -137,7 +142,7 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
         const char* name = inf->engine->getIOTensorName(i);
         if (inf->engine->getTensorIOMode(name) == TensorIOMode::kINPUT) {
             inf->ctx->setInputShape(name, Dims4{n, 3, inf->md.input_h, inf->md.input_w});
-            inf->ctx->setTensorAddress(name, d_in);
+            inf->ctx->setTensorAddress(name, inf_image->rgb);
         } else {
             inf->ctx->setTensorAddress(name, d_out);
         }
@@ -159,7 +164,6 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
         cudaMemcpyAsync(h_out, d_out, total * sizeof(float), cudaMemcpyDeviceToHost, inf->stream);
         cudaStreamSynchronize(inf->stream);
     }
-
     int sz=inf->md.embedding_size;
     if (sz!=360) // MDB:HACK FIXME
     {
@@ -178,7 +182,7 @@ static float *infer_aux_batch_affine(infer_aux_t* inf, image_t** img, float *M, 
 
     // Cleanup
     cudaFree(d_out);
-    cudaFree(d_in);
+    destroy_image(inf_image);
     for(int i=0;i<n;i++) destroy_image(img_yuv[i]);
     return h_out;
 }

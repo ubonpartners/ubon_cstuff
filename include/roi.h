@@ -26,4 +26,6 @@ static inline roi_t roi_union(roi_t a, roi_t b)
 static const roi_t ROI_ZERO={0};
 static const roi_t ROI_ONE = { .box = {0.0f, 0.0f, 1.0f, 1.0f} };
 
+roi_t expand_roi_to_aspect_ratio(roi_t r, float a);
+
 #endif

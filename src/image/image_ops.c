@@ -98,6 +98,7 @@ image_t *image_blur(image_t *img)
     // Create output image of the same format and size
     image_t *dst = create_image(img->width, img->height, img->format);
     image_add_dependency(dst, img); // ensure dst processing waits for img
+    dst->time=img->time;
     NppStreamContext nppStreamCtx = get_nppStreamCtx();
     nppStreamCtx.hStream = dst->stream;
 
@@ -154,6 +155,7 @@ image_t *image_mad_4x4(image_t *a, image_t *b)
     int out_width = a->width / 4;
     int out_height = a->height / 4;
     image_t *out = create_image(out_width, out_height, a->format);
+    out->time=b->time;
     image_add_dependency(out, a);
     image_add_dependency(out, b);
     compute_4x4_mad_mask(a->y, a->stride_y, b->y, b->stride_y,

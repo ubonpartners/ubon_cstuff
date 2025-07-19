@@ -113,7 +113,6 @@ image_t *detection_list_draw(detection_list_t *dets, image_t *img)
         {
             image_draw_box(x, det->subbox_x0, det->subbox_y0,det->subbox_x1, det->subbox_y1, 0xff00ff00);
         }
-
         for(int j=0;j<det->num_face_points;j++)
         {
             if (det->face_points[j].conf>0.05)

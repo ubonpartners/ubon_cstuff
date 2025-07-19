@@ -189,6 +189,9 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
         {
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
             ta->main_jpeg_last_time=img->time;
+
+            dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);
+            embedding_set_quality(dets->clip_embedding, 1.0f);
         }
     }
 
@@ -275,10 +278,14 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
                     {
                         if (aux->clip_embedding) embedding_destroy(aux->clip_embedding);
                         roi_t clip_roi;
-                        clip_roi.box[0]=std::max(0.0f, det->x0-w*expand);
-                        clip_roi.box[1]=std::max(0.0f, det->y0-h*expand);
-                        clip_roi.box[2]=std::min(1.0f, det->x1+w*expand);
-                        clip_roi.box[3]=std::min(1.0f, det->y1+h*expand);
+                        clip_roi.box[0]=det->x0;
+                        clip_roi.box[1]=det->y0;
+                        clip_roi.box[2]=det->x1;
+                        clip_roi.box[3]=det->y1;
+                        // expand the ROI to a decent one that is square (in pixels) and includes the original
+                        clip_roi=expand_roi_to_aspect_ratio(clip_roi, (img->height*1.0f)/img->width);
+                        float w=clip_roi.box[2]-clip_roi.box[0];
+                        float h=clip_roi.box[3]-clip_roi.box[1];
                         aux->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, clip_roi);
                         if (aux->clip_jpeg) jpeg_destroy(aux->clip_jpeg);
                         aux->clip_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, clip_roi, ta->clip_jpeg_max_width, ta->clip_jpeg_max_height, q, ta->clip_jpeg_quality);

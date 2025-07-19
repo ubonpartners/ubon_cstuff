@@ -387,6 +387,13 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         inf->md.person_keypoint_offset=inf->md.face_keypoint_offset+5*3;
         inf->md.num_person_keypoints=17;
     }
+    else if (inf->md.num_keypoints==19)
+    {
+        inf->md.face_keypoint_offset=0;
+        inf->md.num_face_keypoints=0;
+        inf->md.person_keypoint_offset=4+inf->md.num_classes+inf->md.num_person_attributes;
+        inf->md.num_person_keypoints=19;
+    }
     else
     {
         // fix this to support other than 17+5 keypoints
@@ -540,11 +547,14 @@ static detection_list_t *process_detections(infer_t *inf, float *p, int rows, in
     }
 
     assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
-    assert(inf->face_class_index==1);
+    assert(inf->face_class_index==1 || inf->face_class_index==-1);
     dets->person_dets=dets->det;
     dets->num_person_detections=num_person_detections;
-    dets->face_dets=dets->person_dets+num_person_detections;
-    dets->num_face_detections=num_face_detections;
+    if (inf->face_class_index!=-1)
+    {
+        dets->face_dets=dets->person_dets+num_person_detections;
+        dets->num_face_detections=num_face_detections;
+    }
     return dets;
 }
 
@@ -650,12 +660,33 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
                 if (cl==inf->person_class_index)
                 {
                     num_person_detections++;
-                    det->num_pose_points=inf->md.num_person_keypoints;
-                    for(int k=0;k<det->num_pose_points;k++)
+                    if (inf->md.num_person_keypoints==17)
                     {
-                        det->pose_points[k].x=ptr[inf->md.person_keypoint_offset+3*k+0];
-                        det->pose_points[k].y=ptr[inf->md.person_keypoint_offset+3*k+1];
-                        det->pose_points[k].conf=ptr[inf->md.person_keypoint_offset+3*k+2];
+                        det->num_pose_points=inf->md.num_person_keypoints;
+                        for(int k=0;k<det->num_pose_points;k++)
+                        {
+                            det->pose_points[k].x=ptr[inf->md.person_keypoint_offset+3*k+0];
+                            det->pose_points[k].y=ptr[inf->md.person_keypoint_offset+3*k+1];
+                            det->pose_points[k].conf=ptr[inf->md.person_keypoint_offset+3*k+2];
+                        }
+                    }
+                    else if (inf->md.num_person_keypoints==19)
+                    {
+                        kp_t temp[19];
+                        for(int k=0;k<19;k++)
+                        {
+                            temp[k].x=ptr[inf->md.person_keypoint_offset+3*k+0];
+                            temp[k].y=ptr[inf->md.person_keypoint_offset+3*k+1];
+                            temp[k].conf=ptr[inf->md.person_keypoint_offset+3*k+2];
+                        }
+                        det->num_pose_points=17;
+                        for(int k=0;k<17;k++) det->pose_points[k]=temp[k];
+                        det->num_face_points=5;
+                        det->face_points[0]=temp[2];
+                        det->face_points[1]=temp[1];
+                        det->face_points[2]=temp[0];
+                        det->face_points[3]=temp[18];
+                        det->face_points[4]=temp[17];
                     }
                     det->num_attr=num_attributes;
                     for(int k=0;k<num_attributes;k++) det->attr[k]=ptr[4+nc+k];
@@ -672,12 +703,16 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
             }
         }
         assert(inf->person_class_index==0); // no issue if not, just too lazy to fix code below!
-        assert(inf->face_class_index==1);
+        assert(inf->face_class_index==1 || inf->face_class_index==-1);
 
         dets[b]->person_dets=&dets[b]->det[0];
         dets[b]->num_person_detections=num_person_detections;
-        dets[b]->face_dets=dets[b]->person_dets+num_person_detections;
-        dets[b]->num_face_detections=num_face_detections;
+        if (inf->face_class_index!=-1)
+        {
+            dets[b]->face_dets=dets[b]->person_dets+num_person_detections;
+            dets[b]->num_face_detections=num_face_detections;
+
+        }
     }
 }
 

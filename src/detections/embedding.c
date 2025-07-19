@@ -80,6 +80,7 @@ void embedding_sync(embedding_t *e)
     assert(e != nullptr);
     if (e->value_set) return;
     e->future->wait();                /* efficient blocking wait */
+    assert(e->value_set);
 }
 
 bool embedding_is_ready(embedding_t *e)

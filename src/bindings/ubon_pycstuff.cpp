@@ -885,6 +885,7 @@ public:
             d["track_dets"] = convert_detections(res->track_dets);
             d["inference_dets"] = convert_detections(res->inference_dets);
             if (res->track_dets && res->track_dets->frame_jpeg) d["frame_jpeg"]=convert_jpeg(res->track_dets->frame_jpeg);
+            if (res->track_dets && res->track_dets->clip_embedding) d["clip_embedding"]=convert_embedding(res->track_dets->clip_embedding);
             results_out.push_back(d);
             track_results_destroy(res);
         }
@@ -1095,6 +1096,16 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_on_images", &PyTrackStream::run_on_images)
         .def("run_on_individual_images", &PyTrackStream::run_on_individual_images)
         .def("run_on_video_file", &PyTrackStream::run_on_video_file)
+        // Async version: GIL is released during execution
+        .def("run_on_video_file_async", [](PyTrackStream &self,
+                                   const std::string &file,
+                                   simple_decoder_codec_t codec,
+                                   double video_fps,
+                                   double start_time,
+                                   double end_time) {
+            py::gil_scoped_release release;
+            self.run_on_video_file(file.c_str(), codec, video_fps, start_time, end_time);
+        })
         .def("get_results", &PyTrackStream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
