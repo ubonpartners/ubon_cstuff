@@ -141,6 +141,7 @@ else()
         -lnvjpeg
         -lnvidia-ml
         -lnvidia-opticalflow
+        -lasound
     )
 endif()
 
@@ -151,6 +152,7 @@ include_directories(${CMAKE_BINARY_DIR} )
 
 # Gather sources
 file(GLOB SRC_FILES
+    ${CMAKE_SOURCE_DIR}/src/audioframe/*.c
     ${CMAKE_SOURCE_DIR}/src/c_tests/*.c
     ${CMAKE_SOURCE_DIR}/src/cuda/*.c
     ${CMAKE_SOURCE_DIR}/src/decode/*.c
@@ -199,6 +201,7 @@ endif()
 if (BUILD_APPS)
     set(APP_MAIN_FILES
         ${CMAKE_SOURCE_DIR}/src/main.c
+        ${CMAKE_SOURCE_DIR}/src/apps/audio_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/decode_benchmark.c
         ${CMAKE_SOURCE_DIR}/src/apps/decode_file.c
         ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c
