@@ -30,7 +30,8 @@ void cuda_convert_yuv420_to_fp_planar(uint8_t * src_y, uint8_t *src_u, uint8_t *
                                     int src_width, int src_height,
                                     cudaStream_t stream, bool is_fp16);
 
-void cuda_half_to_float(void * d_input, void* h_output, int size);
+void cuda_half_to_float(void * input, void* output, int size);
+void cuda_float_to_half(void * input, void* output, int size);
 void cuda_convert_fp16_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
 void cuda_convert_fp32_planar_to_RGB24(void *src, void *dest, int dest_stride, int width, int height, cudaStream_t stream);
 void cuda_downsample_2x2(const uint8_t* d_src, int src_stride, uint8_t* d_dst, int dst_stride, int width, int height, cudaStream_t stream);

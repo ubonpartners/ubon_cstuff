@@ -8,6 +8,7 @@
 #include "cuda_stuff.h"
 #include "cuda_kernels.h"
 #include "misc.h"
+#include "maths_stuff.h"
 #include <stdint.h>
 #include <assert.h>
 #include <math.h>
@@ -228,12 +229,39 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp32(image_t *img, image_
     return ret;
 }
 
-static image_t *image_planar_fp16_fp32_device(image_t *img, image_format_t format)
+static image_t *tensor_fp16_fp32_device(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
+    image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_half_to_float(img->rgb, ret->rgb, img->width*img->height);
+    cuda_half_to_float(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    return ret;
+}
+
+static image_t *tensor_fp16_fp32_host(image_t *img, image_format_t format)
+{
+    image_t *ret=create_image(img->width, img->height, format);
+    if (!ret) return 0;
+    image_add_dependency(ret, img);
+    vec_copy_float_to_half(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    return ret;
+}
+
+static image_t *tensor_fp32_fp16_device(image_t *img, image_format_t format)
+{
+    image_t *ret=create_image(img->width, img->height, format);
+    if (!ret) return 0;
+    image_add_dependency(ret, img);
+    cuda_float_to_half(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    return ret;
+}
+
+static image_t *tensor_fp32_fp16_host(image_t *img, image_format_t format)
+{
+    image_t *ret=create_image(img->width, img->height, format);
+    if (!ret) return 0;
+    image_add_dependency(ret, img);
+    vec_copy_half_to_float(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
     return ret;
 }
 
@@ -361,6 +389,15 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_TENSOR_FP32_DEVICE, IMAGE_FORMAT_TENSOR_FP32_HOST, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_TENSOR_FP16_HOST, IMAGE_FORMAT_TENSOR_FP16_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_TENSOR_FP32_HOST, IMAGE_FORMAT_TENSOR_FP32_DEVICE, image_convert_tensor_device_host, IMAGE_FORMAT_NONE, 50},
+
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, tensor_fp32_fp16_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP32_DEVICE, IMAGE_FORMAT_TENSOR_FP16_DEVICE, tensor_fp32_fp16_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, tensor_fp16_fp32_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP16_DEVICE, IMAGE_FORMAT_TENSOR_FP32_DEVICE, tensor_fp16_fp32_device, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, tensor_fp32_fp16_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP32_HOST, IMAGE_FORMAT_TENSOR_FP16_HOST, tensor_fp32_fp16_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, tensor_fp16_fp32_host, IMAGE_FORMAT_NONE, 50},
+    {IMAGE_FORMAT_TENSOR_FP16_HOST, IMAGE_FORMAT_TENSOR_FP32_HOST, tensor_fp16_fp32_host, IMAGE_FORMAT_NONE, 50},
 };
 
 static image_conversion_method_t* conversion_table[NUM_IMAGE_FORMATS][NUM_IMAGE_FORMATS] = {0};

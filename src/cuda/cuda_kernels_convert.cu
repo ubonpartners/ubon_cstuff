@@ -207,11 +207,27 @@ void cuda_convertRGB24toYUV420(const uint8_t* d_rgb,
                 uv_stride);
 }
 
-static __global__ void half_to_float_kernel(const __half* d_input, float* d_output, int size)
+static __global__ void float_to_half_kernel(const float* input, __half* output, int size)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        d_output[idx] = __half2float(d_input[idx]);
+        output[idx] = __float2half(input[idx]);
+    }
+}
+
+void cuda_float_to_half(void* input, void* output, int size, cudaStream_t stream)
+{
+    // Launch kernel with appropriate configuration
+    int blockSize = 256;
+    int gridSize = (size + blockSize - 1) / blockSize;
+    float_to_half_kernel<<<gridSize, blockSize, 0, stream>>>((const float *)input, (__half*)output, size);
+}
+
+static __global__ void half_to_float_kernel(const __half* input, float* output, int size)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = __half2float(input[idx]);
     }
 }
 
