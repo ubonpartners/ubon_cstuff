@@ -193,15 +193,26 @@ static void do_inference(infer_aux_t* inf, void *src, embedding_t **ret_emb, int
     }
 }
 
-void infer_aux_batch_linear(infer_aux_t* inf, embedding_t **ret_emb, float *data, int n)
+void infer_aux_batch_tensor(infer_aux_t* inf, image_t **images, embedding_t **ret_emb, int n)
 {
     assert(n <= inf->md.max_batch);
-    int elts=n*inf->md.input_w*inf->md.input_h;
-    int bytes=elts*( inf->md.input_fp16 ? 2 : 4);
-    vec_copy_floathalf(data, inf->input_mem_host, elts, false, inf->md.input_fp16);
-    cudaMemcpyAsync(inf->input_mem_device,inf->input_mem_host, bytes, cudaMemcpyHostToDevice, inf->stream);
-    cudaStreamSynchronize(inf->stream);
-    do_inference(inf, inf->input_mem_device, ret_emb, n);
+    image_t *converted_images[n];
+    image_format_t fmt=(inf->md.input_fp16) ? IMAGE_FORMAT_TENSOR_FP16_DEVICE : IMAGE_FORMAT_TENSOR_FP32_DEVICE;
+    for(int i=0;i<n;i++)
+    {
+        image_t *img=images[i];
+        printf("img %dx%d model %dx%d\n",img->width,img->height,inf->md.input_w,inf->md.input_h);
+        assert(img->width==inf->md.input_w);
+        assert(img->height==inf->md.input_h);
+        assert(img->c==1);
+        converted_images[i]=image_convert(img, fmt);
+    }
+    for(int i=0;i<n;i++)
+    {
+        cuda_stream_add_dependency(inf->stream, converted_images[i]->stream);
+        do_inference(inf, converted_images[i]->rgb, ret_emb+i, n);
+    }
+    destroy_image(converted_images[0]);
 }
 
 static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t **ret_emb, float *M, int n)

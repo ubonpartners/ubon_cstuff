@@ -201,6 +201,16 @@ static void *infer_thread_fn(void *arg)
                 infer_aux_batch_roi(h->infer_aux, imgs, e, rois, count);
                 for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }
+            else if (h->type==INFER_THREAD_AUX_TENSOR) {
+                for(int i=0;i<count;i++)
+                {
+                    imgs[i]=jobs[i]->img;
+                    e[i]=jobs[i]->embedding;
+                    embedding_check(e[i]);
+                }
+                infer_aux_batch_tensor(h->infer_aux, imgs, e, count);
+                for(int i=0;i<count;i++) embedding_destroy(e[i]);
+            }
         }
 
         // 5) Signal each job’s result handle, passing back its own detection_list_t*

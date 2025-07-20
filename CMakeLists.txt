@@ -141,7 +141,7 @@ else()
         -lnvjpeg
         -lnvidia-ml
         -lnvidia-opticalflow
-        -lasound
+        -lasound -lfftw3f
     )
 endif()
 
@@ -152,6 +152,7 @@ include_directories(${CMAKE_BINARY_DIR} )
 
 # Gather sources
 file(GLOB SRC_FILES
+    ${CMAKE_SOURCE_DIR}/src/audio_alg/*.c
     ${CMAKE_SOURCE_DIR}/src/audioframe/*.c
     ${CMAKE_SOURCE_DIR}/src/c_tests/*.c
     ${CMAKE_SOURCE_DIR}/src/cuda/*.c

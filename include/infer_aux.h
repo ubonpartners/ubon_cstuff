@@ -25,6 +25,7 @@ void infer_aux_destroy(infer_aux_t *inf);
 float *infer_aux_batch(infer_aux_t *inf, image_t **img, float *kp, int n); // pass kp=0 if input images already aligned
 void infer_aux_batch(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, float *kp, int n);
 void infer_aux_batch_roi(infer_aux_t *inf, image_t **img, embedding_t **ret_emb, roi_t *rois, int n);
+void infer_aux_batch_tensor(infer_aux_t* inf, image_t **images, embedding_t **ret_emb, int n);
 
 aux_model_description_t *infer_aux_get_model_description(infer_aux_t *inf);
 
