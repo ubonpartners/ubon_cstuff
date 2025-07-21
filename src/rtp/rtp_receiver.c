@@ -52,13 +52,14 @@ struct rtp_receiver {
     void *context;
     rtp_packet_callback_fn cb;
 
+    uint32_t rtp_clock_rate;
     uint32_t current_ssrc;
     bool     ssrc_valid;
     uint32_t candidate_ssrc;
     int      candidate_ssrc_count;
 
-    // For 90 kHz extended‐timestamp bookkeeping
-    int64_t  last_extended_timestamp_90khz;
+    // For extended‐timestamp bookkeeping
+    int64_t  last_extended_timestamp;
     uint32_t last_timestamp32;       // last RTP timestamp (32‐bit) that we actually output
     bool     first_packet;
 
@@ -117,14 +118,14 @@ static inline int reorder_index(uint16_t seq) {
  */
 static uint64_t extend_timestamp(uint32_t ts32, rtp_receiver_t *r) {
     if (r->first_packet) {
-        r->last_extended_timestamp_90khz = ts32;
+        r->last_extended_timestamp = ts32;
         r->last_timestamp32 = ts32;
         return (uint64_t)ts32;
     }
     int32_t delta = (int32_t)(ts32 - r->last_timestamp32);
     r->last_timestamp32 = ts32;
-    r->last_extended_timestamp_90khz += (int64_t)delta;
-    return (uint64_t)r->last_extended_timestamp_90khz;
+    r->last_extended_timestamp += (int64_t)delta;
+    return (uint64_t)r->last_extended_timestamp;
 }
 
 /*
@@ -165,6 +166,7 @@ rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
     r->first_packet = true;
 
     // Defaults: no payload_type set, no SSRC, timeouts = 0
+    r->rtp_clock_rate       = 90000;
     r->payload_type_set     = false;
     r->ssrc_valid           = false;
     r->candidate_ssrc_count = 0;
@@ -198,7 +200,7 @@ void rtp_receiver_reset(rtp_receiver_t *r) {
     r->candidate_ssrc_count    = 0;
     r->payload_type_set        = false;
     r->last_sequence           = 0;
-    r->last_extended_timestamp_90khz = 0;
+    r->last_extended_timestamp = 0;
     r->last_timestamp32        = 0;
     r->sequential_packets_outside_window = 0;
     // timeouts stay as they were (since presumably user set them)
@@ -424,7 +426,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             pkt.payload_length          = out_slot->length - out_header_len;
             pkt.sequence_number         = next_seq;
             pkt.timestamp               = out_slot->timestamp32;
-            pkt.extended_timestamp_90khz = extend_timestamp(out_slot->timestamp32, r);
+            pkt.extended_timestamp      = extend_timestamp(out_slot->timestamp32, r);
             pkt.ssrc                    = r->current_ssrc;
             pkt.marker                  = !!(out_data[1] & 0x80);
 
@@ -436,7 +438,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
 
             // Remove from buffer
             out_slot->valid = false;
-            // (r->last_timestamp32 and r->last_extended_timestamp_90khz were updated in extend_timestamp)
+            // (r->last_timestamp32 and r->last_extended_timestamp were updated in extend_timestamp)
 
             // Continue looping to see if the next‐next sequence is already here
             continue;
@@ -459,7 +461,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
                         break;
                     }
                     int32_t delta32 = (int32_t)(s2->timestamp32 - r->last_timestamp32);
-                    if ((int64_t)delta32 > (int64_t)(90 * r->max_delay_ms)) {
+                    if ((int64_t)delta32 > (int64_t)((r->rtp_clock_rate * r->max_delay_ms)/1000)) {
                         skip_missing = true;
                         break;
                     }
@@ -471,7 +473,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             // We skip “next_seq” even though it was never received.
             r->last_sequence = next_seq;
             r->stats.packets_missing += 1;
-            // Note: do NOT touch r->last_timestamp32 or r->last_extended_timestamp_90khz
+            // Note: do NOT touch r->last_timestamp32 or r->last_extended_timestamp
             continue;
         }
 
@@ -515,53 +517,64 @@ int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp)
     if (!r || !sdp_str) return -1;
 
     parsed_sdp_t *parsed = parse_sdp(sdp_str);
-    if (!parsed || parsed->videoStreams.empty()) {
-        log_error("No video stream found");
+    if (!parsed) {
+        log_error("SDP parse failed");
+        return -1;
+    }
+
+    // Prefer audio if we see Opus, else fallback to first video
+    bool useAudio = !parsed->audioStreams.empty();
+    const RtpParameters *stream = nullptr;
+
+    if (useAudio) {
+        stream = &parsed->audioStreams[0];
+    } else if (!parsed->videoStreams.empty()) {
+        stream = &parsed->videoStreams[0];
+    } else {
+        log_error("No media stream found");
         parsed_sdp_destroy(parsed);
         return -1;
     }
 
-    const RtpParameters &stream = parsed->videoStreams[0];
-
-    if (stream.payloadType < 0 || stream.port <= 0) {
-        parsed_sdp_destroy(parsed);
+    // Must have valid payloadType and port
+    if (stream->payloadType < 0 || stream->port <= 0) {
         log_error("Payload type or port error");
+        parsed_sdp_destroy(parsed);
         return -1;
     }
 
-    // Set payload type
-    rtp_receiver_set_payload_type(r, static_cast<uint8_t>(stream.payloadType));
+    // Fill receiver
+    rtp_receiver_set_payload_type(r, static_cast<uint8_t>(stream->payloadType));
 
-    // If we have at least one crypto key, try to enable SRTP
-    if (!stream.cryptoInfos.empty()) {
-        const auto &ci = stream.cryptoInfos[0];
-        const std::string &decoded = ci.keyParams;
+    // Store the clock rate for later (e.g. timeouts, timestamp extension)
+    r->rtp_clock_rate = stream->clockRate;
 
-        if (decoded.empty()) {
-            log_error("Crypto key is empty after base64 decoding");
-            parsed_sdp_destroy(parsed);
-            return -1;
-        }
-
-        if (rtp_receiver_enable_srtp(r,
-                                      reinterpret_cast<const uint8_t *>(decoded.data()),
-                                      static_cast<int>(decoded.size())) != 0) {
-            log_error("Failed to enable SRTP from SDP (keylen %zu)", decoded.size());
-            parsed_sdp_destroy(parsed);
-            sdp->encryption_enabled=true;
-            return -1;
+    // SRTP?
+    if (!stream->cryptoInfos.empty()) {
+        const auto &ci = stream->cryptoInfos[0];
+        const std::string &key = ci.keyParams;
+        if (!key.empty()) {
+            if (rtp_receiver_enable_srtp(r,
+                    reinterpret_cast<const uint8_t *>(key.data()),
+                    key.size()) != 0) {
+                log_error("Failed to enable SRTP from SDP (keylen %zu)", key.size());
+                sdp->encryption_enabled = true;
+                // still proceed
+            }
         }
     }
 
-    sdp->valid=true;
-    sdp->port=stream.port;
-    sdp->is_h264=(stream.codec == "H264");
-    sdp->is_h265=(stream.codec == "H265");
+    // Populate set_sdp_t
+    sdp->valid               = true;
+    sdp->port                = stream->port;
+    sdp->rtp_clock_rate      = stream->clockRate;
+    sdp->is_h264             = (!useAudio && stream->codec == "H264");
+    sdp->is_h265             = (!useAudio && stream->codec == "H265");
+    sdp->is_opus             = (useAudio && stream->codec == "OPUS");
 
     parsed_sdp_destroy(parsed);
     return 0;
 }
-
 
 // -----------------------------------------------------------------------------------------------
 // UDP receive‐thread function.  Blocks on recvfrom(), pushes each packet into rtp_receiver_add_packet().

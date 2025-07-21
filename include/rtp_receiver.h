@@ -19,7 +19,7 @@ typedef struct rtp_packet {
     int            payload_length;     // Length of the payload
     uint16_t       sequence_number;    // 16‐bit RTP sequence number
     uint32_t       timestamp;          // 32‐bit RTP timestamp (raw)
-    uint64_t       extended_timestamp_90khz;  // “Extended” RTP timestamp in 90 kHz domain
+    uint64_t       extended_timestamp; // “Extended” RTP timestamp
     uint32_t       ssrc;               // SSRC of the stream
     bool           marker;             // Marker bit from header
 } rtp_packet_t;
@@ -130,7 +130,9 @@ typedef struct set_sdp
     bool encryption_enabled;
     bool is_h264;
     bool is_h265;
+    bool is_opus;
     int port;
+    int rtp_clock_rate;
 } set_sdp_t;
 
 int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp);

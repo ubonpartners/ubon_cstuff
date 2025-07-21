@@ -141,7 +141,7 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
         emit_frame(a, pkt->ssrc);
         a->in_frame         = true;
         a->last_timestamp   = pkt->timestamp;
-        a->last_extended_ts = pkt->extended_timestamp_90khz;
+        a->last_extended_ts = pkt->extended_timestamp;
         a->is_complete      = true;
         a->last_sequence_number = (uint16_t)((pkt->sequence_number - 1) & 0xFFFF);
     }
