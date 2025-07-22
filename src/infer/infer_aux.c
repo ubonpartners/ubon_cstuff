@@ -210,7 +210,7 @@ void infer_aux_batch_tensor(infer_aux_t* inf, image_t **images, embedding_t **re
     for(int i=0;i<n;i++)
     {
         cuda_stream_add_dependency(inf->stream, converted_images[i]->stream);
-        do_inference(inf, converted_images[i]->rgb, ret_emb+i, n);
+        do_inference(inf, converted_images[i]->tensor_mem, ret_emb+i, n);
     }
     destroy_image(converted_images[0]);
 }

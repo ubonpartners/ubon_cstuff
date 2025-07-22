@@ -153,18 +153,19 @@ image_t *effat_cpu_preprocess(EffatCPUHandle* h, const float* audio, int64_t n_s
     }
     // Mel projection: mel_out (n_mels x frames)
     for(int m=0;m<c->n_mels;++m){
-        float* dest = h->mel_out + (size_t)m * frames;
+        float* dest = h->mel_out;
         const float* filt = h->mel_filter + (size_t)m * bins;
         for(int f=0;f<frames;++f){
             const float* p = h->power + (size_t)f * bins;
             float acc=0.0f; for(int b=0;b<bins;++b) acc += filt[b]*p[b];
-            dest[f] = acc;
+            dest[m*frames+f] = acc;
+            //dest[f*c->n_mels+m]=acc;
         }
     }
     // Log + norm
 
     size_t total = (size_t)c->n_mels * (size_t)(frames-1);
-    image_t *out=create_image_tensor(1, 1, frames-1, c->n_mels, IMAGE_FORMAT_TENSOR_FP32_HOST);
+    image_t *out=create_image_tensor(1, 1, c->n_mels, frames-1, IMAGE_FORMAT_TENSOR_FP32_HOST);
     float* out32 = (float *)out->host_mem;
     for(size_t i=0;i<total;++i) out32[i] = 0.2f * logf(h->mel_out[i] + c->eps) + 0.9f;
     free(pre); free(padded_buf);

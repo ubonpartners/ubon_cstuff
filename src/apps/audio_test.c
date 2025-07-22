@@ -27,12 +27,13 @@ static void audio_event_detector_test()
         printf("S %d SR %d \n",audioframe_get_num_samples(fr), audioframe_get_sample_rate(fr));
         embedding_t *e=audio_event_process(ae, fr);
         float *d=embedding_get_data(e);
-        audio_event_detection_t evt[3];
-        int n=audio_event_postprocess(ae, e, evt, 3);
+        audio_event_detection_t evt[10];
+        int n=audio_event_postprocess(ae, e, evt, 10);
         for(int i=0;i<n;i++)
         {
             printf("%d) detected %30s prob %f\n",i,audio_event_class_name(ae, evt[i].class_index), evt[i].prob);
         }
+        while(1);
     }
 }
 

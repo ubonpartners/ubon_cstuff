@@ -36,6 +36,14 @@ static bool image_format_is_device(image_format_t format)
          ||(format==IMAGE_FORMAT_TENSOR_FP16_DEVICE);
 }
 
+static bool image_format_is_tensor(image_format_t format)
+{
+  return   (format==IMAGE_FORMAT_TENSOR_FP32_HOST)
+         ||(format==IMAGE_FORMAT_TENSOR_FP16_HOST)
+         ||(format==IMAGE_FORMAT_TENSOR_FP32_DEVICE)
+         ||(format==IMAGE_FORMAT_TENSOR_FP16_DEVICE);
+}
+
 static int image_format_bytes_per_component(image_format_t format)
 {
   switch(format)
@@ -74,6 +82,7 @@ struct image
     uint8_t *u;
     uint8_t *v;
     uint8_t *rgb;
+    void *tensor_mem; // used for tensor
     int stride_y, stride_uv, stride_rgb;
     cudaStream_t stream; // any outstanding work on this surface will put a depency on this stream
     void *device_mem;
@@ -97,7 +106,7 @@ const char *image_format_name(image_format_t format);
 // create image: allocate a new surface and it's video memory
 image_t *create_image(int width, int height, image_format_t fmt);
 // tensor images
-image_t *create_image_tensor(int n, int c, int width, int height, image_format_t fmt);
+image_t *create_image_tensor(int n, int c, int h, int w, image_format_t fmt);
 // create_image_no_surface_memory: create an empty shell surface with
 // no underlying video memory. This is useful in cases where different
 // surfaces share underlying memory - e.g. if one is a crop of another

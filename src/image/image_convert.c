@@ -351,6 +351,27 @@ static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
     return dst;
 }
 
+static image_t *convert_reference(image_t *src, image_format_t format)
+{
+    assert(src->n==1);
+    assert(src->c==1);
+    image_t *ret=create_image_no_surface_memory(src->width, src->height, format);
+    ret->referenced_surface=image_reference(src);
+    ret->time=src->time;
+    if (image_format_is_tensor(format))
+    {
+        assert(src->rgb!=0);
+        ret->tensor_mem=src->rgb;
+    }
+    else
+    {
+        assert(ret->rgb!=0);
+        ret->rgb=(uint8_t *)src->tensor_mem;
+    }
+    image_add_dependency(ret, src);
+    return ret;
+}
+
 typedef struct image_conversion_method
 {
     image_format_t src;
@@ -398,6 +419,16 @@ static image_conversion_method_t direct_methods[] = {
     {IMAGE_FORMAT_TENSOR_FP32_HOST, IMAGE_FORMAT_TENSOR_FP16_HOST, tensor_fp32_fp16_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, tensor_fp16_fp32_host, IMAGE_FORMAT_NONE, 50},
     {IMAGE_FORMAT_TENSOR_FP16_HOST, IMAGE_FORMAT_TENSOR_FP32_HOST, tensor_fp16_fp32_host, IMAGE_FORMAT_NONE, 50},
+
+    {IMAGE_FORMAT_TENSOR_FP16_HOST, IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_TENSOR_FP32_HOST, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_HOST, IMAGE_FORMAT_TENSOR_FP16_HOST, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_HOST, IMAGE_FORMAT_TENSOR_FP32_HOST, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_TENSOR_FP16_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_TENSOR_FP32_DEVICE, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE, IMAGE_FORMAT_TENSOR_FP16_DEVICE, convert_reference, IMAGE_FORMAT_NONE, 10},
+    {IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE, IMAGE_FORMAT_TENSOR_FP32_DEVICE, convert_reference, IMAGE_FORMAT_NONE, 10},
+
 };
 
 static image_conversion_method_t* conversion_table[NUM_IMAGE_FORMATS][NUM_IMAGE_FORMATS] = {0};

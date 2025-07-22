@@ -24,6 +24,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "motion_track.h"
 #include "kalman_tracker.h"
 #include "fiqa.h"
+#include "ubon_pyc_util.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -215,46 +216,6 @@ static void pop_bool(py::dict& cfg, const char* key, bool& dst, bool& flag) {
     }
 };
 
-static py::list convert_points(kp_t *pts, int n)
-{
-    py::list pt_list;
-    for(int i=0;i<n;i++)
-    {
-        pt_list.append(pts[i].x);
-        pt_list.append(pts[i].y);
-        pt_list.append(pts[i].conf);
-    }
-    return pt_list;
-}
-
-static py::list convert_float_array(float *a, int n)
-{
-    py::list pt_list;
-    for(int i=0;i<n;i++) pt_list.append(a[i]);
-    return pt_list;
-}
-
-static py::dict convert_embedding(embedding_t *e)
-{
-    py::dict d;
-    embedding_sync(e);
-    d["data"]=convert_float_array(embedding_get_data(e), embedding_get_size(e));
-    d["time"]=embedding_get_time(e);
-    d["quality"]=embedding_get_quality(e);
-    return d;
-}
-
-static py::object convert_jpeg(jpeg_t *j)
-{
-    py::dict d;
-    size_t sz=0;
-    uint8_t *data=jpeg_get_data(j, &sz);
-    if (sz==0) return py::none();
-    d["data"]=py::bytes(reinterpret_cast<const char*>(data), sz);
-    d["time"]=jpeg_get_time(j);
-    d["quality"]=jpeg_get_quality(j);
-    return d;
-}
 
 static void apply_infer_config(py::dict cfg_dict, infer_config_t& config) {
     py::dict cfg_copy(cfg_dict);  // Mutable copy
@@ -279,80 +240,6 @@ static void apply_infer_config(py::dict cfg_dict, infer_config_t& config) {
         }
         throw std::runtime_error("Unknown config keys: " + unknown_keys);
     }
-}
-
-static py::list convert_roi(roi_t roi)
-{
-    py::list box;
-    box.append(roi.box[0]);
-    box.append(roi.box[1]);
-    box.append(roi.box[2]);
-    box.append(roi.box[3]);
-    return box;
-}
-
-static py::dict convert_model_description(model_description_t* desc) {
-    if (!desc) throw std::runtime_error("Failed to get model description");
-    py::dict d;
-    d["class_names"] = py::cast(desc->class_names);
-    d["person_attribute_names"] = py::cast(desc->person_attribute_names);
-    d["num_classes"] = desc->num_classes;
-    d["num_person_attributes"] = desc->num_person_attributes;
-    d["num_keypoints"] = desc->num_keypoints;
-    d["max_batch"] = desc->max_batch;
-    d["input_is_fp16"] = desc->input_is_fp16;
-    d["output_is_fp16"] = desc->output_is_fp16;
-    d["min_w"] = desc->min_w;
-    d["max_w"] = desc->max_w;
-    d["min_h"] = desc->min_h;
-    d["max_h"] = desc->max_h;
-    d["model_output_dims"] = py::make_tuple(desc->model_output_dims[0], desc->model_output_dims[1], desc->model_output_dims[2]);
-    d["engineInfo"] = desc->engineInfo;
-    return d;
-}
-
-static py::object convert_detections(detection_list_t *dets)
-{
-    if (!dets)
-        return py::none();  // <-- return Python None if dets is null
-
-    py::list results;
-    for (int j = 0; j < dets->num_detections; ++j) {
-        detection_t* det = dets->det[j];
-        py::dict item;
-        item["class"] = det->cl;
-        item["confidence"] = det->conf;
-        item["track_id"] = det->track_id;
-        py::list box;
-        box.append(det->x0);
-        box.append(det->y0);
-        box.append(det->x1);
-        box.append(det->y1);
-        item["box"] = box;
-        if (det->subbox_conf>0)
-        {
-            py::list subbox;
-            subbox.append(det->subbox_x0);
-            subbox.append(det->subbox_y0);
-            subbox.append(det->subbox_x1);
-            subbox.append(det->subbox_y1);
-            item["subbox"] = subbox;
-            item["subbox_conf"] = det->subbox_conf;
-        }
-        assert(det->num_pose_points==0 || det->num_pose_points==17);
-        assert(det->num_face_points==0 || det->num_face_points==5);
-        if (det->num_face_points>0) item["face_points"]=convert_points(det->face_points, det->num_face_points);
-        if (det->num_pose_points>0) item["pose_points"]=convert_points(det->pose_points, det->num_pose_points);
-        if (det->num_attr>0) item["attrs"]=convert_float_array(det->attr, det->num_attr);
-        if (det->reid_vector_len>0) item["reid_vector"] = convert_float_array(det->reid, det->reid_vector_len);
-        if (det->face_embedding!=0) item["face_embedding"]= convert_embedding(det->face_embedding);
-        if (det->clip_embedding!=0) item["clip_embedding"]= convert_embedding(det->clip_embedding);
-        if (det->face_jpeg) item["face_jpeg"]=convert_jpeg(det->face_jpeg);
-        if (det->clip_jpeg) item["clip_jpeg"]=convert_jpeg(det->clip_jpeg);
-        if (det->fiqa_embedding) item["fiqa_score"]=fiqa_embedding_quality(det->fiqa_embedding);
-        results.append(item);
-    }
-    return results;
 }
 
 class c_infer {
@@ -464,28 +351,9 @@ public:
         // Convert detections
         py::list detections;
         if (result_data.dets) {
-            for (int j = 0; j < result_data.dets->num_detections; ++j) {
-                detection_t* det = result_data.dets->det[j];
-                py::dict item;
-                item["class"] = det->cl;
-                item["confidence"] = det->conf;
-                py::list det_box;
-                det_box.append(det->x0);
-                det_box.append(det->y0);
-                det_box.append(det->x1);
-                det_box.append(det->y1);
-                item["box"] = det_box;
-                if (det->num_face_points > 0)
-                    item["face_points"] = convert_points(det->face_points, det->num_face_points);
-                if (det->num_pose_points > 0)
-                    item["pose_points"] = convert_points(det->pose_points, det->num_pose_points);
-                if (det->num_attr > 0)
-                    item["attrs"] = convert_float_array(det->attr, det->num_attr);
-                detections.append(item);
-            }
+            result["detections"] = convert_detections(result_data.dets);
             detection_list_destroy(result_data.dets);
         }
-        result["detections"] = detections;
         return result;
     }
 
@@ -597,16 +465,7 @@ public:
     py::dict get_model_description() {
         aux_model_description_t* desc = infer_aux_get_model_description(aux);
         if (!desc) throw std::runtime_error("Failed to get aux model description");
-
-        py::dict d;
-        d["embedding_size"] = desc->embedding_size;
-        d["max_batch"] = desc->max_batch;
-        d["input_w"] = desc->input_w;
-        d["input_h"] = desc->input_h;
-        d["input_fp16"] = desc->input_fp16;
-        d["output_fp16"] = desc->output_fp16;
-        d["engineInfo"] = desc->engineInfo;
-        return d;
+        return convert_aux_model_description(desc);
     }
 
     infer_aux_t* raw() { return aux; }
@@ -817,15 +676,15 @@ class c_pcap_decoder {
         }
     };
 
-class PyTrackSharedState {
+class c_track_shared {
 public:
-    explicit PyTrackSharedState(const std::string& config_path) {
+    explicit c_track_shared(const std::string& config_path) {
         state = track_shared_state_create(config_path.c_str());
         if (!state)
             throw std::runtime_error("Failed to create shared state");
     }
 
-    ~PyTrackSharedState() {
+    ~c_track_shared() {
         if (state)
             track_shared_state_destroy(state);
     }
@@ -840,9 +699,9 @@ private:
     track_shared_state_t* state = nullptr;
 };
 
-class PyTrackStream {
+class c_track_stream {
 public:
-    explicit PyTrackStream(std::shared_ptr<PyTrackSharedState> shared_state_py)
+    explicit c_track_stream(std::shared_ptr<c_track_shared> shared_state_py)
         : shared_state(shared_state_py)
     {
         stream = track_stream_create(shared_state->get(), nullptr, nullptr);
@@ -850,7 +709,7 @@ public:
             throw std::runtime_error("Failed to create track stream");
     }
 
-    ~PyTrackStream() {
+    ~c_track_stream() {
         if (stream)
             track_stream_destroy(stream);
     }
@@ -894,7 +753,7 @@ public:
 
 private:
     track_stream_t* stream = nullptr;
-    std::shared_ptr<PyTrackSharedState> shared_state;  // Shared ownership to keep it alive
+    std::shared_ptr<c_track_shared> shared_state;  // Shared ownership to keep it alive
 };
 
 class c_motion_tracker {
@@ -1086,18 +945,18 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .value("TRACK_FRAME_TRACKED_FULL_REFRESH", TRACK_FRAME_TRACKED_FULL_REFRESH)
         .export_values();
 
-    py::class_<PyTrackSharedState, std::shared_ptr<PyTrackSharedState>>(m, "c_track_shared_state")
+    py::class_<c_track_shared, std::shared_ptr<c_track_shared>>(m, "c_track_shared_state")
         .def(py::init<const std::string&>())
-        .def("get_model_description", &PyTrackSharedState::get_model_description);
+        .def("get_model_description", &c_track_shared::get_model_description);
 
-    py::class_<PyTrackStream>(m, "c_track_stream")
-        .def(py::init<std::shared_ptr<PyTrackSharedState>>(), py::arg("shared_state"))
-        .def("set_frame_intervals", &PyTrackStream::set_frame_intervals)
-        .def("run_on_images", &PyTrackStream::run_on_images)
-        .def("run_on_individual_images", &PyTrackStream::run_on_individual_images)
-        .def("run_on_video_file", &PyTrackStream::run_on_video_file)
+    py::class_<c_track_stream>(m, "c_track_stream")
+        .def(py::init<std::shared_ptr<c_track_shared>>(), py::arg("shared_state"))
+        .def("set_frame_intervals", &c_track_stream::set_frame_intervals)
+        .def("run_on_images", &c_track_stream::run_on_images)
+        .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
+        .def("run_on_video_file", &c_track_stream::run_on_video_file)
         // Async version: GIL is released during execution
-        .def("run_on_video_file_async", [](PyTrackStream &self,
+        .def("run_on_video_file_async", [](c_track_stream &self,
                                    const std::string &file,
                                    simple_decoder_codec_t codec,
                                    double video_fps,
@@ -1106,7 +965,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             py::gil_scoped_release release;
             self.run_on_video_file(file.c_str(), codec, video_fps, start_time, end_time);
         })
-        .def("get_results", &PyTrackStream::get_results);
+        .def("get_results", &c_track_stream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
         .value("SIMPLE_DECODER_CODEC_H264", SIMPLE_DECODER_CODEC_H264)

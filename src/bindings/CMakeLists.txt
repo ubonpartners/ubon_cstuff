@@ -1,4 +1,4 @@
-add_library(ubon_pycstuff MODULE ubon_pycstuff.cpp)
+add_library(ubon_pycstuff MODULE ubon_pycstuff.cpp ubon_pyc_util.cpp)
 target_include_directories(ubon_pycstuff PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 if(DEFINED ENV{JETSON_SOC})
