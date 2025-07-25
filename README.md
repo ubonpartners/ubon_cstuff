@@ -62,6 +62,7 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - sudo apt install libnvvpi3 vpi3-dev vpi3-samples
 - sudo apt install libfftw3-dev
 - sudo apt install libasound-dev
+- sudo apt install libsamplerate-dev
 
 ---
 
