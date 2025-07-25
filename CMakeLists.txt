@@ -118,6 +118,7 @@ if(DEFINED ENV{JETSON_SOC})
         -lnvbufsurface -lnvbufsurftransform
         -lnvvpi -lnvjpeg -lnvdla_compiler
         -lnvinfer -lnvonnxparser -lnvinfer_plugin
+        -lasound -lfftw3f
         -Wl,-rpath=/usr/lib/aarch64-linux-gnu/nvidia
         -Wl,-rpath=/usr/local/cuda/lib64
         -Wl,--disable-new-dtags
