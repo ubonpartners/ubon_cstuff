@@ -100,6 +100,8 @@ set(COMMON_LIBS
 if(DEFINED ENV{JETSON_SOC})
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=1")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DUBONCSTUFF_PLATFORM=1")
+
     list(APPEND PROJECT_INCLUDE_DIRS
         /usr/src/jetson_multimedia_api/include
         /usr/local/cuda/include
@@ -142,7 +144,7 @@ else()
         -lnvidia-opticalflow
         -lasound -lfftw3f
     )
-    list(APPEND ARCH_LIBS -ledit -ltinfo)
+    #list(APPEND ARCH_LIBS -ledit -ltinfo)
 endif()
 
 include_directories(${PROJECT_INCLUDE_DIRS})

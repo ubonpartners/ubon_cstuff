@@ -8,17 +8,11 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <cuda_runtime.h>
-
 #if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
-#include <queue>
 #include "cudaEGL.h"
 #include "NvUtils.h"
 #include "NvVideoDecoder.h"
-#include "NvEglRenderer.h"
-#include "EGL/egl.h"
-#include "EGL/eglext.h"
 #include "NvBufSurface.h"
-
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
 
@@ -30,11 +24,11 @@ using namespace std;
         abort(); \
     }
 
-#define USE_DEC_METADATA     (0)
-#define NR_CAPTURE_BUF       (10)
-#define MAX_FIRST_RESCHANGE  (30)
-#define CHUNK_SIZE           (4 * 1024 * 1024)
-#define NR_OUTPUT_BUF        (10)
+#define USE_DEC_METADATA                        (0)
+#define NR_CAPTURE_BUF                          (10)
+#define MAX_FIRST_RESCHANGE                     (30)
+#define CHUNK_SIZE                              (4 * 1024 * 1024)
+#define NR_OUTPUT_BUF_ENCODED_VIDEO_DATA        (3)
 
 typedef struct dma_fd_s {
     int fd;
@@ -68,8 +62,6 @@ struct simple_decoder
     uint32_t decoder_pixfmt;
     int32_t min_dec_capture_buffers;
     NvBufSurfaceColorFormat fmt;
-
-    dma_fd_t dma_bufsurf;
 
     int nr_capture; // number of frames from capture plane
     int nr_output; // number of buffers enqueued to output plane
@@ -194,109 +186,6 @@ static int print_metadata(simple_decoder_t *ctx,
     return 0;
 }
 
-static int copy_dmabuf(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf,
-    uint8_t *out, int plane)
-{
-    int index = 0, width, height, pitch, byte_per_pix, len;
-    uint8_t *p;
-    uint8_t *src;
-    uint8_t *dest = out;
-    NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
-    NvBufSurfaceMappedAddr *maddr = &nvbuf_surf->surfaceList->mappedAddr;
-
-    if(NvBufSurfaceMap(nvbuf_surf, index, plane, NVBUF_MAP_READ_WRITE) != 0) {
-        log_error("Failed to map NvBufSurface");
-        nvdec_abort_ctx(ctx);
-    }
-
-    if(NvBufSurfaceSyncForCpu(nvbuf_surf, index, plane) != 0) {
-        log_error("Failed to sync surface for CPU");
-        nvdec_abort_ctx(ctx);
-    }
-    width = pp->width[plane];
-    height = pp->height[plane];
-    pitch = pp->pitch[plane];
-    byte_per_pix = pp->bytesPerPix[plane];
-    src = (uint8_t *)nvbuf_surf->surfaceList->mappedAddr.addr[plane];
-    len = width * byte_per_pix;
-
-    for (int i = 0; i < height; i++) {
-        memcpy(dest, src, len);
-        src += pitch;
-        dest += len;
-    }
-
-    if(NvBufSurfaceUnMap(nvbuf_surf, index, plane) < 0) {
-        log_error("Failed to unmap NvBufSurface");
-        nvdec_abort_ctx(ctx);
-    }
-    len = (int)(dest - out);
-
-
-    return len;
-}
-
-int create_image_forward(simple_decoder_t *ctx, NvBufSurface *nvbuf_surf)
-{
-    int index = 0, w, h, ret, stride_y, stride_uv;
-    NvBufSurfaceParams *surface_list = &nvbuf_surf->surfaceList[index];
-    NvBufSurfacePlaneParams *pp = &nvbuf_surf->surfaceList->planeParams;
-    image_t *dec_img;
-
-    if(surface_list->colorFormat != NVBUF_COLOR_FORMAT_YUV420) {
-        log_error("Invalid color format %d", surface_list->colorFormat);
-        nvdec_abort_ctx(ctx);
-    }
-    w = ctx->cfg.dec_width;
-    h = ctx->cfg.dec_height;
-    stride_y = pp->pitch[0];
-    stride_uv = pp->pitch[1];
-
-    dec_img = create_image(w, h, IMAGE_FORMAT_YUV420_HOST);
-    /*
-    dec_img = create_image_no_surface_memory(w, h, IMAGE_FORMAT_YUV420_HOST);
-    */
-    if(dec_img->width != w || dec_img->height != h) {
-        log_error("Size mismatch - NvBufSurface : image struct");
-        nvdec_abort_ctx(ctx);
-    }
-
-    // copy each of the yuv planes to the corresponding buffers
-    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->y, 0);
-    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->u, 1);
-    ret = copy_dmabuf(ctx, nvbuf_surf, dec_img->v, 2);
-
-    dec_img->time = ctx->time;
-    ctx->time += ctx->time_increment;
-    // use the frame callback to send the image
-    ctx->frame_callback(ctx->context, dec_img);
-    destroy_image(dec_img);
-    (void)ret;
-
-    return 0;
-}
-
-static void alloc_dma_bufsurface(dma_fd_t *dma_fd, int width, int height, NvBufSurfaceColorFormat fmt)
-{
-    NvBufSurf::NvCommonAllocateParams params;
-    /* Create PitchLinear output buffer for transform. */
-    params.memType = NVBUF_MEM_SURFACE_ARRAY;
-    params.width = width;
-    params.height = height;
-    params.layout = NVBUF_LAYOUT_PITCH;
-    params.colorFormat = fmt;
-    params.memtag = NvBufSurfaceTag_VIDEO_CONVERT;
-    NvBufSurf::NvAllocate(&params, 1, &dma_fd->fd);
-}
-
-static void free_dma_bufsurface(dma_fd_t *dma_fd)
-{
-    if (dma_fd->fd==-1) return;
-    int ret = NvBufSurf::NvDestroy(dma_fd->fd);
-    if(ret < 0) log_fatal("NvBufSurf::NvDestroy failed (%d)", ret);
-    dma_fd->fd=-1;
-}
-
 static void query_and_set_capture(simple_decoder_t *ctx, int from)
 {
     int j, ret;
@@ -354,13 +243,10 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     /* Request, Query and export (min + 5) decoder capture plane buffers.
        Refer ioctl VIDIOC_REQBUFS, VIDIOC_QUERYBUF and VIDIOC_EXPBUF */
     ret = dec->capture_plane.setupPlane(V4L2_MEMORY_MMAP,
-                                       min_dec_capture_buffers + 5, false,
+                                       min_dec_capture_buffers + 2, false,
                                        false);
     CHECK_ERROR(ret < 0, "Error in decoder capture plane setup");
     ctx->cfg.cap_plane_nrbuffer = dec->capture_plane.getNumBuffers();
-
-    free_dma_bufsurface(&ctx->dma_bufsurf);
-    alloc_dma_bufsurface(&ctx->dma_bufsurf, ctx->cfg.dec_width, ctx->cfg.dec_height, ctx->fmt);
 
     /* Start streaming on decoder capture_plane */
     ret = dec->capture_plane.setStreamStatus(true);
@@ -410,49 +296,37 @@ static int first_resolution_change(simple_decoder_t *ctx)
     return ret;
 }
 
-static int process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
+extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
+                              image_t      *img,
+                              CUstream      stream );
+                              
+static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
 {
-    int ret, dst_dma_fd;
-    dma_fd_t *dma_fd;
-    NvBufSurface *nvbuf_surf = NULL;
-    if(ctx->min_dec_capture_buffers == -1) nvdec_abort_ctx(ctx);
-    dma_fd = &ctx->dma_bufsurf;
-    dst_dma_fd = dma_fd->fd;
-
-    /* Clip & Stitch can be done by adjusting rectangle. */
-    NvBufSurf::NvCommonTransformParams transform_params;
-    transform_params.src_top = 0;
-    transform_params.src_left = 0;
-    transform_params.src_width = ctx->cfg.dec_width;
-    transform_params.src_height = ctx->cfg.dec_height;
-    transform_params.dst_top = 0;
-    transform_params.dst_left = 0;
-    transform_params.dst_width = ctx->cfg.dec_width;
-    transform_params.dst_height = ctx->cfg.dec_height;
-    transform_params.flag = NVBUFSURF_TRANSFORM_FILTER;
-    transform_params.flip = NvBufSurfTransform_None;
-    transform_params.filter = NvBufSurfTransformInter_Nearest;
-
-    /* Perform Blocklinear to PitchLinear conversion. */
-    ret = NvBufSurf::NvTransform(&transform_params,
-        dec_buffer->planes[0].fd, dst_dma_fd);
-    if(ret == -1) {
-        log_error("transform failed");
-        return -1;
-    }
-
-    /* Get EGLImage from dmabuf fd */
-    ret = NvBufSurfaceFromFd(dst_dma_fd, (void**)(&nvbuf_surf));
+    NvBufSurface *nvbuf_surf = nullptr;
+    int ret = NvBufSurfaceFromFd(dec_buffer->planes[0].fd, (void**)(&nvbuf_surf));
     if(ret != 0) {
         log_error("unable to extract NvBufSurfaceFromFd");
-        return -1;
+        return;
     }
-    create_image_forward(ctx, nvbuf_surf);
-    return 0;
+
+    image_t *dec_img = create_image(ctx->cfg.dec_width, ctx->cfg.dec_height, IMAGE_FORMAT_NV12_DEVICE);
+    ret=nvSurfToImageNV12Device(nvbuf_surf, dec_img, dec_img->stream);
+    if (0!=ret)
+    {
+        log_error("nvSurfToImageYUV420Device failed (%d)",(int)ret);
+    }
+    dec_img->time = ctx->time;
+    ctx->time += ctx->time_increment;
+    // use the frame callback to send the imadddge
+    image_sync(dec_img);
+    ctx->frame_callback(ctx->context, dec_img);
+    destroy_image(dec_img);
 }
 
 static void *dec_capture_loop_fn(void *arg)
 {
+    cuda_thread_init(); // set context, etc
+
     int j, ret;
     char thr_name[64];
     simple_decoder_t *ctx = (simple_decoder_t *)arg;
@@ -492,6 +366,7 @@ static void *dec_capture_loop_fn(void *arg)
             memset(&v4l2_buf, 0, sizeof(v4l2_buf));
             memset(planes, 0, sizeof(planes));
             v4l2_buf.m.planes = planes;
+
             /* Dequeue a valid capture_plane buffer containing YUV BL data */
             ret = dec->capture_plane.dqBuffer(v4l2_buf, &dec_buffer, NULL, 0);
             if (ret) {
@@ -517,8 +392,7 @@ static void *dec_capture_loop_fn(void *arg)
                 ret = dec->getMetadata(v4l2_buf.index, d);
                 print_metadata(ctx, &d);
             }
-            ret = process_nvbuffer(ctx, dec_buffer);
-            if(ret == -1) break;
+            process_nvbuffer(ctx, dec_buffer);
             /* If not writing to file,
              * Queue the buffer back once it has been used. */
             if(dec->capture_plane.qBuffer(v4l2_buf, NULL) < 0) {
@@ -529,7 +403,6 @@ static void *dec_capture_loop_fn(void *arg)
             ctx->nr_capture++;
         }
     }
-
     return NULL;
 }
 
@@ -550,7 +423,6 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
         ctx->is_h265 = 1;
     }
     ctx->decoder_pixfmt = (ctx->is_h265) ? V4L2_PIX_FMT_H265 : V4L2_PIX_FMT_H264;
-    ctx->dma_bufsurf.fd = -1;
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
@@ -569,8 +441,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     r = dec->setFrameInputMode(1);
     CHECK_ERROR(r < 0, "Error in decoder setFrameInputMode");
     /* Request MMAP buffers for writing encoded video data */
-    r = dec->output_plane.setupPlane(V4L2_MEMORY_MMAP,
-        NR_OUTPUT_BUF, true, false);
+    r = dec->output_plane.setupPlane(V4L2_MEMORY_MMAP, NR_OUTPUT_BUF_ENCODED_VIDEO_DATA, true, false);
     CHECK_ERROR(r < 0, "Error while setting up output plane");
     ctx->cfg.out_plane_nrbuffer = dec->output_plane.getNumBuffers();
     log_trace("NR_BUFFER %d",ctx->cfg.out_plane_nrbuffer);
@@ -586,6 +457,15 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
     ctx->cfg.out_pixfmt = 2; /* YUV420 */
 
+    int ret = dec->disableDPB();
+    if (ret < 0) 
+        log_error("Failed to set V4L2_CID_MPEG_VIDEO_DISABLE_DPB");
+    else
+        log_info("Disabled DPB for lower latency");
+
+    dec->setSkipFrames(V4L2_SKIP_FRAMES_TYPE_NONREF);
+    log_info("Only decoding reference frames (B/dispP skipped)");
+
     log_info("%s:%d creating thread", __func__, __LINE__);
     r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, ctx);
 
@@ -598,6 +478,8 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
     log_info("simple decoder destroy");
 
     // 1) Tell the capture loop to exit
+    //ctx->dec->waitForIdle(500);
+
     ctx->got_eos = true;
 
     // 2) **First** stop the capture plane streaming (unblocks capture dqBuffer())
@@ -626,7 +508,6 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
     delete ctx->dec;
 
     // 7) Free the DMA surface and context
-    free_dma_bufsurface(&ctx->dma_bufsurf);
     free(ctx);
 
     log_info("decoder destroyed cleanly");
@@ -690,7 +571,6 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         }
         ctx->nr_output++;
     } while(0);
-
     return;
 }
 

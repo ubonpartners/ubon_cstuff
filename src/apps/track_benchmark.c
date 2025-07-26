@@ -19,6 +19,7 @@
 #include "memory_stuff.h"
 #include "infer_thread.h"
 #include "display.h"
+#include "platform_stuff.h"
 
 typedef struct state {
     track_stream_t *ts;
@@ -244,7 +245,7 @@ int main(int argc, char *argv[]) {
 
     std::ostringstream oss, hdr;
 
-    hdr   << std::setw(42)  << "Test Description" << " "
+    hdr   << std::setw(42)  << "Test Description" << "  "
           << std::setw(20)  << "Cfg" << " "
           << std::setw(4)   << "Str" << " "
           << std::setw(8)   << "Dec" << " "
@@ -266,7 +267,7 @@ int main(int argc, char *argv[]) {
     dconfig.duration_sec = 10;
     dconfig.track_framerate = 8;
     dconfig.face_embedding_min_quality=0.01;
-    dconfig.num_threads = 16;
+    dconfig.num_threads = is_jetson() ? 8 : 16;
     dconfig.infer_w = 640;
     dconfig.infer_h = 640;
 

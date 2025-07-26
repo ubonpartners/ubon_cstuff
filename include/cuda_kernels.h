@@ -69,6 +69,7 @@ void cuda_generate_motion_mask(
     uint8_t* d_row_masks,
     cudaStream_t stream);
 } // extern "C"
+
 // nvidia code
 void ResizeNv12(unsigned char *dpDstNv12, int nDstPitch, int nDstWidth, int nDstHeight, unsigned char *dpSrcNv12, int nSrcPitch, int nSrcWidth, int nSrcHeight, unsigned char* dpDstNv12UV, cudaStream_t *pstream);
 
