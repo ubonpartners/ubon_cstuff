@@ -97,7 +97,6 @@ set(PROJECT_INCLUDE_DIRS
 set(COMMON_LIBS
     -lpthread -lm -ldl -lrt
 )
-
 if(DEFINED ENV{JETSON_SOC})
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=1")
@@ -143,6 +142,7 @@ else()
         -lnvidia-opticalflow
         -lasound -lfftw3f
     )
+    list(APPEND ARCH_LIBS -ledit -ltinfo)
 endif()
 
 include_directories(${PROJECT_INCLUDE_DIRS})
