@@ -43,6 +43,9 @@ void my_error_exit(j_common_ptr cinfo) {
     /* Clean up libjpeg state */
     jpeg_destroy_decompress((j_decompress_ptr)cinfo);
     /* Jump back to caller */
+    char buffer[JMSG_LENGTH_MAX];
+    (*cinfo->err->format_message)(cinfo, buffer);
+    log_error("libjpeg fatal error: %s", buffer);
     longjmp(err->setjmp_buffer, 1);
 }
 
@@ -50,7 +53,6 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     struct jpeg_decompress_struct cinfo;
     struct my_error_mgr jerr;
     image_t *img = NULL;
-
     /* 1) Install our error handlers _before_ any libjpeg call */
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = my_error_exit;
@@ -118,7 +120,6 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     }
 
     /* 6) Read scanlines */
-
     if ((cinfo.out_color_space == JCS_CMYK)||(cinfo.out_color_space == JCS_YCCK))
     {
         uint8_t *rowbuf=(uint8_t *)malloc(cinfo.output_width*cinfo.output_components);

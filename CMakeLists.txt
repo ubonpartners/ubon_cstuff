@@ -103,7 +103,6 @@ if(DEFINED ENV{JETSON_SOC})
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUBONCSTUFF_PLATFORM=1")
     list(APPEND PROJECT_INCLUDE_DIRS
         /usr/src/jetson_multimedia_api/include
-        /usr/src/jetson_multimedia_api/include/libjpeg-8b
         /usr/local/cuda/include
         /usr/include/libdrm
     )
@@ -197,6 +196,10 @@ set_target_properties(uboncstufflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(DEFINED ENV{JETSON_SOC})
 add_library(jetson_multimedia_lib STATIC ${JETSON_MULTIMEDIA_FILES})
 set_target_properties(jetson_multimedia_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(jetson_multimedia_lib  PRIVATE
+        /usr/src/jetson_multimedia_api/include
+        /usr/src/jetson_multimedia_api/include/libjpeg-8b
+    )
 endif()
 
 # --- Build apps -----------------------------------------

@@ -12,7 +12,7 @@
 #include "webcam.h"
 #include "jpeg.h"
 #include "image.h"
-
+#include "log.h"
 
 struct webcam
 {
@@ -33,7 +33,7 @@ webcam_t *webcam_create(const char *device, int width, int height)
     w->fd = open(device, O_RDWR);
     if (w->fd == -1)
     {
-        printf("Error opening video device %s\n",device);
+        log_error("Error opening video device %s",device);
         webcam_destroy(w);
         return 0;
     }
@@ -46,7 +46,7 @@ webcam_t *webcam_create(const char *device, int width, int height)
 
     if (ioctl(w->fd, VIDIOC_S_FMT, &w->fmt) == -1)
     {
-        printf("Error setting Pixel Format");
+        log_error("Error setting Pixel Format");
         webcam_destroy(w);
         return 0;
     }
@@ -57,7 +57,7 @@ webcam_t *webcam_create(const char *device, int width, int height)
 
     if (ioctl(w->fd, VIDIOC_REQBUFS, &w->req) == -1)
     {
-        printf("Error Requesting Buffer");
+        log_error("Error Requesting Buffer");
         webcam_destroy(w);
         return 0;
     }
@@ -68,7 +68,7 @@ webcam_t *webcam_create(const char *device, int width, int height)
 
     if (ioctl(w->fd, VIDIOC_QUERYBUF, &w->buf) == -1)
     {
-        printf("Error Querying Buffer");
+        log_error("Error Querying Buffer");
         webcam_destroy(w);
         return 0;
     }
@@ -76,14 +76,14 @@ webcam_t *webcam_create(const char *device, int width, int height)
     w->buffer = mmap(NULL, w->buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, w->fd, w->buf.m.offset);
     if (w->buffer == MAP_FAILED)
     {
-        printf("Error Mapping Buffer");
+        log_error("Error Mapping Buffer");
         webcam_destroy(w);
         return 0;
     }
 
     if (ioctl(w->fd, VIDIOC_STREAMON, &w->buf.type) == -1)
     {
-        printf("Error Starting Capture");
+        log_error("Error Starting Capture");
         webcam_destroy(w);
         return 0;
     }
@@ -121,8 +121,15 @@ image_t *webcam_capture(webcam_t *w)
     uint64_t timestamp90k = (uint64_t)tv.tv_sec * 90000 + (uint64_t)tv.tv_usec * 90 / 1000;
 
     image_t *img=decode_jpeg((unsigned char *)w->buffer, w->buf.bytesused);
-    if (w->frames==0) w->first_time=timestamp90k;
-    w->frames++;
-    img->time = (timestamp90k-w->first_time)/90000.0;
+    if (img)
+    {
+        if (w->frames==0) w->first_time=timestamp90k;
+        w->frames++;
+        img->time = (timestamp90k-w->first_time)/90000.0;
+    }
+    else
+    {
+        log_error("Failed to decode JPEG of length %d",w->buf.bytesused);
+    }
     return img;
 }

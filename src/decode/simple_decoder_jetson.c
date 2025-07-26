@@ -121,7 +121,7 @@ static int print_input_metadata(simple_decoder_t *ctx,
     } else {
         l += snprintf(b + l, sizeof(b) - l, "ERROR_NONE ");
     }
-    log_info("%s:%d %s\n",  __func__, __LINE__, b);
+    log_info("%s", b);
 
     return 0;
 }
@@ -189,7 +189,7 @@ static int print_metadata(simple_decoder_t *ctx,
                 dec_stats->DecodeError, dec_stats->DecodedMBs, dec_stats->ConcealedMBs);
         }
     }
-    log_info("%s:%d %s\n",  __func__, __LINE__, b);
+    log_info("%s", b);
 
     return 0;
 }
@@ -327,7 +327,7 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     ctx->cfg.window_width = ctx->cfg.dec_width;
     ctx->cfg.window_height = ctx->cfg.dec_height;
     log_info("%s:%d video resolution "
-        "dec %d x %d => window %d x %d\n",
+        "dec %d x %d => window %d x %d",
         __func__, __LINE__,
         ctx->cfg.dec_width, ctx->cfg.dec_height,
         ctx->cfg.window_width, ctx->cfg.window_height);
@@ -377,11 +377,8 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
         CHECK_ERROR(ret < 0, "Error Qing buffer at output plane");
     }
 
-    log_info("%s:%d Resolution change successful at %ld.%06ld\n",
-        __func__, __LINE__, tv.tv_sec, tv.tv_usec);
-    log_info("%s:%d min_dec_capture_buffers %d, num_buffers %d\n",
-        __func__, __LINE__,
-        min_dec_capture_buffers, dec->capture_plane.getNumBuffers());
+    log_info("Resolution change successful");
+    log_info("min_dec_capture_buffers %d, num_buffers %d",min_dec_capture_buffers, dec->capture_plane.getNumBuffers());
 
     return;
 }
@@ -497,14 +494,23 @@ static void *dec_capture_loop_fn(void *arg)
             v4l2_buf.m.planes = planes;
             /* Dequeue a valid capture_plane buffer containing YUV BL data */
             ret = dec->capture_plane.dqBuffer(v4l2_buf, &dec_buffer, NULL, 0);
-            if(ret) {
-                if(errno == EAGAIN) {
-                    usleep(1000);
-                } else {
-                    nvdec_abort_ctx(ctx);
-                    log_info("%s:%d error while calling "
-                        "dequeue at capture plane\n", __func__, __LINE__);
+            if (ret) {
+                // If we've been asked to shut down, just exit the loop.
+                if (ctx->got_eos) {
+                    break;
                 }
+                // Standard V4L2 “no data” retry
+                if (errno == EAGAIN) {
+                    usleep(1000);
+                    continue;
+                }
+                // After streamoff(), dqBuffer will return EPIPE; treat that as clean exit.
+                if (errno == EPIPE) {
+                    break;
+                }
+                // Otherwise it's a real error
+                nvdec_abort_ctx(ctx);
+                log_error("unexpected error on capture_plane.dqBuffer");
                 break;
             }
             if(USE_DEC_METADATA) {
@@ -548,7 +554,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
-    log_trace("%s:%d ctx = %p dec = %p\n",  __func__, __LINE__, ctx, dec); \
+    log_trace("ctx = %p dec = %p", ctx, dec); 
     ctx->dec = dec;
     r = dec->subscribeEvent(V4L2_EVENT_RESOLUTION_CHANGE, 0, 0);
     CHECK_ERROR(r < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE");
@@ -567,11 +573,13 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
         NR_OUTPUT_BUF, true, false);
     CHECK_ERROR(r < 0, "Error while setting up output plane");
     ctx->cfg.out_plane_nrbuffer = dec->output_plane.getNumBuffers();
-    log_trace("%s:%d NR_BUFFER %d\n", __func__, __LINE__, ctx->cfg.out_plane_nrbuffer);
+    log_trace("NR_BUFFER %d",ctx->cfg.out_plane_nrbuffer);
     if(USE_DEC_METADATA) {
         r = dec->enableMetadataReporting();
         CHECK_ERROR(r < 0, "Error metadata reporting");
     }
+    r = dec->setMaxPerfMode(1);
+    CHECK_ERROR(r < 0, "setMaxPerfMode");    
     /* Start streaming on decoder output_plane */
     r = dec->output_plane.setStreamStatus(true);
     CHECK_ERROR(r < 0, "Error in output plane stream on");
@@ -584,38 +592,44 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     return ctx;
 }
 
-void simple_decoder_destroy(simple_decoder_t *dec)
+void simple_decoder_destroy(simple_decoder_t *ctx)
 {
-    int ret = 0;
-    struct v4l2_buffer v4l2_buf;
-    struct v4l2_plane planes[MAX_PLANES];
-    simple_decoder_t *ctx = dec;
+    if (!ctx) return;
+    log_info("simple decoder destroy");
 
-    if(ctx == NULL) return;
+    // 1) Tell the capture loop to exit
+    ctx->got_eos = true;
 
-    log_info("%s:%d stopping", __func__, __LINE__);
-    /* As EOS, dequeue all the output planes */
-    while(ctx->dec->output_plane.getNumQueuedBuffers() > 0 &&
-           !ctx->got_error && !ctx->dec->isInError()) {
-        memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-        memset(planes, 0, sizeof(planes));
+    // 2) **First** stop the capture plane streaming (unblocks capture dqBuffer())
+    ctx->dec->capture_plane.setStreamStatus(false);
 
-        v4l2_buf.m.planes = planes;
-        ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, NULL, NULL, -1);
-        if(ret < 0) {
-            log_error("error dequeuing buffer at output plane");
-            nvdec_abort_ctx(ctx);
-            break;
+    // 3) Now wait for the capture thread to finish
+    if (ctx->dec_capture_loop) {
+        pthread_join(ctx->dec_capture_loop, nullptr);
+    }
+
+    // 4) Stop the output plane streaming (unblocks any output dqBuffer())
+    ctx->dec->output_plane.setStreamStatus(false);
+
+    // 5) Drain any remaining queued output buffers
+    {
+        struct v4l2_buffer buf = {};
+        struct v4l2_plane planes[MAX_PLANES] = {};
+        while (ctx->dec->output_plane.getNumQueuedBuffers() > 0) {
+            buf.m.planes = planes;
+            if (ctx->dec->output_plane.dqBuffer(buf, nullptr, nullptr, 0) < 0)
+                break;
         }
     }
 
-    /* Mark EOS for the decoder capture thread */
-    ctx->got_eos = true;
-    pthread_cancel(ctx->dec_capture_loop);
-    if(ctx->dec_capture_loop) pthread_join(ctx->dec_capture_loop, NULL);
+    // 6) Delete the decoder object
+    delete ctx->dec;
+
+    // 7) Free the DMA surface and context
     free_dma_bufsurface(&ctx->dma_bufsurf);
     free(ctx);
-    return;
+
+    log_info("decoder destroyed cleanly");
 }
 
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size)
@@ -682,19 +696,19 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
 
 void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 {
-    log_info("%s:%d fps = %.3f\n", __func__, __LINE__, fps);
+    log_info("%s:%d fps = %.3f", __func__, __LINE__, fps);
     if (dec && fps > 0) dec->time_increment = 1.0 / fps;
 }
 
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
 {
-    log_info("%s:%d fmt = %d\n", __func__, __LINE__, fmt);
+    log_info("%s:%d fmt = %d", __func__, __LINE__, fmt);
     if (dec) dec->output_format = fmt;
 }
 
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
-    log_info("%s:%d max_time = %.3f\n", __func__, __LINE__, max_time);
+    log_info("%s:%d max_time = %.3f", __func__, __LINE__, max_time);
     if (dec) dec->max_time = max_time;
 }
 

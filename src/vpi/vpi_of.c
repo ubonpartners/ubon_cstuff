@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include "cuda_stuff.h"
 
-
 #define CHECK_STATUS_VPI(STMT)                                \
     do                                                        \
     {                                                         \

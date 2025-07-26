@@ -140,6 +140,12 @@ static void motion_track_run_optical_flow(motion_track_t *mt, image_t *image_sca
                 if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->time, avg_cost, total_cost, mt->frames_since_reset);
             }
         }
+        else
+        {
+            mt->of_results.grid_w=0;
+            mt->of_results.grid_h=0;
+            mt->of_results.flow=0;
+        }
     }
     #endif
 }
@@ -358,7 +364,7 @@ of_results_t *motion_track_get_of_results(motion_track_t *mt)
 
 static void motion_track_predict_delta(motion_track_t *mt, float *pt, float *d)
 {
-    if (mt->ref==0)
+    if ((mt->ref==0)||(mt->of_results.grid_w==0))
     {
         d[0]=0;
         d[1]=0;
