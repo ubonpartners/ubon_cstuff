@@ -152,7 +152,7 @@ def test_motiondet(h264_file="/mldata/tracking/cevo_april25/video/generated_h264
 
 def test_track(h264_file="/mldata/tracking/cevo_april25/video/generated_h264/INof_LD_Out_Light_FFcam_002.h264"):
 
-    decoder = upyc.c_decoder()
+    decoder = upyc.c_decoder(upyc.SIMPLE_DECODER_CODEC_H264)
     with open(h264_file, "rb") as f:
         bitstream = f.read()
 
@@ -160,7 +160,7 @@ def test_track(h264_file="/mldata/tracking/cevo_april25/video/generated_h264/INo
     frames = decoder.decode(bitstream)
 
     display=stuff.Display(1280,720)
-    track_shared=upyc.c_track_shared_state("/mldata/config/track/trackers/uc_test.yaml")
+    track_shared=upyc.c_track_shared_state("/mldata/config/track/trackers/uc_reid.yaml")
     track_stream=upyc.c_track_stream(track_shared)
     track_stream.run_on_images(frames)
     track_results=track_stream.get_results()
