@@ -647,6 +647,7 @@ image_t *image_scale_convert(image_t *img, image_format_t format, int width, int
 void image_save(image_t *img, const char * filename)
 {
     image_t *host=image_convert(img, IMAGE_FORMAT_YUV420_HOST);
+    image_sync(host);
     FILE *f=fopen(filename, "wb");
     assert(f!=0);
     int marker=0xbeef1234;
@@ -678,6 +679,8 @@ image_t *image_load(const char * filename)
 
 void image_compare(image_t *a, image_t *b)
 {
+    image_sync(a);
+    image_sync(b);
     if ((a->width!=b->width)||(a->height!=b->height))
     {
         log_error("Compare size %dx%d != %dx%d",a->width,a->height,b->width,b->height);
@@ -689,7 +692,7 @@ void image_compare(image_t *a, image_t *b)
         {
             uint8_t pa=a->y[x+a->stride_y*x];
             uint8_t pb=b->y[x+b->stride_y*x];
-            if (a!=b) log_error("Compare: Y-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+            if (pa!=pb) log_error("Compare: Y-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
         }
     }
     for(int y=0;y<a->height/2;y++)
@@ -698,7 +701,7 @@ void image_compare(image_t *a, image_t *b)
         {
             uint8_t pa=a->u[x+a->stride_uv*x];
             uint8_t pb=b->u[x+b->stride_uv*x];
-            if (a!=b) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+            if (pa!=pb) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
         }
     }
     for(int y=0;y<a->height/2;y++)
@@ -707,7 +710,7 @@ void image_compare(image_t *a, image_t *b)
         {
             uint8_t pa=a->v[x+a->stride_uv*x];
             uint8_t pb=b->v[x+b->stride_uv*x];
-            if (a!=b) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+            if (pa!=pb) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
         }
     }
 }
