@@ -189,10 +189,11 @@ static image_t *image_convert_tensor_device_host(image_t *img, image_format_t fo
 {
     bool dest_device=image_format_is_device(format);
     int bpf=image_format_bytes_per_component(format);
-    image_t *ret=create_image(img->width, img->height, format);
+    assert(bpf==image_format_bytes_per_component(img->format));
+    image_t *ret=create_image_tensor(img->n, img->c, img->height, img->width, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    CHECK_CUDART_CALL(cudaMemcpyAsync(ret->rgb, img->rgb, img->width*img->height*bpf*img->n*img->c, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
+    CHECK_CUDART_CALL(cudaMemcpyAsync(tensor_mem_ptr(ret), tensor_mem_ptr(img), img->width*img->height*bpf*img->n*img->c, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
     return ret;
 }
 
@@ -234,7 +235,7 @@ static image_t *tensor_fp16_fp32_device(image_t *img, image_format_t format)
     image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_half_to_float(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    cuda_half_to_float(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
     return ret;
 }
 
@@ -243,7 +244,7 @@ static image_t *tensor_fp16_fp32_host(image_t *img, image_format_t format)
     image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    vec_copy_float_to_half(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    vec_copy_float_to_half(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
     return ret;
 }
 
@@ -252,7 +253,7 @@ static image_t *tensor_fp32_fp16_device(image_t *img, image_format_t format)
     image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    cuda_float_to_half(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    cuda_float_to_half(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
     return ret;
 }
 
@@ -261,7 +262,7 @@ static image_t *tensor_fp32_fp16_host(image_t *img, image_format_t format)
     image_t *ret=create_image(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
-    vec_copy_half_to_float(img->rgb, ret->rgb, img->n*img->c*img->width*img->height);
+    vec_copy_half_to_float(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
     return ret;
 }
 

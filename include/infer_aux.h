@@ -14,8 +14,8 @@ struct aux_model_description
 {
     int embedding_size;
     int embedding_size_2nd_output;
-    int max_batch;
-    int input_ch, input_w, input_h;
+    int max_w,max_h,max_batch;
+    int input_dims, input_ch, input_w, input_h;
     bool input_fp16, output_fp16, output2_fp16; // input/output formats for model
     const char *engineInfo;
 };

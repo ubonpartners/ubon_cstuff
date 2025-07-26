@@ -446,6 +446,24 @@ void image_apply_padding(image_t *img, int pad_l, int pad_t, int pad_r, int pad_
     }
 }
 
+void *image_tensor_mem_ptr(image_t *img, int n, int c, int y, int x)
+{
+    uint8_t *ptr=(uint8_t*)img->tensor_mem;
+    assert(ptr!=0);
+    int offs=x+y*img->width+c*(img->width*img->height)+n*(img->width*img->height*img->c);
+    return (void *)(ptr+offs*image_format_bytes_per_component(img->format));
+}
+
+image_t *image_tensor_subtensor_n(image_t *img, int n)
+{
+    assert(image_format_is_tensor(img->format));
+    assert(n>=0 && n<= img->n);
+    image_t *inf_tensor=create_image_no_surface_memory(img->width, img->height, img->format);
+    inf_tensor->tensor_mem=image_tensor_mem_ptr(img, n, 0, 0, 0);
+    inf_tensor->referenced_surface=image_reference(img);
+    return inf_tensor;
+}
+
 // image_make_tiled: given N images <= WxH make a single tiled image
 // with all the sub-images together
 // this is commonly used for batch inference
@@ -624,4 +642,72 @@ image_t *image_scale_convert(image_t *img, image_format_t format, int width, int
     image_t *scaled=image_scale(tmp, width, height);
     destroy_image(tmp);
     return scaled;
+}
+
+void image_save(image_t *img, const char * filename)
+{
+    image_t *host=image_convert(img, IMAGE_FORMAT_YUV420_HOST);
+    FILE *f=fopen(filename, "wb");
+    assert(f!=0);
+    int marker=0xbeef1234;
+    fwrite(&marker, 1, 4, f);
+    fwrite(&host->width, 1, 4, f);
+    fwrite(&host->height, 1, 4, f);
+    for(int i=0;i<host->height;i++) assert(host->width==fwrite(host->y+i*host->stride_y, 1, host->width, f));
+    for(int i=0;i<host->height/2;i++) assert(host->width/2==fwrite(host->u+i*host->stride_uv, 1, host->width/2, f));
+    for(int i=0;i<host->height/2;i++) assert(host->width/2==fwrite(host->v+i*host->stride_uv, 1, host->width/2, f));
+    fclose(f);
+}
+
+image_t *image_load(const char * filename)
+{
+    FILE *f=fopen(filename, "rb");
+    int m,w,h;
+    assert(f!=0);
+    assert(4==fread(&m, 1, 4, f));
+    assert(4==fread(&w, 1, 4, f));
+    assert(4==fread(&h, 1, 4, f));
+    assert(m==0xbeef1234);
+    image_t *host=create_image(w, h, IMAGE_FORMAT_YUV420_HOST);
+    for(int i=0;i<host->height;i++) assert(host->width==fread(host->y+i*host->stride_y, 1, host->width, f));
+    for(int i=0;i<host->height/2;i++) assert(host->width/2==fread(host->u+i*host->stride_uv, 1, host->width/2, f));
+    for(int i=0;i<host->height/2;i++) assert(host->width/2==fread(host->v+i*host->stride_uv, 1, host->width/2, f));
+    fclose(f);
+    return host;
+}
+
+void image_compare(image_t *a, image_t *b)
+{
+    if ((a->width!=b->width)||(a->height!=b->height))
+    {
+        log_error("Compare size %dx%d != %dx%d",a->width,a->height,b->width,b->height);
+        return;
+    }
+    for(int y=0;y<a->height;y++)
+    {
+        for(int x=0;x<a->width;x++)
+        {
+            uint8_t pa=a->y[x+a->stride_y*x];
+            uint8_t pb=b->y[x+b->stride_y*x];
+            if (a!=b) log_error("Compare: Y-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+        }
+    }
+    for(int y=0;y<a->height/2;y++)
+    {
+        for(int x=0;x<a->width/2;x++)
+        {
+            uint8_t pa=a->u[x+a->stride_uv*x];
+            uint8_t pb=b->u[x+b->stride_uv*x];
+            if (a!=b) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+        }
+    }
+    for(int y=0;y<a->height/2;y++)
+    {
+        for(int x=0;x<a->width/2;x++)
+        {
+            uint8_t pa=a->v[x+a->stride_uv*x];
+            uint8_t pb=b->v[x+b->stride_uv*x];
+            if (a!=b) log_error("Compare: U-diff @ %3d,%3d  A:%2.2x B:%2.2x",x,y,pa,pb);
+        }
+    }
 }

@@ -185,12 +185,19 @@ static void pcm_to_float(const uint8_t *src, int count, int bytes_per_sample, in
     for (i=0;i<count;i++) dst[i]=0.0f;
 }
 
-audioframe_t *wav_reader_get_audioframe(wav_reader_t *wr, int num_ms) {
+audioframe_t *wav_reader_get_audioframe_ms(wav_reader_t *wr, int num_ms) {
     if (!wr || num_ms<=0) return NULL;
+    int frames_requested = (int)(( (int64_t)wr->sample_rate * num_ms) / 1000);
+    if (frames_requested <=0) return 0;
+    return wav_reader_get_audioframe_frames(wr, frames_requested);
+}
+
+
+audioframe_t *wav_reader_get_audioframe_frames(wav_reader_t *wr, int frames_requested) {
+    if (!wr || frames_requested<=0) return NULL;
     if (wr->data_bytes_read >= wr->data_chunk_size) return NULL; // EOF
 
-    int frames_requested = (int)(( (int64_t)wr->sample_rate * num_ms) / 1000);
-    if (frames_requested <=0) frames_requested = 1;
+    if (frames_requested <=0) return 0;
 
     int bytes_per_frame = wr->bytes_per_sample * wr->num_channels;
     int frames_left = (wr->data_chunk_size - wr->data_bytes_read) / bytes_per_frame;

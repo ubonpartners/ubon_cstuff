@@ -12,18 +12,18 @@
 #include "audio_event.h"
 
 
-static void audio_event_detector_test()
+static void audio_event_detector_test_efficientat()
 {
     wav_reader_t *wr=wav_reader_create("/mldata/video/wav/John_Wick_7dc33fe2bdb0_32000.wav");
 
-    audio_event_t *ae=audio_event_create();
+    audio_event_t *ae=audio_event_create(AUDIO_EVENT_MODEL_EFFICIENTAT);
 
     float d=wav_reader_get_wav_duration(wr);
     printf("WAV file length %f seconds\n",d);
 
     while(1)
     {
-        audioframe_t *fr=wav_reader_get_audioframe(wr, 1000);
+        audioframe_t *fr=wav_reader_get_audioframe_ms(wr, 1000);
         printf("S %d SR %d \n",audioframe_get_num_samples(fr), audioframe_get_sample_rate(fr));
         embedding_t *e=audio_event_process(ae, fr);
         float *d=embedding_get_data(e);
@@ -35,6 +35,61 @@ static void audio_event_detector_test()
         }
         while(1);
     }
+}
+
+static void audio_event_detector_test_tinyclap()
+{
+    wav_reader_t *wr=wav_reader_create("/mldata/video/wav/John_Wick_7dc33fe2bdb0_44100.wav");
+
+    audio_event_t *ae=audio_event_create(AUDIO_EVENT_MODEL_TINYCLAP);
+
+    float d=wav_reader_get_wav_duration(wr);
+    printf("WAV file length %f seconds\n",d);
+
+    while(1)
+    {
+        audioframe_t *fr=wav_reader_get_audioframe_frames(wr, 320*(128-1));
+        printf("S %d SR %d \n",audioframe_get_num_samples(fr), audioframe_get_sample_rate(fr));
+        embedding_t *e=audio_event_process(ae, fr);
+        float *d=embedding_get_data(e);
+        audio_event_detection_t evt[10];
+        audio_event_postprocess_tinyclap(ae, e);
+        /*printf("EMB len %d\n",embedding_get_size(e));
+        for(int i=0;i<20;i++)
+        {
+            printf("%d) %f\n",i,d[i]);
+        }*/
+    }
+}
+
+static void audio_event_detector_test_tinyclap_live()
+{
+    audioio_stream_params_t P;
+    memset(&P, 0, sizeof(audioio_stream_params_t));
+    P.mode = AUDIOIO_MODE_FULL_DUPLEX;
+    P.capture_device = "default";
+    P.playback_device = "default";
+    P.sample_rate = 44100;
+    P.channels = 1;
+    P.frame_ms = 10;
+    P.use_float = 1;
+    audioio_stream_t *io = audioio_stream_create(&P);
+    if (!io) { fprintf(stderr, "Failed: %s\n", audioio_strerror(io)); }
+
+    audio_event_t *ae=audio_event_create(AUDIO_EVENT_MODEL_TINYCLAP);
+
+    // Pull recorded frames:
+    printf("Starting audio\n");
+    while (1) {
+        usleep(10000);
+        audioframe_t *in = audioio_capture_get_frame(io, 2000);
+        if (!in) continue;
+
+        printf("In %p\n",in);
+        embedding_t *e=audio_event_process(ae, in);
+        audio_event_postprocess_tinyclap(ae, e);
+    }
+
 }
 
 static void audio_io_test()
@@ -61,7 +116,7 @@ static void audio_io_test()
 
         if (in) { audioframe_destroy(in); }
         // Provide playback frames (silence example)
-        audioframe_t *out = wav_reader_get_audioframe(wr, 10);
+        audioframe_t *out = wav_reader_get_audioframe_ms(wr, 10);
         printf("WAV got frame %p LUFS %f\n",out,audioframe_compute_lufs_approx(out));
         if (!out) break;
         audioio_playback_write_frame(io, out);
@@ -75,5 +130,6 @@ int main(int argc, char *argv[]) {
     init_cuda_stuff();
     image_init();
 
-    audio_event_detector_test();
+    audio_event_detector_test_tinyclap_live();
+    //audio_event_detector_test_efficientat();
 }

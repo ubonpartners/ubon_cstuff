@@ -70,6 +70,7 @@ static bool image_format_is_host(image_format_t format)
 
 #include <stdint.h>
 #include <cuda_runtime.h>
+#include <assert.h>
 
 struct image
 {
@@ -91,6 +92,13 @@ struct image
     int host_mem_size;
     image_t *referenced_surface;
 };
+
+static inline void *tensor_mem_ptr(image_t *img)
+{
+    void *p=(image_format_is_tensor(img->format)) ? img->tensor_mem : img->rgb;
+    assert(p!=0);
+    return p;
+}
 
 #include "roi.h"
 
@@ -155,8 +163,13 @@ image_t *image_make_tiled(image_format_t fmt,
                           int dst_width, int dst_height,
                           image_t **images, int num,
                           int *offs_x, int *offs_y);
+void *image_tensor_mem_ptr(image_t *img, int n, int c, int y, int x);
+image_t *image_tensor_subtensor_n(image_t *img, int n);
 void image_get_aligned_faces(image_t **images, float *face_points, int n, int w, int h, image_t **ret);
 
+void image_save(image_t *img, const char * filename);
+image_t *image_load(const char * filename);
+void image_compare(image_t *a, image_t *b);
 
 void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *res_h,
                           int percent_stretch_allowed,

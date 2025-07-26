@@ -20,7 +20,8 @@ typedef struct wav_reader wav_reader_t;
 wav_reader_t *wav_reader_create(const char *filename);
 void wav_reader_destroy(wav_reader_t *wr);
 float wav_reader_get_wav_duration(wav_reader_t *wr); // returns duration in seconds
-audioframe_t *wav_reader_get_audioframe(wav_reader_t *wr, int num_ms=10); // returns "num_ms" of next audio, might not be exactly this, returns 0 when no audio left
+audioframe_t *wav_reader_get_audioframe_ms(wav_reader_t *wr, int num_ms=10); // returns "num_ms" of next audio, might not be exactly this, returns 0 when no audio left
+audioframe_t *wav_reader_get_audioframe_frames(wav_reader_t *wr, int num_frames=128);
 
 typedef struct audioframe_resampler audioframe_resampler_t;
 audioframe_resampler_t *audioframe_resampler_create(int target_sample_rate, int target_num_channels);

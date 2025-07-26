@@ -361,6 +361,7 @@ void cuda_thread_init()
 void *cuda_malloc(size_t size)
 {
     void *ptr=0;
+    assert(size>0);
     CHECK_CUDART_CALL(cudaMallocFromPoolAsync(&ptr, size, cs.appPool, cs.stream));
     CHECK_CUDART_CALL(cudaStreamSynchronize(cs.stream));
     track_alloc_table(&cuda_alloc_tracker, size, ptr);

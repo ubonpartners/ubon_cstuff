@@ -32,6 +32,11 @@ static void process_image(void *context, image_t *img) {
     if (out->compute_hash)
     {
         uint32_t hash=image_hash(img);
+        image_t *host=image_convert(img,IMAGE_FORMAT_YUV420_HOST);
+        printf("HASH %f %dx%d %x\n",img->time,img->width,img->height,hash);
+        for(int i=0;i<20;i++) printf("%2.2x ",host->y[i+i*host->stride_y]);
+        printf("\n");
+        destroy_image(host);
         out->total_hash = combine_hash(out->total_hash, hash);
     }
     out->decoded_frames+=1;

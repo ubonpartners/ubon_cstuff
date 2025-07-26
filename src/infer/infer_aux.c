@@ -28,8 +28,6 @@ struct infer_aux {
     bool l2_normalize[MAX_OUTPUTS];
     int output_size[MAX_OUTPUTS];
     bool output_fp16[MAX_OUTPUTS];
-    void *input_mem_device;
-    void *input_mem_host;
     void *output_mem_device[MAX_OUTPUTS];
     void *output_mem_host[MAX_OUTPUTS];
     aux_model_description_t md;
@@ -79,34 +77,53 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
         DataType dt       = inf->engine->getTensorDataType(name);
 
         if (mode == TensorIOMode::kINPUT) {
-            assert(dims.nbDims == 4);
-            inf->md.input_ch   = dims.d[1];
-            inf->md.input_h    = dims.d[2];
-            inf->md.input_w    = dims.d[3];
-            inf->md.input_fp16 = (dt == DataType::kHALF);
-
             Dims dims_max=inf->engine->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX);
-            assert(dims_max.nbDims==4);
+            if (dims.nbDims == 4)
+            {
+                inf->md.input_ch   = dims.d[1];
+                inf->md.input_h    = dims.d[2];
+                inf->md.input_w    = dims.d[3];
+            }
+            else if (dims.nbDims==3)
+            {
+                inf->md.input_ch   = 1;//dims.d[0];
+                inf->md.input_h    = dims.d[1];
+                inf->md.input_w    = dims.d[2];
+                log_info("Dim3 input %s: %dx%dx%d",model_trt,inf->md.input_ch, inf->md.input_h, inf->md.input_w);
+            }
+            else
+            {
+                assert(0);
+            }
+            inf->md.input_dims=dims.nbDims;
+            inf->md.input_fp16 = (dt == DataType::kHALF);
             inf->md.max_batch=dims_max.d[0];
+            inf->md.max_w=dims_max.d[dims.nbDims-1];
+            inf->md.max_h=dims_max.d[dims.nbDims-2];
 
         } else {
             // assume output is [N,C]
-            DataType dt       = inf->engine->getTensorDataType(name);
+            DataType dt = inf->engine->getTensorDataType(name);
+            for(int i=0;i<dims.nbDims;i++)
+            {
+                log_info("output %s dim %d : %d",name,i,(int)dims.d[i]);
+            }
+            log_info("output %s is_fp16 %d",name,(dt == DataType::kHALF));
             if (noutput==0)
             {
 
-                inf->md.embedding_size = dims.d[1];
+                inf->md.embedding_size = dims.d[dims.nbDims-1];
                 inf->md.output_fp16 = (dt == DataType::kHALF);
             }
             else
             {
-                inf->md.embedding_size_2nd_output= dims.d[1];
+                inf->md.embedding_size_2nd_output= dims.d[dims.nbDims-1];
                 inf->md.output2_fp16 = (dt == DataType::kHALF);
             }
             noutput++;
         }
     }
-
+    log_info("output embedding size %d max batch %d",inf->md.embedding_size,inf->md.max_batch);
     inf->output_size[0]=inf->md.embedding_size;
     inf->output_size[1]=inf->md.embedding_size_2nd_output;
     inf->output_fp16[0]=inf->md.output_fp16;
@@ -115,19 +132,20 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
     {
         if (inf->output_size[i])
         {
-            inf->output_mem_device[i]=cuda_malloc(inf->md.max_batch*inf->output_size[i]*(inf->output_fp16[i] ? 2 : 4));
-            inf->output_mem_host[i]=cuda_malloc_host(inf->md.max_batch*inf->output_size[i]*(inf->output_fp16[i] ? 2 : 4));
+            int output_mem_size=inf->md.max_batch*inf->output_size[i]*(inf->output_fp16[i] ? 2 : 4);
+            log_info("Allocating %d bytes of output memory",output_mem_size);
+            output_mem_size=(output_mem_size+127)&(~127);
+            inf->output_mem_device[i]=cuda_malloc(output_mem_size);
+            inf->output_mem_host[i]=cuda_malloc_host(output_mem_size);
             inf->l2_normalize[i]=(inf->output_size[i]==512); // HACK FIXME
         }
     }
 
-    if (inf->md.input_ch==1)
-    {
-        inf->input_mem_device=cuda_malloc(inf->md.max_batch*inf->md.input_w*inf->md.input_h*(inf->md.input_fp16 ? 2 : 4));
-        inf->input_mem_host=cuda_malloc_host(inf->md.max_batch*inf->md.input_w*inf->md.input_h*(inf->md.input_fp16 ? 2 : 4));
-    }
-
-    log_info("Loaded embedding model input_fp16=%d max_batch=%d input %dx%d emb %d",inf->md.input_fp16, inf->md.max_batch, inf->md.input_w,inf->md.input_h, inf->md.embedding_size );
+    log_info("Loaded embedding model input_fp16=%d output_fp16=%d max_batch=%d input %dx%d (max %dx%d) emb %d",
+        inf->md.input_fp16, inf->output_fp16[0], inf->md.max_batch,
+        inf->md.input_w,inf->md.input_h,
+        inf->md.max_w, inf->md.max_h,
+        inf->md.embedding_size );
 
     return inf;
 }
@@ -140,8 +158,6 @@ void infer_aux_destroy(infer_aux_t* inf) {
         if (inf->output_mem_device[i]) cuda_free(inf->output_mem_device[i]);
         if (inf->output_mem_host[i]) cuda_free_host(inf->output_mem_host[i]);
     }
-    if (inf->input_mem_device) cuda_free(inf->input_mem_device);
-    if (inf->input_mem_host) cuda_free(inf->input_mem_host);
     if (inf->ctx) delete inf->ctx;
     if (inf->engine) delete inf->engine;
     if (inf->runtime) delete inf->runtime;
@@ -149,34 +165,50 @@ void infer_aux_destroy(infer_aux_t* inf) {
     free(inf);
 }
 
-static void do_inference(infer_aux_t* inf, void *src, embedding_t **ret_emb, int n)
+static void do_inference(infer_aux_t* inf, void *src, embedding_t **ret_emb, int n,int h, int w)
 {
     int out_elements[MAX_OUTPUTS];
     int out_bytes[MAX_OUTPUTS];
+
+    assert(w<=inf->md.max_w);
+    assert(h<=inf->md.max_h);
+    assert(n<=inf->md.max_batch);
+    assert(src!=0);
 
     // TensorRT IO binding
     int nout=0;
     int nbIO = inf->engine->getNbIOTensors();
     for (int i = 0; i < nbIO; ++i) {
         const char* name = inf->engine->getIOTensorName(i);
+        if (h==0) h=inf->md.input_h;
+        if (w==0) w=inf->md.input_w;
         if (inf->engine->getTensorIOMode(name) == TensorIOMode::kINPUT) {
-            inf->ctx->setInputShape(name, Dims4{n, inf->md.input_ch, inf->md.input_h, inf->md.input_w});
+            if (inf->md.input_dims==4)
+                inf->ctx->setInputShape(name, Dims4{n, inf->md.input_ch, h, w});
+            else
+            {
+                log_info("Set shape %dx%dx%d",n,h,w);
+                inf->ctx->setInputShape(name, Dims3{n, h, w});
+            }
             inf->ctx->setTensorAddress(name, src);
+
         } else {
             out_elements[nout]=inf->output_size[nout];
             out_bytes[nout]=inf->output_size[nout]*(inf->output_fp16[nout] ? 2 : 4);
             inf->ctx->setTensorAddress(name, inf->output_mem_device[nout++]);
+            assert(nout<=MAX_OUTPUTS);
         }
     }
 
     // Run inference
     inf->ctx->enqueueV3(inf->stream);
+    CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
 
     for(int i=0;i<nout;i++)
     {
-        cudaMemcpyAsync(inf->output_mem_host[i],inf->output_mem_device[i],out_bytes[i]*n, cudaMemcpyDeviceToHost, inf->stream);
+        CHECK_CUDART_CALL(cudaMemcpyAsync(inf->output_mem_host[i],inf->output_mem_device[i],out_bytes[i]*n, cudaMemcpyDeviceToHost, inf->stream));
     }
-    cudaStreamSynchronize(inf->stream);
+    CHECK_CUDART_CALL(cudaStreamSynchronize(inf->stream));
 
     for(int i=0;i<nout;i++)
     {
@@ -201,18 +233,18 @@ void infer_aux_batch_tensor(infer_aux_t* inf, image_t **images, embedding_t **re
     for(int i=0;i<n;i++)
     {
         image_t *img=images[i];
-        printf("img %dx%d model %dx%d\n",img->width,img->height,inf->md.input_w,inf->md.input_h);
-        assert(img->width==inf->md.input_w);
-        assert(img->height==inf->md.input_h);
+        assert(img->width==inf->md.input_w || inf->md.input_w==-1);
+        assert(img->height==inf->md.input_h || inf->md.input_h==-1);
         assert(img->c==1);
         converted_images[i]=image_convert(img, fmt);
     }
+
     for(int i=0;i<n;i++)
     {
         cuda_stream_add_dependency(inf->stream, converted_images[i]->stream);
-        do_inference(inf, converted_images[i]->tensor_mem, ret_emb+i, n);
+        do_inference(inf, converted_images[i]->tensor_mem, ret_emb+i, 1, images[0]->height, images[0]->width);
     }
-    destroy_image(converted_images[0]);
+    for(int i=0;i<n;i++) destroy_image(converted_images[i]);
 }
 
 static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t **ret_emb, float *M, int n)
@@ -241,7 +273,7 @@ static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t 
         inf->stream
     );
 
-    do_inference(inf, inf_image->rgb, ret_emb, n);
+    do_inference(inf, inf_image->rgb, ret_emb, n, 0, 0);
 
     // Cleanup
     destroy_image(inf_image);
