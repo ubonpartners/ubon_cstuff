@@ -48,7 +48,7 @@ void track_stream_destroy(track_stream_t *ts);
 // packet interface- set an 'sdp' -actually looks at the first thing that looks like
 // an m-line and also SRTP config- can be H264,H265 or OPUS
 
-void track_stream_set_sdp(rtp_receiver_t *r, const char *sdp_str); 
+void track_stream_set_sdp(rtp_receiver_t *r, const char *sdp_str);
 // receive an RTP packet into the track_stream - all decryption, reordering etc, handled
 void track_stream_add_rtp_packet(track_stream_t *ts, uint8_t *data, int length);
 
@@ -58,7 +58,7 @@ void track_stream_add_rtp_packet(track_stream_t *ts, uint8_t *data, int length);
 // embedding to use for search. You are guaranteed to get one result_callback per JPEG
 // note: jpeg decode of arbitrary images is dangerous - suggest transcoding unsafe input
 // in a separate cloud process before passing into this function
-void track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length);
+bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length);
 
 //=================================================================================================
 // stream config - these things are already defaulted in the shared state yaml config

@@ -45,6 +45,7 @@ struct detection
     // subbox_conf=0 => not present
     float subbox_x0,subbox_y0,subbox_x1,subbox_y1;
     float subbox_conf;
+    // FIQA score is the quality of the detected face in [0,1]
     float fiqa_score;
     // optional data items
     uint8_t num_face_points, num_pose_points, num_attr, reid_vector_len;

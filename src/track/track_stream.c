@@ -371,3 +371,11 @@ void track_shared_state_configure_inference(track_shared_state_t *tss, infer_con
     if (!tss || !config) return;
     infer_thread_configure(tss->infer_thread[INFER_THREAD_DETECTION], config);
 }
+
+bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length)
+{
+    image_t *img=decode_jpeg(jpeg_data, jpeg_data_length);
+    if (!img) return false;
+    track_stream_run_single_frame(ts, img);
+    return true;
+}
