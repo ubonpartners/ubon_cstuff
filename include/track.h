@@ -33,12 +33,36 @@ struct track_results
     detection_list_t *inference_dets;    // raw detection output (for debug)
 };
 
+//=================================================================================================
+// shared state is things that live across multiple streams. For example inference model
+// setup. One config is supplied which sets a lot of stuff
+
 track_shared_state_t *track_shared_state_create(const char *yaml_config);
 void track_shared_state_destroy(track_shared_state_t *tss);
-model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss);
-void track_shared_state_configure_inference(track_shared_state_t *tss, infer_config_t *config);
 
+// one 'track_stream' should be created per camera, video clip, audio clip or whatever separate thing you are processing
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
+void track_stream_destroy(track_stream_t *ts);
+
+//=================================================================================================
+// packet interface- set an 'sdp' -actually looks at the first thing that looks like
+// an m-line and also SRTP config- can be H264,H265 or OPUS
+
+void track_stream_set_sdp(rtp_receiver_t *r, const char *sdp_str); 
+// receive an RTP packet into the track_stream - all decryption, reordering etc, handled
+void track_stream_add_rtp_packet(track_stream_t *ts, uint8_t *data, int length);
+
+//=================================================================================================
+// jpeg interface. You can create an extra 'stream' and just use it for jpegs
+// for example, you might want to process a user uploaded image in order to get the face rec
+// embedding to use for search. You are guaranteed to get one result_callback per JPEG
+// note: jpeg decode of arbitrary images is dangerous - suggest transcoding unsafe input
+// in a separate cloud process before passing into this function
+void track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length);
+
+//=================================================================================================
+// stream config - these things are already defaulted in the shared state yaml config
+// some extra functions are provided for cases you want to override on a per-stream basis
 // min_process sets minimum time (in seconds) between successive frames where inference is run
 // i.e. specifies the maximum framerate to run the inference at
 // min_full_ROI is an interval that specifies how often to ignore the motiontracker and run on the whole frame
@@ -46,9 +70,14 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_cont
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_ROI);
 // enabled face-rec embedding generation
 void track_stream_enable_face_embeddings(track_stream_t *ts, bool enabled, float min_quality);
+
+//=================================================================================================
+// advanced / lower level interfaces
+// can mostly ignore this unless you want to write some more specialist kind of app or test app
+model_description_t *track_shared_state_get_model_description(track_shared_state_t *tss);
+void track_shared_state_configure_inference(track_shared_state_t *tss, infer_config_t *config);
 // returns the preferred image format for this stream
 image_format_t track_stream_get_stream_image_format(track_stream_t *ts);
-void track_stream_destroy(track_stream_t *ts);
 // most low-level run interface, can specify img and seperate time (img can be null to just advance time)
 void track_stream_run(track_stream_t *ts, image_t *img, double time);
 // simple run interface which processes a whole .264 or .265 stream
@@ -62,5 +91,6 @@ void track_stream_run_single_frame(track_stream_t *ts, image_t *img);
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts);
 track_results_t *track_results_create();
 void track_results_destroy(track_results_t *tr);
+
 
 #endif

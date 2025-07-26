@@ -291,12 +291,15 @@ int main(int argc, char *argv[]) {
         sprintf(config[nconfig++].name, "%s",clips[12].friendly_name);
     }
 
-    for(int i=0;i<4;i++)
+    if (is_jetson()==false)
     {
-        config[nconfig].testset="Vary tracker";
-        config[nconfig].input_clip = &clips[i/2];
-        if ((i&1)==1) config[nconfig].yaml_config = "/mldata/config/track/trackers/uc_bytetrack.yaml";
-        sprintf(config[nconfig++].name, "%s:%s",((i&1)==1) ? "Bytetrack" : "UC-Reid", clips[i/2].friendly_name);
+        for(int i=0;i<4;i++)
+        {
+            config[nconfig].testset="Vary tracker";
+            config[nconfig].input_clip = &clips[i/2];
+            if ((i&1)==1) config[nconfig].yaml_config = "/mldata/config/track/trackers/uc_bytetrack.yaml";
+            sprintf(config[nconfig++].name, "%s:%s",((i&1)==1) ? "Bytetrack" : "UC-Reid", clips[i/2].friendly_name);
+        }
     }
 
     for(int i=0;i<14;i++)

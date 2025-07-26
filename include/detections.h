@@ -62,6 +62,7 @@ struct detection
     float reid[REID_MAX_VECTOR_LEN];
     // embeddings + jpegs
     embedding_t *face_embedding;
+    embedding_t *similarity_embedding;
     embedding_t *clip_embedding;
     embedding_t *fiqa_embedding;
     jpeg_t *face_jpeg;
