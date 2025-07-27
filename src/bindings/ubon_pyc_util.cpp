@@ -17,6 +17,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "jpeg.h"
 #include "kalman_tracker.h"
 #include "fiqa.h"
+#include "mota_metrics.h"
 
 py::list convert_points(kp_t *pts, int n)
 {
@@ -101,14 +102,14 @@ py::dict convert_aux_model_description(aux_model_description_t* desc) {
     return d;
 }
 
-py::object convert_detections(detection_list_t *dets)
+py::object convert_detection_array(detection_t **dets, int num_dets)
 {
     if (!dets)
-        return py::none();  // <-- return Python None if dets is null
+        return py::none();
 
     py::list results;
-    for (int j = 0; j < dets->num_detections; ++j) {
-        detection_t* det = dets->det[j];
+    for (int j = 0; j < num_dets; ++j) {
+        detection_t* det = dets[j];
         py::dict item;
         item["class"] = det->cl;
         item["confidence"] = det->conf;
@@ -143,4 +144,95 @@ py::object convert_detections(detection_list_t *dets)
         results.append(item);
     }
     return results;
+}
+
+py::object convert_detections(detection_list_t *dets)
+{
+    if (!dets)
+        return py::none();  // <-- return Python None if dets is null
+    return convert_detection_array(dets->det, dets->num_detections);
+}
+
+detection_t *parse_detection(const std::unordered_map<std::string, py::object>& py_det) {
+    detection_t *det = detection_create();
+
+    // Required: box
+    auto box = py_det.at("box").cast<std::vector<float>>();
+    if (box.size() != 4) {
+        throw std::runtime_error("Expected 'box' to have 4 float elements (x0, y0, x1, y1).");
+    }
+
+    det->x0 = box[0];
+    det->y0 = box[1];
+    det->x1 = box[2];
+    det->y1 = box[3];
+
+    det->conf = py_det.at("confidence").cast<float>();
+    det->cl = py_det.at("class").cast<unsigned short>();
+
+    // Optional: track_id
+    if (py_det.find("track_id") != py_det.end()) {
+        det->track_id= py_det.at("track_id").cast<uint64_t>();
+    }
+
+    // Optional: face_points
+    if (py_det.find("face_points") != py_det.end()) {
+        auto face = py_det.at("face_points").cast<std::vector<float>>();
+        if (face.size() != 5 * 3) {
+            throw std::runtime_error("Expected 'face_points' to have 15 float elements (5 keypoints x 3).");
+        }
+
+        det->num_face_points = 5;
+        for (int i = 0; i < 5; ++i) {
+            det->face_points[i].x = face[i * 3 + 0];
+            det->face_points[i].y = face[i * 3 + 1];
+            det->face_points[i].conf = face[i * 3 + 2];
+        }
+    }
+
+    // Optional: pose_points
+    if (py_det.find("pose_points") != py_det.end()) {
+        auto pose = py_det.at("pose_points").cast<std::vector<float>>();
+        if (pose.size() != 17 * 3) {
+            throw std::runtime_error("Expected 'pose_points' to have 51 float elements (17 keypoints x 3).");
+        }
+
+        det->num_pose_points = 17;
+        for (int i = 0; i < 17; ++i) {
+            det->pose_points[i].x = pose[i * 3 + 0];
+            det->pose_points[i].y = pose[i * 3 + 1];
+            det->pose_points[i].conf = pose[i * 3 + 2];
+        }
+    }
+
+    return det;
+};
+
+py::dict convert_metric_results(metric_results_t *res) {
+    py::dict d;
+    d["num_frames"]          = res->num_frames;
+    d["num_objects"]         = res->num_objects;
+    d["mostly_tracked"]       = res->mostly_tracked;
+    d["partially_tracked"]    = res->partially_tracked;
+    d["mostly_lost"]          = res->mostly_lost;
+    d["num_false_positives"]  = res->num_false_positives;
+    d["num_misses"]           = res->num_misses;
+    d["num_switches"]         = res->num_switches;
+    d["num_fragmentations"]   = res->num_fragmentations;
+    d["num_unique_objects"]   = res->num_unique_objects;
+    d["num_matches"]          = res->num_matches;
+    d["missed"]               = res->missed;
+    d["fp_tracks"]            = res->fp_tracks;
+    d["total_iou"]            = res->total_iou;
+    d["recall"]               = res->recall;
+    d["precision"]            = res->precision;
+    d["mota"]                 = res->mota;
+    d["motp"]                 = res->motp;
+    d["idfp"]                 = res->idfp;
+    d["idfn"]                 = res->idfn;
+    d["idtp"]                 = res->idtp;
+    d["idp"]                  = res->idp;
+    d["idr"]                  = res->idr;
+    d["idf1"]                 = res->idf1;
+    return d;
 }

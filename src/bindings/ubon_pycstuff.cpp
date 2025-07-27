@@ -24,6 +24,7 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "motion_track.h"
 #include "kalman_tracker.h"
 #include "fiqa.h"
+#include "mota_metrics.h"
 #include "ubon_pyc_util.h"
 
 // to build: python setup.py build_ext --inplace
@@ -471,61 +472,6 @@ public:
     infer_aux_t* raw() { return aux; }
 };
 
-static auto parse_detection = [](const std::unordered_map<std::string, py::object>& py_det) -> detection_t* {
-    detection_t *det = detection_create();
-
-    // Required: box
-    auto box = py_det.at("box").cast<std::vector<float>>();
-    if (box.size() != 4) {
-        throw std::runtime_error("Expected 'box' to have 4 float elements (x0, y0, x1, y1).");
-    }
-
-    det->x0 = box[0];
-    det->y0 = box[1];
-    det->x1 = box[2];
-    det->y1 = box[3];
-
-    det->conf = py_det.at("confidence").cast<float>();
-    det->cl = py_det.at("class").cast<unsigned short>();
-
-    // Optional: track_id
-    if (py_det.find("track_id") != py_det.end()) {
-        det->track_id= py_det.at("track_id").cast<uint64_t>();
-    }
-
-    // Optional: face_points
-    if (py_det.find("face_points") != py_det.end()) {
-        auto face = py_det.at("face_points").cast<std::vector<float>>();
-        if (face.size() != 5 * 3) {
-            throw std::runtime_error("Expected 'face_points' to have 15 float elements (5 keypoints x 3).");
-        }
-
-        det->num_face_points = 5;
-        for (int i = 0; i < 5; ++i) {
-            det->face_points[i].x = face[i * 3 + 0];
-            det->face_points[i].y = face[i * 3 + 1];
-            det->face_points[i].conf = face[i * 3 + 2];
-        }
-    }
-
-    // Optional: pose_points
-    if (py_det.find("pose_points") != py_det.end()) {
-        auto pose = py_det.at("pose_points").cast<std::vector<float>>();
-        if (pose.size() != 17 * 3) {
-            throw std::runtime_error("Expected 'pose_points' to have 51 float elements (17 keypoints x 3).");
-        }
-
-        det->num_pose_points = 17;
-        for (int i = 0; i < 17; ++i) {
-            det->pose_points[i].x = pose[i * 3 + 0];
-            det->pose_points[i].y = pose[i * 3 + 1];
-            det->pose_points[i].conf = pose[i * 3 + 2];
-        }
-    }
-
-    return det;
-};
-
 std::pair<std::vector<int>, std::vector<int>> match_box_iou_wrapper(
     const std::vector<std::unordered_map<std::string, py::object>>& py_dets_a,
     const std::vector<std::unordered_map<std::string, py::object>>& py_dets_b,
@@ -819,6 +765,54 @@ public:
     }
 };
 
+class c_mota_metrics {
+public:
+    mota_metrics_t *mm;
+    c_mota_metrics() {
+        mm = mota_metrics_create();
+    }
+    ~c_mota_metrics() {
+        mota_metrics_destroy(mm);
+    }
+
+    void add_frame(
+        const std::vector<std::unordered_map<std::string, py::object>>& py_dets,
+        const std::vector<std::unordered_map<std::string, py::object>>& py_gts) {
+        int n_dets = static_cast<int>(py_dets.size());
+        int n_gts  = static_cast<int>(py_gts.size());
+
+        std::vector<detection_t*> det_ptrs;
+        det_ptrs.reserve(n_dets);
+        for (const auto& py_det : py_dets) {
+            detection_t* det = parse_detection(py_det);
+            det_ptrs.push_back(det);
+        }
+
+        std::vector<detection_t*> gt_ptrs;
+        gt_ptrs.reserve(n_gts);
+        for (const auto& py_gt : py_gts) {
+            detection_t* gt = parse_detection(py_gt);
+            gt_ptrs.push_back(gt);
+        }
+
+        mota_metrics_add_frame(
+            mm,
+            det_ptrs.data(), n_dets,
+            gt_ptrs.data(),  n_gts
+        );
+
+        // cleanup
+        for (auto det : det_ptrs) detection_destroy(det);
+        for (auto gt  : gt_ptrs)  detection_destroy(gt);
+    }
+
+    py::dict get_results() const {
+        metric_results_t res;
+        mota_metrics_get_results(mm, &res);
+        return convert_metric_results(&res);
+    }
+};
+
 PYBIND11_MODULE(ubon_pycstuff, m) {
     //std::cout << "ubon_pycstuff bindings loaded for version" << ubon_cstuff_get_version() << std::endl;
     py::enum_<image_format>(m, "ImageFormat")
@@ -1019,6 +1013,14 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         },
         py::arg("bbox"), py::arg("curr_time"),
         "Update tracker with new bbox [x1, y1, x2, y2] at curr_time.");
+
+    py::class_<c_mota_metrics>(m, "c_mota_metrics")
+        .def(py::init<>())
+        .def("add_frame", &c_mota_metrics::add_frame,
+             py::arg("detections"), py::arg("ground_truths"),
+             "Add a frame of detections and ground truths.")
+        .def("get_results", &c_mota_metrics::get_results,
+             "Get tracking metric results as a dict.");
 
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",

@@ -4,15 +4,10 @@
 #include <math.h>
 #include <stdio.h>
 #include "match.h"
+#include "match_priv.h"
 
-/* Pair of uint16 indices */
-typedef struct {
-    uint16_t a, b;
-} Pair16;
 
-#define MAX_ITEMS       65535
-
-static int match_masks_optimized(
+int match_masks_optimized(
     const uint64_t *maskA,
     const uint64_t *maskB,
     int             nA,
@@ -65,11 +60,6 @@ static int match_masks_optimized(
 
     return out_idx;
 }
-
-typedef struct {
-    uint16_t a, b;
-    float   score;
-} Cand;
 
 // Comparator for qsort: descending by score
 static int compare_cand_desc(const void *p1, const void *p2) {
