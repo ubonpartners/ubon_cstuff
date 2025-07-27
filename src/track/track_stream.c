@@ -19,7 +19,7 @@
 #include "memory_stuff.h"
 #include "track_shared.h"
 #include "track_aux.h"
-
+#include "jpeg.h"
 #define debugf if (0) log_debug
 
 static std::once_flag initFlag;
