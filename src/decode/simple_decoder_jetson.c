@@ -395,10 +395,13 @@ static void *dec_capture_loop_fn(void *arg)
             process_nvbuffer(ctx, dec_buffer);
             /* If not writing to file,
              * Queue the buffer back once it has been used. */
-            if(dec->capture_plane.qBuffer(v4l2_buf, NULL) < 0) {
-                nvdec_abort_ctx(ctx);
-                log_error("error while queueing buffer at decoder");
-                break;
+            if (!ctx->got_eos)
+            {
+                if(dec->capture_plane.qBuffer(v4l2_buf, NULL) < 0) {
+                    nvdec_abort_ctx(ctx);
+                    log_error("error while queueing buffer at decoder");
+                    break;
+                }
             }
             ctx->nr_capture++;
         }
@@ -478,22 +481,25 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
     log_info("simple decoder destroy");
 
     // 1) Tell the capture loop to exit
-    //ctx->dec->waitForIdle(500);
-
     ctx->got_eos = true;
 
-    // 2) **First** stop the capture plane streaming (unblocks capture dqBuffer())
-    ctx->dec->capture_plane.setStreamStatus(false);
+    // 2) Abort decoder to unblock any blocking V4L2 calls
+    ctx->dec->abort();
 
     // 3) Now wait for the capture thread to finish
     if (ctx->dec_capture_loop) {
+        // Plain join should now return immediately
         pthread_join(ctx->dec_capture_loop, nullptr);
     }
 
-    // 4) Stop the output plane streaming (unblocks any output dqBuffer())
+    // 4) Stop and fully deinit the capture plane
+    ctx->dec->capture_plane.setStreamStatus(false);
+    ctx->dec->capture_plane.deinitPlane();
+
+    // 5) Stop the output plane streaming (unblocks any output dqBuffer)
     ctx->dec->output_plane.setStreamStatus(false);
 
-    // 5) Drain any remaining queued output buffers
+    // 6) Drain any remaining queued output buffers
     {
         struct v4l2_buffer buf = {};
         struct v4l2_plane planes[MAX_PLANES] = {};
@@ -504,10 +510,8 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
         }
     }
 
-    // 6) Delete the decoder object
+    // 7) Delete the decoder object and free our context
     delete ctx->dec;
-
-    // 7) Free the DMA surface and context
     free(ctx);
 
     log_info("decoder destroyed cleanly");
