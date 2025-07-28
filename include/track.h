@@ -50,7 +50,7 @@ void track_stream_destroy(track_stream_t *ts);
 
 void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str);
 // receive an RTP packet into the track_stream - all decryption, reordering etc, handled
-void track_stream_add_rtp_packet(track_stream_t *ts, uint8_t *data, int length);
+void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t **data, int *length);
 
 //=================================================================================================
 // jpeg interface. You can create an extra 'stream' and just use it for jpegs

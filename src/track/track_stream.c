@@ -19,6 +19,8 @@
 #include "memory_stuff.h"
 #include "track_shared.h"
 #include "track_aux.h"
+#include "rtp_receiver.h"
+#include "h26x_assembler.h"
 #include "jpeg.h"
 #define debugf if (0) log_debug
 #define input_debugf if (0) log_info
@@ -33,11 +35,48 @@ typedef enum ts_queued_job_type
     TRACK_STREAM_JOB_VIDEO_DATA=1,    // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_IMAGE)
     TRACK_STREAM_JOB_JPEG=2,          // compressed JPEG image waiting to be decoded (makes TRACK_STREAM_JOB_IMAGE)
     TRACK_STREAM_JOB_ENCODED_FRAME=3, // complete frames of H26x data waiting to be decoded
-    TRACK_STREAM_JOB_RTP=4,           // RTP packets waiting to be assembled to H26x frames
-    TRACK_STREAM_NUM_JOB_TYPES=5
+    TRACK_STREAM_JOB_SDP=4,           // SDP config
+    TRACK_STREAM_JOB_RTP=5,           // RTP packets waiting to be assembled to H26x frames
+    TRACK_STREAM_NUM_JOB_TYPES=6
 } ts_queued_job_type_t;
 
-// RTP packets-> assembled frames -> decoded frames -> track results
+//
+// [Compressed JPEG]       [RTP Packets]     [SDP]   [Video File]   [Raw images]
+//        |                     |             |          |               |
+//        |                     v             |          |               |
+//        |                 [RTP:Queue5]  [SDP:Queue4]   |               |
+//        |                     |             |          |               |
+//        v                     v             |          v               |
+//  [jpeg:Queue 2]        RTP_RECEIVER<-------+     [File chunker:       |
+//        |                     |                    Queue 1]            |
+//        |                     v                        |               |
+//        |               H26X_ASSEMBLER                 |               |
+//        |                     |                        |               |
+//        v                     v                        |               |
+//   JPEG DECODER     [H26x Frames, Queue 3]             |               |
+//        |                     |                        |               |
+//        |                     v                        |               |
+//        |               SIMPLE_DECODER <---------------+               |
+//        |                     |                                        |
+//        |            downscale + FR frame skip <-----------------------+
+//        |                     |
+//        |                     V
+//        +----------->[Video frames, Queue 0]
+//                     load dependent Rate-limiting
+//                              |
+//                              V
+//  (other streams)       MOTION_TRACKER
+//          |             (skip, ROI gen)
+//          |                   |
+//          |   +---------------+
+//          v   v               |                   (other streams)
+//      MAIN INFERENCE          |                          |
+//              |               v                          V
+//              +----------->TRACKER------------------>AUX_INFERENCE
+//                              |              (face/clip/FIQA embedding gen
+//                              |                  person/face/main jpeg gen)
+//                              v                          |
+//                    [track results callback] <-----------+
 
 typedef struct ts_queued_job ts_queued_job_t;
 
@@ -48,6 +87,7 @@ struct ts_queued_job
     double time;
     image_t *img;
     bool single_frame;
+    bool is_iframe;
     uint8_t *data;
     size_t data_offset;
     size_t data_len;
@@ -67,6 +107,7 @@ struct track_stream
     pthread_mutex_t main_job_mutex;
     uint32_t frame_count;
     bool single_frame; // treat frame as an individual frame, not a video frame
+    bool destroying;
     motion_track_t *mt;
 
     BYTETracker *bytetracker;
@@ -87,6 +128,9 @@ struct track_stream
     std::vector<track_results_t *> track_results_vec;
 
     //
+    rtp_receiver_t *rtp_receiver;
+    h26x_assembler_t *h26x_assembler;
+    uint64_t try_schedule_push_count, try_schedule_complete_count;
     pthread_mutex_t input_job_mutex;
     simple_decoder_t *decoder;
     pthread_mutex_t q_mutex;
@@ -159,19 +203,60 @@ image_format_t track_stream_get_stream_image_format(track_stream_t *ts)
 void track_stream_destroy(track_stream_t *ts)
 {
     if (!ts) return;
+
+    // destroy is a bit fiddly to avoid race conditions
+    // first we are safe to destroy all input work
+    // as long as under mutex
+    pthread_mutex_lock(&ts->input_job_mutex);
+    pthread_mutex_lock(&ts->q_mutex);
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
+    {
+        ts_queued_job_t *j=ts->jobs[i];
+        if (!j) continue;
+        ts->jobs[i]=j->next;
+        if (j->data) free(j->data);
+        if (j->img) destroy_image(j->img);
+        block_free(j);
+    }
+    pthread_mutex_unlock(&ts->q_mutex);
+    pthread_mutex_unlock(&ts->input_job_mutex);
+
+    // now lets make sure any 'try work' functions have finished
+    // no more should be scheduled because of the above
+    while(ts->try_schedule_push_count!=ts->try_schedule_complete_count) usleep(500);
+
+    // now we are safe to destroy the main work stuff
     pthread_mutex_lock(&ts->main_job_mutex);
+    ts->destroying=true;
+    pthread_mutex_lock(&ts->q_mutex);
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
+    {
+        ts_queued_job_t *j=ts->jobs[i];
+        if (!j) continue;
+        ts->jobs[i]=j->next;
+        if (j->data) free(j->data);
+        if (j->img) destroy_image(j->img);
+        block_free(j);
+    }
+    pthread_mutex_unlock(&ts->q_mutex);
     pthread_mutex_unlock(&ts->main_job_mutex);
+
+    // nothing should be runnning now
+    if (ts->rtp_receiver) rtp_receiver_destroy(ts->rtp_receiver);
+    if (ts->h26x_assembler) h26x_assembler_destroy(ts->h26x_assembler);
     if (ts->decoder) simple_decoder_destroy(ts->decoder);
+    ts->decoder=0;
     motion_track_destroy(ts->mt);
+    ts->mt=0;
     if (ts->bytetracker) delete ts->bytetracker;
     if (ts->utrack) utrack_destroy(ts->utrack);
+    ts->utrack=0;
     track_aux_destroy(ts->taux);
     pthread_mutex_destroy(&ts->q_mutex);
     pthread_mutex_destroy(&ts->input_job_mutex);
     pthread_mutex_destroy(&ts->main_job_mutex);
     free(ts);
 }
-
 
 static void process_results(track_stream_t *ts, track_results_t *r)
 {
@@ -268,6 +353,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     track_shared_state_t *tss=ts->tss;
     int scale_w, scale_h;
     double time_delta=0;
+    assert(ts->destroying==false);
     if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
 
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
@@ -296,10 +382,11 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
                          10, 8, 8, false);
 
     image_t *image_scaled=image_scale_convert(img, ts->stream_image_format, scale_w, scale_h);
-    image_check(img);
     image_check(image_scaled);
     image_check(img);
     destroy_image(img);
+    assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
+    assert(ts->destroying==false);
     if (single_frame)
         motion_track_reset(ts->mt);
     else
@@ -331,6 +418,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         ts->last_run_time=time;
         ts->last_skip=true;
         process_results(ts, r);
+        assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
         pthread_mutex_unlock(&ts->main_job_mutex);
         schedule_job_run(ts);
         return;
@@ -350,6 +438,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     assert(ts->inference_image==0);
     ts->inference_image=image_scaled;
     infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
+    assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
 }
 
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
@@ -418,6 +507,28 @@ bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_d
     return true;
 }
 
+static void rtp_packet_callback(void *context, const rtp_packet_t *pkt)
+{
+    // an in-order/decrypted rtp packet received from the rtp receiver
+    // we pass it on to be assembled into a video frame
+    track_stream_t *ts=(track_stream_t *)context;
+    if (ts->h26x_assembler) h26x_assembler_process_rtp(ts->h26x_assembler, pkt);
+}
+
+static void h26x_frame_callback(void *context, const h26x_frame_descriptor_t *desc)
+{
+    // a complete frame of NALUs received from the h26x assembler
+    // we queue it for decode
+    track_stream_t *ts=(track_stream_t *)context;
+    ts_queued_job_t *job=ts_queued_job_create();
+    job->type=TRACK_STREAM_JOB_ENCODED_FRAME;
+    job->data=(uint8_t *)malloc(desc->annexb_length);
+    memcpy(job->data, desc->annexb_data, desc->annexb_length);
+    job->time=desc->extended_rtp_timestamp/90000.0;
+    job->is_iframe=desc->nal_stats.idr_count!=0;
+    track_stream_queue_job(ts, job);
+}
+
 static void track_stream_try_process_jobs(track_stream_t *ts)
 {
     while(1)
@@ -434,6 +545,13 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                 input_debugf("Mutex is locked");
                 continue; // come back later, already busy
             }
+
+            if (ts->destroying)
+            {
+                pthread_mutex_unlock(mut);
+                continue;
+            }
+
             input_debugf("Processing type %d",t);
             pthread_mutex_lock(&ts->q_mutex);
             ts_queued_job_t **q=&ts->jobs[t];
@@ -462,6 +580,7 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     bool single_frame=job->single_frame;
                     block_free(job);
                     input_debugf("=====> running main decoder job\n");
+                    assert(ts->destroying==false);
                     tss->thread_pool->push(thread_stream_run_input_image_job, ts, img, time, single_frame);
                     continue; // we DON'T unlock the mutex here, it's held until inference/tracking complete
                 }
@@ -500,7 +619,8 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     if (!img)
                     {
                         img=create_image(128, 128, IMAGE_FORMAT_YUV420_DEVICE);
-                        // fixme
+                        // fixme - we need to always give a results callback for jpeg even if corrupt/missing/...
+                        // better to explicitly flag this
                     }
                     // queue decoded image for further processing
                     ts_queued_job_t *out_job=ts_queued_job_create();
@@ -510,6 +630,58 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     out_job->single_frame=true;
                     block_free(job);
                     track_stream_queue_job(ts, out_job);
+                    break;
+                }
+                case TRACK_STREAM_JOB_ENCODED_FRAME:
+                {
+                    if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len);
+                    free(job->data);
+                    block_free(job);
+                    break;
+                }
+                case TRACK_STREAM_JOB_SDP:
+                {
+                    if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
+                    set_sdp_t sdp;
+                    memset(&sdp, 0, sizeof(set_sdp_t));
+                    if (0==rtp_receiver_set_sdp(ts->rtp_receiver, (const char *)job->data, &sdp))
+                    {
+                        if (sdp.is_h264 || sdp.is_h265)
+                        {
+                            if (ts->h26x_assembler)  h26x_assembler_destroy(ts->h26x_assembler);
+                            ts->h26x_assembler=h26x_assembler_create(sdp.is_h264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
+                                                                     ts, h26x_frame_callback);
+                            if (ts->decoder) simple_decoder_destroy(ts->decoder);
+                            ts->decoder=simple_decoder_create(ts, decoder_process_image, sdp.is_h264 ? SIMPLE_DECODER_CODEC_H264 : SIMPLE_DECODER_CODEC_H265);
+                        }
+                        else // TODO: OPUS
+                        {
+                            log_error("SDP configured is not H264/H265");
+                        }
+                    }
+                    else
+                    {
+                        log_error("rtp_receiver_set_sdp failed");
+                    }
+                    free(job->data);
+                    block_free(job);
+                    break;
+                }
+                case TRACK_STREAM_JOB_RTP:
+                {
+                    if (ts->rtp_receiver)
+                    {
+                        int offs=0;
+                        while(offs<job->data_len)
+                        {
+                            uint32_t len=*((uint32_t *)(job->data+offs));
+                            offs+=4;
+                            assert(offs+len<=job->data_len);
+                            rtp_receiver_add_packet(ts->rtp_receiver, job->data+offs, len);
+                        }
+                    }
+                    free(job->data);
+                    block_free(job);
                     break;
                 }
                 default:
@@ -522,6 +694,7 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
 
         break;
     }
+    (void)__atomic_add_fetch(&ts->try_schedule_complete_count, 1, __ATOMIC_RELAXED);
 }
 
 static void track_stream_try_process_jobs_id(int id, track_stream_t *ts)
@@ -532,6 +705,7 @@ static void track_stream_try_process_jobs_id(int id, track_stream_t *ts)
 static void schedule_job_run(track_stream_t *ts)
 {
     track_shared_state_t *tss=ts->tss;
+    (void)__atomic_add_fetch(&ts->try_schedule_push_count, 1, __ATOMIC_RELAXED);
     tss->thread_pool->push(track_stream_try_process_jobs_id, ts);
 }
 
@@ -615,10 +789,38 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
 
 void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str)
 {
-
+    int len=strlen(sdp_str)+1;
+    uint8_t *mem=(uint8_t *)malloc(len+4);
+    if (mem==0) return;
+    *((uint32_t *)(mem))=len;
+    memcpy(mem+4, sdp_str, len);
+    ts_queued_job_t *job=ts_queued_job_create();
+    job->type=TRACK_STREAM_JOB_SDP;
+    job->data=(uint8_t *)mem;
+    job->data_offset=0;
+    job->data_len=len;
+    track_stream_queue_job(ts, job);
 }
 
-void track_stream_add_rtp_packet(track_stream_t *ts, uint8_t *data, int length)
+void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t **data, int *length)
 {
-
+    int tlen=0;
+    for(int i=0;i<num_packets;i++) tlen+=(4+length[i]);
+    uint8_t *mem=(uint8_t *)malloc(tlen);
+    if (mem==0) return;
+    int offs=0;
+    for(int i=0;i<num_packets;i++)
+    {
+        *((uint32_t *)(mem+offs))=length[i];
+        offs+=4;
+        memcpy(mem+offs, data[i], length[i]);
+        offs+=length[i];
+    }
+    assert(offs==tlen);
+    ts_queued_job_t *job=ts_queued_job_create();
+    job->type=TRACK_STREAM_JOB_RTP;
+    job->data=(uint8_t *)mem;
+    job->data_offset=0;
+    job->data_len=tlen;
+    track_stream_queue_job(ts, job);
 }

@@ -350,7 +350,10 @@ int main(int argc, char *argv[]) {
         config.track_framerate = 8;
         config.num_threads = 1 << th;*/
         test_config_t *this_config=&config[t];
+        printf("Test starting\n");
         run_one_test(this_config);
+        printf("Test finished\n");
+        usleep(5000);
 
         auto format_mb = [](double bytes) -> double {
             return bytes / 1e6;  // Convert bytes to MB
