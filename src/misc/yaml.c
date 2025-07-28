@@ -79,6 +79,7 @@ void yaml_merge(YAML::Node baseNode, const YAML::Node& overrideNode)
 
 void yaml_merge(YAML::Node baseNode, const char *yaml_or_file)
 {
+    if (yaml_or_file==0) return;
     YAML::Node node=yaml_load(yaml_or_file);
     yaml_merge(baseNode, node);
 }
@@ -86,8 +87,11 @@ void yaml_merge(YAML::Node baseNode, const char *yaml_or_file)
 YAML::Node yaml_merge(const char *yaml_or_file_base, const char *yaml_or_file_to_merge)
 {
     YAML::Node baseNode=yaml_load(yaml_or_file_base);
-    YAML::Node node=yaml_load(yaml_or_file_to_merge);
-    yaml_merge(baseNode, node);
+    if (yaml_or_file_to_merge!=0)
+    {
+        YAML::Node node=yaml_load(yaml_or_file_to_merge);
+        yaml_merge(baseNode, node);
+    }
     return baseNode;
 }
 

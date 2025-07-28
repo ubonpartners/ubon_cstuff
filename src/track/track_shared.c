@@ -30,8 +30,6 @@ static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
 track_shared_state_t *track_shared_state_create(const char *yaml_config)
 {
     YAML::Node yaml_base=yaml_load(yaml_config);
-    std::string tracker_type=yaml_base["tracker_type"].as<std::string>();
-
     track_shared_state_t *tss=(track_shared_state_t *)malloc(sizeof(track_shared_state_t));
     assert(tss!=0);
     memset(tss, 0, sizeof(track_shared_state_t));
@@ -42,7 +40,6 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     tss->num_worker_threads=yaml_get_int_value(yaml_base["num_worker_threads"], 4);
     tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
     tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
-    tss->tracker_type=strdup(tracker_type.c_str());
 
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
@@ -137,6 +134,5 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     for(int i=0;i<INFER_THREAD_NUM_TYPES;i++) if (tss->infer_thread[i]) infer_thread_destroy(tss->infer_thread[i]);
     jpeg_thread_destroy(tss->jpeg_thread);
     free((void *)tss->config_yaml);
-    free((void *)tss->tracker_type);
     free(tss);
 }

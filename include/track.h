@@ -41,7 +41,8 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config);
 void track_shared_state_destroy(track_shared_state_t *tss);
 
 // one 'track_stream' should be created per camera, video clip, audio clip or whatever separate thing you are processing
-track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results));
+track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results),
+                                    const char *config_yaml=0);
 void track_stream_destroy(track_stream_t *ts);
 
 //=================================================================================================

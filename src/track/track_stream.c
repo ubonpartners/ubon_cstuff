@@ -23,7 +23,7 @@
 #include "h26x_assembler.h"
 #include "jpeg.h"
 #define debugf if (0) log_debug
-#define input_debugf if (0) log_info
+#define input_debugf if (0) log_error
 
 static std::once_flag initFlag;
 static block_allocator_t *track_results_allocator;
@@ -100,6 +100,7 @@ struct track_stream
 {
     track_shared_state_t *tss;
     track_aux_t *taux;
+    const char *config_yaml;
     //
     void *result_callback_context;
     void (*result_callback)(void *context, track_results_t *results);
@@ -164,13 +165,19 @@ void track_results_destroy(track_results_t *r)
     block_free(r);
 }
 
-track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_callback_context, void (*result_callback)(void *context, track_results_t *results))
+track_stream_t *track_stream_create(track_shared_state_t *tss,
+                                    void *result_callback_context, void (*result_callback)(void *context, track_results_t *results),
+                                    const char *config_yaml)
 {
     std::call_once(initFlag, track_stream_init);
 
     track_stream_t *ts=(track_stream_t *)malloc(sizeof(track_stream_t));
     assert(ts!=0);
     memset(ts, 0, sizeof(track_stream_t));
+
+    YAML::Node yaml_base=yaml_merge(tss->config_yaml, config_yaml);
+    ts->config_yaml=yaml_to_cstring(yaml_base);
+
     pthread_mutex_init(&ts->main_job_mutex, 0);
     pthread_mutex_init(&ts->input_job_mutex, 0);
     pthread_mutex_init(&ts->q_mutex, 0);
@@ -178,9 +185,11 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_call
     ts->tss=tss;
     ts->result_callback_context=result_callback_context;
     ts->result_callback=result_callback;
-    ts->mt=motion_track_create(tss->config_yaml);
-    bool use_bytetracker=(strcmp(tss->tracker_type, "upyc-bytetrack")==0);
-    bool use_utrack=(strcmp(tss->tracker_type, "upyc-utrack")==0);
+    ts->mt=motion_track_create(ts->config_yaml);
+
+    std::string tracker_type=yaml_base["tracker_type"].as<std::string>();
+    bool use_bytetracker=(strcmp(tracker_type.c_str(), "upyc-bytetrack")==0);
+    bool use_utrack=(strcmp(tracker_type.c_str(), "upyc-utrack")==0);
     assert(use_bytetracker||use_utrack); // only supported trackers right now
     if (use_bytetracker)
         ts->bytetracker=new BYTETracker(tss->config_yaml);
@@ -255,6 +264,7 @@ void track_stream_destroy(track_stream_t *ts)
     pthread_mutex_destroy(&ts->q_mutex);
     pthread_mutex_destroy(&ts->input_job_mutex);
     pthread_mutex_destroy(&ts->main_job_mutex);
+    free((void*)ts->config_yaml);
     free(ts);
 }
 
@@ -443,6 +453,19 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
 
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
 {
+    int wait=100;
+    while(1)
+    {
+        pthread_mutex_lock(&ts->input_job_mutex);
+        pthread_mutex_lock(&ts->q_mutex);
+        bool ok=true;
+        for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) ok&=(ts->jobs[i]==0);
+        pthread_mutex_unlock(&ts->q_mutex);
+        pthread_mutex_unlock(&ts->input_job_mutex);
+        if (ok) break;
+        usleep(wait);
+        wait=std::min(5000, wait*2);
+    }
     pthread_mutex_lock(&ts->main_job_mutex);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();
