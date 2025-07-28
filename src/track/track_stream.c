@@ -241,7 +241,7 @@ void track_stream_destroy(track_stream_t *ts)
     pthread_mutex_unlock(&ts->q_mutex);
     pthread_mutex_unlock(&ts->main_job_mutex);
 
-    // nothing should be runnning now
+    // nothing should be running now
     if (ts->rtp_receiver) rtp_receiver_destroy(ts->rtp_receiver);
     if (ts->h26x_assembler) h26x_assembler_destroy(ts->h26x_assembler);
     if (ts->decoder) simple_decoder_destroy(ts->decoder);

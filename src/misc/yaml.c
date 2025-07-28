@@ -45,6 +45,52 @@ YAML::Node yaml_load(const char* input)
     return ret;
 }
 
+void yaml_merge(YAML::Node baseNode, const YAML::Node& overrideNode)
+{
+    // If overrideNode is not a map, it completely replaces baseNode
+    if (!overrideNode || overrideNode.Type() != YAML::NodeType::Map) {
+        baseNode = overrideNode;
+        return;
+    }
+
+    // If baseNode isn't already a map, make it one so we can merge into it
+    if (!baseNode || baseNode.Type() != YAML::NodeType::Map) {
+        baseNode = YAML::Node(YAML::NodeType::Map);
+    }
+
+    // Walk every key in overrideNode
+    for (auto const& kv : overrideNode) {
+        const auto& key = kv.first.as<std::string>();
+        const auto& ov = kv.second;
+
+        // If both sides are maps, merge recursively
+        if (baseNode[key] &&
+            baseNode[key].Type() == YAML::NodeType::Map &&
+            ov.Type()       == YAML::NodeType::Map)
+        {
+            yaml_merge(baseNode[key], ov);
+        }
+        else {
+            // Otherwise, override or insert
+            baseNode[key] = ov;
+        }
+    }
+}
+
+void yaml_merge(YAML::Node baseNode, const char *yaml_or_file)
+{
+    YAML::Node node=yaml_load(yaml_or_file);
+    yaml_merge(baseNode, node);
+}
+
+YAML::Node yaml_merge(const char *yaml_or_file_base, const char *yaml_or_file_to_merge)
+{
+    YAML::Node baseNode=yaml_load(yaml_or_file_base);
+    YAML::Node node=yaml_load(yaml_or_file_to_merge);
+    yaml_merge(baseNode, node);
+    return baseNode;
+}
+
 const char *yaml_to_cstring(YAML::Node node)
 {
     YAML::Emitter out;
@@ -78,7 +124,6 @@ bool yaml_get_bool_value(YAML::Node node, bool dv)
     }
     return dv;
 }
-
 
 const YAML::Node* yaml_traverse_path_count(const YAML::Node& base, int count, va_list args) {
     std::vector<YAML::Node> stack;

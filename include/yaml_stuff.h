@@ -4,6 +4,9 @@
 #include <yaml-cpp/yaml.h>
 
 YAML::Node yaml_load(const char *yaml_or_file);
+void yaml_merge(YAML::Node baseNode, const YAML::Node& overrideNode);
+void yaml_merge(YAML::Node baseNode, const char *yaml_or_file);
+YAML::Node yaml_merge(const char *yaml_or_file_base, const char *yaml_or_file_to_merge);
 const char *yaml_to_cstring(YAML::Node node);
 float yaml_get_float_value(YAML::Node node, float dv);
 int yaml_get_int_value(YAML::Node node, int dv);
