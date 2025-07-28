@@ -122,7 +122,7 @@ void display_destroy(display_t *d) {
 /* “Fire & forget” by name: like cv2::imshow(window_name, img). */
 void display_image(const char *name, image_t *img) {
     init_sdl_thread_if_needed();
-
+    assert(img!=0);
     image_t *ref = image_reference(img);
     char    *name_copy = strdup(name);
 
@@ -183,10 +183,17 @@ static display_t *lookup_or_create_named_display(const char *name, image_t *img)
     }
     /* Not found → create a new display_t with a title that includes size/format */
     char titlebuf[128];
-    snprintf(titlebuf, sizeof(titlebuf) - 1,
-             "%s : %dx%d : %s",
-             name, img->width, img->height,
-             image_format_name(img->format));
+    if (img==0)
+    {
+        snprintf(titlebuf, sizeof(titlebuf) - 1, "%s : NULL display!", name);
+    }
+    else
+    {
+        snprintf(titlebuf, sizeof(titlebuf) - 1,
+                "%s : %dx%d : %s",
+                name, img->width, img->height,
+                image_format_name(img->format));
+    }
 
     display_t *new_display = (display_t *)malloc(sizeof(display_t));
     memset(new_display, 0, sizeof(display_t));

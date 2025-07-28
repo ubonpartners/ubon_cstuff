@@ -23,7 +23,7 @@ typedef struct state
 static void track_result(void *context, track_results_t *r)
 {
     state_t *s=(state_t *)context;
-    //printf("result type %d time %f\n",r->result_type,r->time);
+    printf("******result type %d time %f\n",r->result_type,r->time);
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);
@@ -45,15 +45,21 @@ static void track_result(void *context, track_results_t *r)
         }
 
         image_t *img=image_reference(s->img);
-        image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
-        display_image("video", out_frame_rgb);
+        if (img!=0)
+        {
+            image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
+            if (out_frame_rgb!=0)
+            {
+                display_image("video", out_frame_rgb);
+                destroy_image(out_frame_rgb);
+            }
+            destroy_image(img);
+        }
         double target_time=r->time;
-        while(profile_time()-s->start_time<target_time)
+        /*while(profile_time()-s->start_time<target_time)
         {
             usleep(1000);
-        }
-        destroy_image(out_frame_rgb);
-        destroy_image(img);
+        }*/
     }
     if (r->track_dets && r->track_dets->frame_jpeg)
     {
@@ -93,6 +99,10 @@ int main(int argc, char *argv[])
     s.ts=track_stream_create(s.tss, &s, track_result);
     s.start_time=profile_time();
     track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);
+
+    //decode_file("/mldata/video/test/ind_off_1280x720_7.5fps.264", &s, process_image, 0);
+    track_stream_run_video_file(s.ts, "/mldata/video/test/ind_off_1280x720_7.5fps.264", SIMPLE_DECODER_CODEC_H264, 7.5f, 0);
+    while(1) usleep(1000);
 
     if (argc>1)
     {
