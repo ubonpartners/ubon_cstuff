@@ -4,8 +4,9 @@
 #include <stdint.h>
 
 typedef enum {
-    SIMPLE_DECODER_CODEC_H264 = 0,
-    SIMPLE_DECODER_CODEC_H265 = 1
+    SIMPLE_DECODER_CODEC_UNKNOWN = 0,
+    SIMPLE_DECODER_CODEC_H264 = 1,
+    SIMPLE_DECODER_CODEC_H265 = 2
 } simple_decoder_codec_t;
 
 typedef struct simple_decoder simple_decoder_t;

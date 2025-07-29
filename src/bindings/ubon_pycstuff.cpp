@@ -962,6 +962,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("get_results", &c_track_stream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
+        .value("SIMPLE_DECODER_CODEC_UNKNOWN", SIMPLE_DECODER_CODEC_UNKNOWN)
         .value("SIMPLE_DECODER_CODEC_H264", SIMPLE_DECODER_CODEC_H264)
         .value("SIMPLE_DECODER_CODEC_H265", SIMPLE_DECODER_CODEC_H265)
         .export_values();

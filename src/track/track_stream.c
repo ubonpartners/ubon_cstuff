@@ -125,6 +125,7 @@ struct track_stream
     roi_t tracked_object_roi;
     image_t *inference_image;
     detection_list_t *inference_detections;
+    uint64_t decoded_frames;
     //
     std::vector<track_results_t *> track_results_vec;
 
@@ -216,6 +217,7 @@ void track_stream_destroy(track_stream_t *ts)
     // destroy is a bit fiddly to avoid race conditions
     // first we are safe to destroy all input work
     // as long as under mutex
+
     pthread_mutex_lock(&ts->input_job_mutex);
     pthread_mutex_lock(&ts->q_mutex);
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
@@ -235,8 +237,20 @@ void track_stream_destroy(track_stream_t *ts)
     while(ts->try_schedule_push_count!=ts->try_schedule_complete_count) usleep(500);
 
     // now we are safe to destroy the main work stuff
+    // destroy the decoder first as it can be a bit annoying
     pthread_mutex_lock(&ts->main_job_mutex);
+    pthread_mutex_lock(&ts->input_job_mutex);
     ts->destroying=true;
+    simple_decoder_t *dec=ts->decoder;
+    if (dec)
+    {
+        ts->decoder=0;
+        simple_decoder_destroy(dec);
+    }
+    pthread_mutex_unlock(&ts->input_job_mutex);
+    pthread_mutex_unlock(&ts->main_job_mutex);
+
+    pthread_mutex_lock(&ts->main_job_mutex);
     pthread_mutex_lock(&ts->q_mutex);
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
     {
@@ -363,7 +377,11 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     track_shared_state_t *tss=ts->tss;
     int scale_w, scale_h;
     double time_delta=0;
-    assert(ts->destroying==false);
+    if (ts->destroying)
+    {
+        destroy_image(img);
+        return;
+    }
     if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
 
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
@@ -507,14 +525,29 @@ static void track_stream_queue_job(track_stream_t *ts, ts_queued_job_t *new_job)
     schedule_job_run(ts);
 }
 
+static void track_stream_queue_job_head(track_stream_t *ts, ts_queued_job_t *new_job)
+{
+    pthread_mutex_lock(&ts->q_mutex);
+    ts_queued_job_t **q=&ts->jobs[(int)new_job->type];
+    ts_queued_job_t *job=*q;
+    input_debugf("Queue input job type %d",new_job->type);
+    *q=new_job;
+    new_job->next=job;
+    if (new_job->type==TRACK_STREAM_JOB_IMAGE) ts->queued_images++;
+    pthread_mutex_unlock(&ts->q_mutex);
+    schedule_job_run(ts);
+}
+
 static void decoder_process_image(void *context, image_t *img)
 {
     track_stream_t *ts=(track_stream_t *)context;
+    if (ts->destroying) return;
     ts_queued_job_t *job=ts_queued_job_create();
     job->type=TRACK_STREAM_JOB_IMAGE;
     job->img=image_reference(img);
     job->time=img->time;
     job->single_frame=false;
+    ts->decoded_frames++;
     input_debugf("got decoded image %dx%d time %f\n",img->width,img->height,img->time);
     track_stream_queue_job(ts, job);
 }
@@ -610,22 +643,30 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                 case TRACK_STREAM_JOB_VIDEO_DATA:
                 {
                     input_debugf("running input video data job");
+                    assert(ts->destroying==false);
                     if (ts->decoder==0)
                     {
+                        printf("Create decoder");
                         ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
                         simple_decoder_set_framerate(ts->decoder, job->fps);
                         if (job->end_time!=0) simple_decoder_set_max_time(ts->decoder, job->end_time);
                     }
 
-                    size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
-                    //
-                    input_debugf("Decode video %d/%d",(int)job->data_offset,(int)job->data_len);
-                    simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
-                    job->data_offset+=data_len;
+                    uint64_t decoded_frames=ts->decoded_frames;
+                    for (int i=0;i<32;i++)
+                    {
+                        size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
+                        //
+                        input_debugf("Decode video %d/%d",(int)job->data_offset,(int)job->data_len);
+                        simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
+                        job->data_offset+=data_len;
+                        if (ts->decoded_frames!=decoded_frames) break;
+                    }
+
                     if (job->data_offset<job->data_len)
                     {
                         // requeue remaining video data
-                        track_stream_queue_job(ts, job);
+                        track_stream_queue_job_head(ts, job);
                     }
                     else
                     {
@@ -769,8 +810,29 @@ static void track_run_video_process_image(void *context, image_t *img)
     if (img!=0 && img->time>=ts->start_time) track_stream_run_frame_time(ts, img);
 }
 
+extern float file_decoder_parse_fps(const char *s);
+extern simple_decoder_codec_t file_decoder_parse_codec(const char *file);
+
 void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time)
 {
+    if (codec==SIMPLE_DECODER_CODEC_UNKNOWN)
+    {
+        codec=file_decoder_parse_codec(file);
+        if (codec==SIMPLE_DECODER_CODEC_UNKNOWN)
+        {
+            log_error("track_stream_run_video_file : no codec");
+            return;
+        }
+    }
+    if (video_fps==0.0f)
+    {
+        video_fps=file_decoder_parse_fps(file);
+        if (video_fps==0.0f)
+        {
+            log_error("track_stream_run_video_file : no fps");
+            return;
+        }
+    }
     input_debugf("track_stream_run_video_file %s",file);
     FILE *fp = fopen(file, "rb");
     if (!fp)

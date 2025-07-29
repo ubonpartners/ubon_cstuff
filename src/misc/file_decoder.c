@@ -13,7 +13,7 @@
 #include "pcap_decoder.h"
 #include "cuda_stuff.h"
 
-static bool file_ends(const char *file, const char *suffix)
+bool file_decoder_file_ends(const char *file, const char *suffix)
 {
     size_t file_len = strlen(file);
     size_t suffix_len = strlen(suffix);
@@ -21,7 +21,16 @@ static bool file_ends(const char *file, const char *suffix)
     return strcmp(file + file_len - suffix_len, suffix) == 0;
 }
 
-static float parse_fps(const char *s) {
+simple_decoder_codec_t file_decoder_parse_codec(const char *file)
+{
+    bool is_h264=file_decoder_file_ends(file, ".h264")||file_decoder_file_ends(file, ".264");
+    if (is_h264) return SIMPLE_DECODER_CODEC_H264;
+    bool is_h265=file_decoder_file_ends(file, ".h265")||file_decoder_file_ends(file, ".265")||file_decoder_file_ends(file, ".hevc");
+    if (is_h265) return SIMPLE_DECODER_CODEC_H265;
+    return SIMPLE_DECODER_CODEC_UNKNOWN;
+}
+
+float file_decoder_parse_fps(const char *s) {
     for (const char *p = s; *p; ++p) {
         if (*p == '_' && isdigit((unsigned char)p[1])) {
             char *endptr;
@@ -49,9 +58,9 @@ void decode_file(const char *file, void *context,
     h26x_assembler_t *h26x_assembler;
     simple_decoder_t *decoder;
 
-    bool is_h264=file_ends(file, ".h264")||file_ends(file, ".264");
-    bool is_h265=file_ends(file, ".h265")||file_ends(file, ".265")||file_ends(file, ".hevc");
-    bool is_pcap=file_ends(file, ".pcap")||file_ends(file, ".pcapng");
+    bool is_h264=file_decoder_file_ends(file, ".h264")||file_decoder_file_ends(file, ".264");
+    bool is_h265=file_decoder_file_ends(file, ".h265")||file_decoder_file_ends(file, ".265")||file_decoder_file_ends(file, ".hevc");
+    bool is_pcap=file_decoder_file_ends(file, ".pcap")||file_decoder_file_ends(file, ".pcapng");
 
     if (is_pcap)
     {
@@ -74,7 +83,7 @@ void decode_file(const char *file, void *context,
     {
         if (framerate==0)
         {
-            framerate=parse_fps(file);
+            framerate=file_decoder_parse_fps(file);
             if (framerate==0)
             {
                 log_warn("No framerate specified in filename %s, using default 30 fps", file);

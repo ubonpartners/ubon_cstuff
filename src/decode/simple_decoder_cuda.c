@@ -30,6 +30,7 @@ struct simple_decoder
     double time;
     double time_increment;
     double max_time;
+    bool destroyed;
     //CUstream stream;
     CUvideoctxlock vidlock;
     CUvideodecoder decoder;
@@ -120,6 +121,7 @@ void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
+    if (dec->destroyed) return 1; // ignore if "destroy" already called
 
     CUdeviceptr decodedFrame=0;
     CUVIDPROCPARAMS videoProcessingParameters = {0};
@@ -129,72 +131,66 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
-    /* typedef enum cuvidDecodeStatus_enum
-{
-    cuvidDecodeStatus_Invalid         = 0,   // Decode status is not valid
-    cuvidDecodeStatus_InProgress      = 1,   // Decode is in progress
-    cuvidDecodeStatus_Success         = 2,   // Decode is completed without any errors
-    // 3 to 7 enums are reserved for future use
-    cuvidDecodeStatus_Error           = 8,   // Decode is completed with an error (error is not concealed)
-    cuvidDecodeStatus_Error_Concealed = 9,   // Decode is completed with an error and error is concealed
-} cuvidDecodeStatus;*/
+    bool skip=(dec->max_time>=0)&&(dec->time>dec->max_time);
+
+    image_t *dec_img=(IMAGE_FORMAT_NV12_DEVICE!=dec->output_format) ? create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE)
+                                                                    : create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
+    image_t *out_img=0;
+    videoProcessingParameters.output_stream = dec_img->stream;
+    assert(dec->destroyed==false);
+    CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
+
+    CUVIDGETDECODESTATUS decodeStatus;
+    CHECK_CUDA_CALL(cuvidGetDecodeStatus(dec->decoder, pDispInfo->picture_index, &decodeStatus));
+
+    if ((decodeStatus.decodeStatus!=cuvidDecodeStatus_Success)
+        && (decodeStatus.decodeStatus!=cuvidDecodeStatus_Error_Concealed))
+    {
+        log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
+        // un-concealable decoder error
+        CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+        return 1;
+    }
+
+    if (decodeStatus.decodeStatus==cuvidDecodeStatus_Error_Concealed)
+    {
+        log_info("Cuda decoder error concealment");
+    }
+
+    // cuda decoder outputs NV12. If we are also asking for NV12 then we need to copy it.
+    // Sadly, the copy is needed as the data only stays valid inside the map video
+    // for other output formats we can wrap the cuda output in an image structure and call convert
+    // the convert effectively 'copies' the data
 
     if (IMAGE_FORMAT_NV12_DEVICE==dec->output_format) {
-        // cuda decoder outpute NV12. If we are also asking for NV12 then we need to copy it.
-        // Sadly, the copy is needed as the data only stays valid inside the map video
-        image_t *dec_img=create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
-        videoProcessingParameters.output_stream = dec_img->stream;
-        CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
         CHECK_CUDART_CALL(cudaMemcpy2D(
             dec_img->y, dec_img->stride_y,
             (void*)decodedFrame, pitch,
             dec_img->width, (dec_img->height*3)/2,
             cudaMemcpyDeviceToDevice
         ));
-        CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
-        dec_img->time=dec->time;
-        dec->time+=dec->time_increment;
-        dec->frame_callback(dec->context, dec_img);
-        destroy_image(dec_img);
+        out_img=image_reference(dec_img);
     }
     else {
-        // for other output formats we can wrap the cuda output in an image structure and call convert
-        // the convert effectively 'copies' the data
-        image_t *dec_img=create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
-        videoProcessingParameters.output_stream = dec_img->stream;
-        CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
-
-        CUVIDGETDECODESTATUS decodeStatus;
-        CHECK_CUDA_CALL(cuvidGetDecodeStatus(dec->decoder, pDispInfo->picture_index, &decodeStatus));
-        if (decodeStatus.decodeStatus!=cuvidDecodeStatus_Success)
-        {
-            log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
-        }
-
         dec_img->y=(uint8_t*)decodedFrame;
         dec_img->u=(uint8_t*)decodedFrame+pitch*dec->out_height;
         dec_img->v=dec_img->u+1;
         dec_img->stride_y=dec_img->stride_uv=pitch;
-        image_t *img=image_convert(dec_img, dec->output_format);
-        image_sync(img);
-        CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
-        bool skip=false;
-        if (dec->max_time>=0)
-        {
-            if (dec->time>dec->max_time) skip=true;
-        }
-        img->time=dec->time;
-        if (file_trace_enabled)
-        {
-            FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",img->width,img->height,img->format,img->time,image_hash(img));
-        }
-        dec->time+=dec->time_increment;
-
-        if (!skip) dec->frame_callback(dec->context, img);
-        destroy_image(img);
-        destroy_image(dec_img);
+        out_img=image_convert(dec_img, dec->output_format);
+        image_sync(out_img);
     }
+    out_img->time=dec->time;
 
+    CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
+    if (file_trace_enabled)
+    {
+        FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",out_img->width,out_img->height,out_img->format,out_img->time,(out_img==0) ? 0 : image_hash(out_img));
+    }
+    dec->time+=dec->time_increment;
+
+    if (!skip) dec->frame_callback(dec->context, out_img);
+    if (out_img) destroy_image(out_img);
+    if (dec_img) destroy_image(dec_img);
     return 1;
 }
 
@@ -212,7 +208,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->target_height=0;
     dec->out_width=1280;
     dec->out_height=720;
-    dec->time_increment=90000/30;
+    dec->time_increment=3003.0/90000.0; // in seconds
     dec->time=0;
     dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
@@ -243,12 +239,9 @@ void simple_decoder_destroy(simple_decoder_t *dec)
 {
     if (dec)
     {
-        if (dec->videoParser)
-        {
-            CHECK_CUDA_CALL(cuvidDestroyVideoParser(dec->videoParser));
-        }
         if (dec->decoder)
         {
+            dec->destroyed=true;
             CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
         }
         CHECK_CUDA_CALL(cuvidCtxLockDestroy(dec->vidlock));
@@ -273,6 +266,5 @@ void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
     dec->max_time=max_time;
 }
-
 
 #endif //(UBONCSTUFF_PLATFORM == 0)

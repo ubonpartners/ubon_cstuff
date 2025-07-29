@@ -114,7 +114,10 @@ static void *run_track_worker(void *arg) {
     };
 
     // decode_file continues (looping if necessary) until 'stop callback'
-    decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
+    //decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
+
+    for(int i=0;i<10;i++) track_stream_run_video_file(s.ts, args->video_file_filename, SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f);
+    while(keep_running) usleep(30000);
 
     pthread_mutex_lock(args->lock);
     *args->total_tracked_nonskip += s.tracked_frames_nonskip;
