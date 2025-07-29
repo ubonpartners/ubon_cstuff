@@ -23,7 +23,7 @@ typedef struct state
 static void track_result(void *context, track_results_t *r)
 {
     state_t *s=(state_t *)context;
-    printf("******result type %d time %f\n",r->result_type,r->time);
+    printf("track_result: result type %d time %f, %d dtections\n",r->result_type,r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);
@@ -71,7 +71,7 @@ static void track_result(void *context, track_results_t *r)
         FILE *f=fopen(temp, "wb");
         fwrite(data, 1, data_size, f);
         fclose(f);
-        printf("Written %s; %d bytes\n",temp,(int)data_size);
+        printf("==Written %s; %d bytes\n",temp,(int)data_size);
     }
 }
 
@@ -101,8 +101,8 @@ int main(int argc, char *argv[])
     track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);
 
     //decode_file("/mldata/video/test/ind_off_1280x720_7.5fps.264", &s, process_image, 0);
-    track_stream_run_video_file(s.ts, "/mldata/video/test/ind_off_1280x720_7.5fps.264", SIMPLE_DECODER_CODEC_H264, 7.5f, 0);
-    while(1) usleep(1000);
+    //track_stream_run_video_file(s.ts, "/mldata/video/test/ind_off_1280x720_7.5fps.264", SIMPLE_DECODER_CODEC_H264, 7.5f, 0);
+    //while(1) usleep(1000);
 
     if (argc>1)
     {

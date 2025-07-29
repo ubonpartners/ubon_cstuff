@@ -31,6 +31,7 @@ struct simple_decoder
     double time_increment;
     double max_time;
     bool destroyed;
+    bool use_frame_times;
     //CUstream stream;
     CUvideoctxlock vidlock;
     CUvideodecoder decoder;
@@ -149,7 +150,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
-    if (pDispInfo->timestamp!=0)
+    if (dec->use_frame_times)
     {
         dec->time=pDispInfo->timestamp/90000.0;
         assert(dec->time_increment==0);  // EITHER set time for each frame or use auto incrementing 'fixed framerate'
@@ -320,6 +321,16 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     CUVIDSOURCEDATAPACKET packet = {0};
     packet.payload=bitstream_data;
     packet.payload_size=data_size;
+    if (frame_time>=0)
+    {
+        packet.timestamp=frame_time*90000;
+        packet.flags=CUVID_PKT_TIMESTAMP;
+        dec->use_frame_times=true;
+    }
+    else
+    {
+        dec->use_frame_times=false;
+    }
     dec->stats_bytes_decoded+=data_size;
     if (dec->max_time>=0)
     {
