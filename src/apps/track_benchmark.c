@@ -127,6 +127,9 @@ static void *run_track_worker(void *arg) {
     pthread_mutex_unlock(args->lock);
 
     fclose(input);
+
+    printf("%s\n",track_stream_get_stats(s.ts));
+
     track_stream_destroy(s.ts);
     return NULL;
 }
@@ -203,6 +206,9 @@ static void run_one_test(test_config_t *config)
     //printf("MACROS %f SEC %d / %f rate %f 720; %f\n", (double)total_decoded_macroblocks, config->duration_sec, elapsed, config->mbps, config->mbps/3600.0);
     //printf("%40s: %.2f (total) %.2f (nonskip)\n", config->filename, avg_fps, avg_fps_nonskipped);
 
+    const char *stats=track_shared_state_get_stats(shared_state);
+    printf("%s\n\n",stats);
+    free((void*)stats);
     track_shared_state_destroy(shared_state);
     free(threads);
     free(args);
@@ -270,7 +276,7 @@ int main(int argc, char *argv[]) {
     dconfig.duration_sec = 10;
     dconfig.track_framerate = 8;
     dconfig.face_embedding_min_quality=0.01;
-    dconfig.num_threads = is_jetson() ? 8 : 16;
+    dconfig.num_threads = platform_is_jetson() ? 8 : 16;
     dconfig.infer_w = 640;
     dconfig.infer_h = 640;
 
@@ -294,7 +300,7 @@ int main(int argc, char *argv[]) {
         sprintf(config[nconfig++].name, "%s",clips[12].friendly_name);
     }
 
-    if (is_jetson()==false)
+    if (platform_is_jetson()==false)
     {
         for(int i=0;i<4;i++)
         {

@@ -245,6 +245,48 @@ char *allocation_tracker_stats(void)
     return strdup(report.c_str());
 }
 
+YAML::Node allocation_tracker_stats_node() {
+    std::lock_guard<std::mutex> lock(registry_mutex);
+
+    YAML::Node root;
+
+    // Build allocation tracker stats
+    for (auto &e : registry) {
+        if (e.tracker) {
+            YAML::Node node;
+            node["name"]              = e.name;
+            node["num_allocs"]        = e.tracker->num_allocs;
+            node["num_frees"]         = e.tracker->num_frees;
+            node["high_watermark"]    = e.tracker->num_hwm;
+            node["outstanding"]       = (e.tracker->num_allocs - e.tracker->num_frees);
+            node["total_alloc_bytes"] = e.tracker->total_alloc;
+            node["total_hwm_bytes"]   = e.tracker->total_hwm;
+            node["total_free_bytes"]  = e.tracker->total_free;
+            node["total_out_bytes"]   = e.tracker->total_alloc - e.tracker->total_free;
+            root["allocation_tracker_stats"].push_back(node);
+        }
+    }
+
+    // Build block allocator stats
+    for (auto &e : registry) {
+        if (e.block_allocator) {
+            YAML::Node node;
+            node["name"]                         = e.name;
+            node["block_size"]                   = e.block_allocator->block_size;
+            node["allocated_blocks"]             = e.block_allocator->allocated_blocks;
+            node["total_big_blocks"]             = e.block_allocator->total_big_blocks;
+            node["free_big_blocks"]              = e.block_allocator->free_big_blocks;
+            node["high_watermark_big_blocks"]    = e.block_allocator->high_watermark_big_blocks;
+            node["total_variable_blocks"]        = e.block_allocator->total_variable_blocks;
+            node["total_variable_memory_bytes"]  = e.block_allocator->total_variable_memory;
+            node["total_variable_memory_hwm"]    = e.block_allocator->total_variable_memory_hwm;
+            root["block_allocator_stats"].push_back(node);
+        }
+    }
+
+    return root;
+}
+
 static inline void remove_from_free_list(block_allocator_t *ba, big_block_t *bb) {
     if (bb->prev_free) bb->prev_free->next_free = bb->next_free;
     else ba->free_list_head = bb->next_free;

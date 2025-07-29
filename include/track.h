@@ -45,6 +45,9 @@ track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_cont
                                     const char *config_yaml=0);
 void track_stream_destroy(track_stream_t *ts);
 
+const char *track_shared_state_get_stats(track_shared_state_t *tss);
+const char *track_stream_get_stats(track_stream_t *ts);
+
 //=================================================================================================
 // packet interface- set an 'sdp' -actually looks at the first thing that looks like
 // an m-line and also SRTP config- can be H264,H265 or OPUS

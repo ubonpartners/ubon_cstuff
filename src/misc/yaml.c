@@ -98,6 +98,8 @@ YAML::Node yaml_merge(const char *yaml_or_file_base, const char *yaml_or_file_to
 const char *yaml_to_cstring(YAML::Node node)
 {
     YAML::Emitter out;
+    out.SetIndent(4);
+    out.SetMapFormat(YAML::Auto);
     out << node;
 
     // Get the YAML as a C-string

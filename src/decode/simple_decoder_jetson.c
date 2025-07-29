@@ -15,6 +15,7 @@
 #include "NvBufSurface.h"
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
+#include "yaml_stuff.h"
 
 using namespace std;
 
@@ -80,6 +81,8 @@ struct simple_decoder
     double max_time;
     void *context;
     void (*frame_callback)(void *context, image_t *decoded_frame);
+
+    uint64_t stats_bytes_decoded;
 };
 
 static void nvdec_abort_ctx(simple_decoder_t *ctx)
@@ -222,7 +225,7 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
         ctx->cfg.window_width, ctx->cfg.window_height);
     ctx->fmt = NVBUF_COLOR_FORMAT_YUV420;
     ctx->cfg.v4l2_pix_fmt = V4L2_PIX_FMT_YUV420M;
-       
+
     /* deinitPlane unmaps the buffers and calls REQBUFS with count 0 */
     dec->capture_plane.deinitPlane();
     /* Not necessary to call VIDIOC_S_FMT on decoder capture plane. But
@@ -299,7 +302,7 @@ static int first_resolution_change(simple_decoder_t *ctx)
 extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
                               image_t      *img,
                               CUstream      stream );
-                              
+
 static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
 {
     NvBufSurface *nvbuf_surf = nullptr;
@@ -429,7 +432,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
-    log_trace("ctx = %p dec = %p", ctx, dec); 
+    log_trace("ctx = %p dec = %p", ctx, dec);
     ctx->dec = dec;
     r = dec->subscribeEvent(V4L2_EVENT_RESOLUTION_CHANGE, 0, 0);
     CHECK_ERROR(r < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE");
@@ -453,7 +456,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
         CHECK_ERROR(r < 0, "Error metadata reporting");
     }
     r = dec->setMaxPerfMode(1);
-    CHECK_ERROR(r < 0, "setMaxPerfMode");    
+    CHECK_ERROR(r < 0, "setMaxPerfMode");
     /* Start streaming on decoder output_plane */
     r = dec->output_plane.setStreamStatus(true);
     CHECK_ERROR(r < 0, "Error in output plane stream on");
@@ -461,7 +464,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     ctx->cfg.out_pixfmt = 2; /* YUV420 */
 
     int ret = dec->disableDPB();
-    if (ret < 0) 
+    if (ret < 0)
         log_error("Failed to set V4L2_CID_MPEG_VIDEO_DISABLE_DPB");
     else
         log_info("Disabled DPB for lower latency");
@@ -526,6 +529,8 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     struct timeval tv;
     NvBuffer *buffer;
     v4l2_ctrl_videodec_inputbuf_metadata d;
+
+    dec->stats_bytes_decoded+=data_size;
 
     do {
         memset(&v4l2_buf, 0, sizeof(v4l2_buf));
@@ -594,6 +599,13 @@ void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
     log_info("%s:%d max_time = %.3f", __func__, __LINE__, max_time);
     if (dec) dec->max_time = max_time;
+}
+
+YAML::Node decoder_get_stats(simple_decoder *dec)
+{
+    YAML::Node root;
+    root["stats_bytes_decoded"]=dec->stats_bytes_decoded;
+    return root;
 }
 
 #endif //(UBONCSTUFF_PLATFORM == 1)

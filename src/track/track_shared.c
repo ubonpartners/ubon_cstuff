@@ -17,6 +17,7 @@
 #include "yaml_stuff.h"
 #include "track_aux.h"
 #include "track_shared.h"
+#include "memory_stuff.h"
 
 #define debugf if (0) log_debug
 
@@ -135,4 +136,22 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     jpeg_thread_destroy(tss->jpeg_thread);
     free((void *)tss->config_yaml);
     free(tss);
+}
+
+const char *track_shared_state_get_stats(track_shared_state_t *tss)
+{
+    YAML::Node root;
+
+    YAML::Node infer_threads;
+    for(int i=0;i<INFER_THREAD_NUM_TYPES;i++)
+    {
+        if (tss->infer_thread[i])
+        {
+            YAML::Node node=infer_thread_stats_node(tss->infer_thread[i]);
+            infer_threads[infer_thread_type_names[i]] = node;
+        }
+    }
+    root["infer_threads"]=infer_threads;
+
+    return yaml_to_cstring(root);
 }

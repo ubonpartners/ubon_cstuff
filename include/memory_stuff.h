@@ -2,6 +2,7 @@
 #define __MEMORY_STUFF_H
 
 #include <stddef.h>
+#include <yaml-cpp/yaml.h>
 
 typedef struct allocation_table allocation_table_t;
 
@@ -56,6 +57,7 @@ static inline void track_free_table(allocation_tracker_t *t, void *p)
 
 void allocation_tracker_register(allocation_tracker_t *t, const char *name, bool use_table=false);
 char *allocation_tracker_stats(void);
+YAML::Node allocation_tracker_stats_node();
 void allocation_tracker_reset();
 double allocation_tracker_get_mem_HWM(const char *tracker_name);
 double allocation_tracker_get_mem_outstanding(const char *tracker_name);

@@ -1,6 +1,10 @@
 #ifndef __PLATFORM_STUFF_H
 #define __PLATFORM_STUFF_H
 
-bool is_jetson();
+#include <yaml-cpp/yaml.h>
+
+bool platform_is_jetson();
+
+const char *platform_get_stats(); // returns YAML string
 
 #endif

@@ -2,6 +2,7 @@
 #define __SIMPLE_DECODER_H
 
 #include <stdint.h>
+#include <yaml-cpp/yaml.h>
 
 typedef enum {
     SIMPLE_DECODER_CODEC_UNKNOWN = 0,
@@ -19,4 +20,5 @@ void simple_decoder_destroy(simple_decoder_t *dec);
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *data, int data_size);
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt);
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time);
+YAML::Node simple_decoder_get_stats(simple_decoder *dec);
 #endif

@@ -133,6 +133,10 @@ static void *infer_thread_fn(void *arg)
 
         infer_thread_result_data_t d[count];
         memset(&d[0], 0, count*sizeof(infer_thread_result_data_t));
+        h->stats.batch_size_histogram[count]+=1;
+        h->stats.total_batches++;
+        h->stats.total_images+=count;
+        double infer_start_time=profile_time();
 
         if (h->type==INFER_THREAD_DETECTION)
         {
@@ -149,16 +153,8 @@ static void *infer_thread_fn(void *arg)
 
             //display_image("crop", img_cropped[0]);
 
-            double infer_start_time=profile_time();
             infer_batch(h->infer, img_cropped, dets_arr, count);
             for(int i=0;i<count;i++) dets_arr[i]->md=h->md; // attach the model description
-
-            double infer_elapse_time=profile_time()-infer_start_time;
-
-            h->stats.batch_size_histogram[count]+=1;
-            h->stats.batch_size_histogram_total_time[count]+=infer_elapse_time;
-            h->stats.total_batches++;
-            h->stats.total_images+=count;
 
             for (int i = 0; i < count; ++i)
             {
@@ -212,6 +208,9 @@ static void *infer_thread_fn(void *arg)
                 for(int i=0;i<count;i++) embedding_destroy(e[i]);
             }
         }
+
+        double infer_elapse_time=profile_time()-infer_start_time;
+        h->stats.batch_size_histogram_total_time[count]+=infer_elapse_time;
 
         // 5) Signal each job’s result handle, passing back its own detection_list_t*
         for (int i = 0; i < count; ++i) {
@@ -459,8 +458,8 @@ void infer_thread_wait_result(infer_thread_result_handle_t *handle, infer_thread
 void infer_thread_get_stats(infer_thread_t *h, infer_thread_stats_t *s)
 {
     memcpy(s, &h->stats, sizeof(infer_thread_stats_t));
-    s->mean_batch_size=s->total_images/(s->total_batches+0.0);
-    s->mean_roi_area=s->total_roi_area/s->total_images;
+    s->mean_batch_size=s->total_images/(s->total_batches+1e-7);
+    s->mean_roi_area=s->total_roi_area/(s->total_images+1e-7);
     for (int i = 0; i < INFER_THREAD_MAX_BATCH; ++i) {
         if (s->batch_size_histogram[i]!=0)
             s->batch_size_histogram_time_per_inference[i]=s->batch_size_histogram_total_time[i]/s->batch_size_histogram[i];
@@ -495,4 +494,33 @@ void infer_thread_print_stats(infer_thread_t *h)
             );
         }
     }
+}
+
+YAML::Node infer_thread_stats_node(infer_thread_t *h)
+{
+    infer_thread_stats_t ss;
+    infer_thread_get_stats(h, &ss);
+
+    YAML::Node root;
+
+    root["total_batches"]   = ss.total_batches;
+    root["total_images"]    = ss.total_images;
+    root["total_roi_area"]  = ss.total_roi_area;
+    root["mean_batch_size"] = ss.mean_batch_size;
+    root["mean_roi_area"]   = ss.mean_roi_area;
+
+    YAML::Node histogram;
+    for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {
+        if (ss.batch_size_histogram[i] > 0) {
+            YAML::Node entry;
+            entry["batch_size"]       = i;
+            entry["count"]            = ss.batch_size_histogram[i];
+            entry["time_per_infer_ms"]= ss.batch_size_histogram_time_per_inference[i] * 1000.0;
+            entry["time_per_img_ms"]  = (ss.batch_size_histogram_time_per_inference[i] * 1000.0) / i;
+            histogram.push_back(entry);
+        }
+    }
+    root["batch_size_histogram"] = histogram;
+
+    return root;
 }

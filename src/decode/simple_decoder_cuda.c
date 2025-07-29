@@ -10,8 +10,9 @@
 #include "cuda_stuff.h"
 #include "log.h"
 #include "misc.h"
+#include "yaml_stuff.h"
 
-#define debugf if (1) log_debug
+#define debugf if (0) log_debug
 
 #define MAX_DECODE_W    3840
 #define MAX_DECODE_H    2160
@@ -25,6 +26,7 @@ struct simple_decoder
     int out_height;
     int target_width;
     int target_height;
+    simple_decoder_codec_t codec;
     void *context;
     image_format_t output_format;
     double time;
@@ -37,6 +39,13 @@ struct simple_decoder
     CUvideoparser videoParser;
     CUVIDEOFORMAT videoFormat;
     void (*frame_callback)(void *context, image_t *decoded_frame);
+
+    uint64_t stats_bytes_decoded;
+    uint64_t stats_macroblocks_decoded;
+    uint32_t stats_frames_decoded;
+    uint32_t stats_unconcealable_decode_errors;
+    uint32_t stats_concealable_decode_errors;
+    uint32_t stats_resolution_changes;
 };
 
 int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
@@ -46,6 +55,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
     if (dec->decoder != NULL && (pFormat->coded_width != dec->coded_width || pFormat->coded_height != dec->coded_height))
     {
         // Resolution change, reinitialize the decoder
+        dec->stats_resolution_changes++;
         CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
         dec->decoder = NULL;
     }
@@ -137,17 +147,18 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
                                                                     : create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
     image_t *out_img=0;
     videoProcessingParameters.output_stream = dec_img->stream;
-    assert(dec->destroyed==false);
     CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
 
     CUVIDGETDECODESTATUS decodeStatus;
     CHECK_CUDA_CALL(cuvidGetDecodeStatus(dec->decoder, pDispInfo->picture_index, &decodeStatus));
-
+    dec->stats_frames_decoded++;
+    dec->stats_macroblocks_decoded+=((dec->out_width+15)>>4)*((dec->out_height+15)>>4);
     if ((decodeStatus.decodeStatus!=cuvidDecodeStatus_Success)
         && (decodeStatus.decodeStatus!=cuvidDecodeStatus_Error_Concealed))
     {
         log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
         // un-concealable decoder error
+        dec->stats_unconcealable_decode_errors++;
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
         return 1;
     }
@@ -155,6 +166,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     if (decodeStatus.decodeStatus==cuvidDecodeStatus_Error_Concealed)
     {
         log_info("Cuda decoder error concealment");
+        dec->stats_concealable_decode_errors++;
     }
 
     // cuda decoder outputs NV12. If we are also asking for NV12 then we need to copy it.
@@ -212,6 +224,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->time=0;
     dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
+    dec->codec=codec;
 
     CHECK_CUDA_CALL(cuvidCtxLockCreate(&dec->vidlock, get_CUcontext()));
 
@@ -254,6 +267,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     CUVIDSOURCEDATAPACKET packet = {0};
     packet.payload=bitstream_data;
     packet.payload_size=data_size;
+    dec->stats_bytes_decoded+=data_size;
     if (dec->max_time>=0)
     {
         double time=dec->time/90000.0;
@@ -265,6 +279,23 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
     dec->max_time=max_time;
+}
+
+YAML::Node simple_decoder_get_stats(simple_decoder *dec)
+{
+    YAML::Node root;
+    root["codec"]=(dec->codec==SIMPLE_DECODER_CODEC_H264) ? "H264" : "H265";
+    root["current_coded_width"]=dec->coded_width;
+    root["current_coded_height"]=dec->coded_height;
+    root["current_output_width"]=dec->out_width;
+    root["current_output_height"]=dec->out_height;
+    root["bytes_decoded"]=dec->stats_bytes_decoded;
+    root["macroblocks_decoded"]=dec->stats_macroblocks_decoded;
+    root["frames_decoded"]=dec->stats_frames_decoded;
+    root["unconcealable_decode_errors"]=dec->stats_unconcealable_decode_errors;
+    root["concealable_decode_errors"]=dec->stats_concealable_decode_errors;
+    root["resolution_changes"]=dec->stats_resolution_changes;
+    return root;
 }
 
 #endif //(UBONCSTUFF_PLATFORM == 0)

@@ -5,6 +5,7 @@
 #include "infer_aux.h"
 #include "roi.h"
 #include "detections.h"
+#include <yaml-cpp/yaml.h>
 
 #define INFER_THREAD_MAX_BATCH 32
 
@@ -17,6 +18,14 @@ typedef enum infer_thread_type
     INFER_THREAD_AUX_TENSOR=4,
     INFER_THREAD_NUM_TYPES=5
 } infer_thread_type_t;
+
+static const char *infer_thread_type_names[]={
+    "main_detection",
+    "face_embedding",
+    "clip_embedding",
+    "fiqa_score",
+    "audio_embedding"
+};
 
 typedef struct infer_thread infer_thread_t;
 
@@ -56,4 +65,6 @@ embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t 
 
 void infer_thread_get_stats(infer_thread_t *h, infer_thread_stats_t *s);
 void infer_thread_print_stats(infer_thread_t *h);
+YAML::Node infer_thread_stats_node(infer_thread_t *h);
+
 #endif

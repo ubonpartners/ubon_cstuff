@@ -22,6 +22,7 @@
 #include "rtp_receiver.h"
 #include "h26x_assembler.h"
 #include "jpeg.h"
+#include "profile.h"
 #define debugf if (0) log_debug
 #define input_debugf if (0) log_error
 
@@ -39,6 +40,15 @@ typedef enum ts_queued_job_type
     TRACK_STREAM_JOB_RTP=5,           // RTP packets waiting to be assembled to H26x frames
     TRACK_STREAM_NUM_JOB_TYPES=6
 } ts_queued_job_type_t;
+
+static const char *queued_job_names[]={
+    "decode_image",
+    "chunk_video_file",
+    "decode_jpeg",
+    "h26x_assembler",
+    "process_sdp",
+    "process_rtp",
+};
 
 //
 // [Compressed JPEG]       [RTP Packets]     [SDP]   [Video File]   [Raw images]
@@ -96,6 +106,17 @@ struct ts_queued_job
     float start_time, end_time;
 };
 
+typedef struct track_stream_stats
+{
+    uint32_t total_queued_jobs[TRACK_STREAM_NUM_JOB_TYPES];
+    double total_runtime[TRACK_STREAM_NUM_JOB_TYPES];
+    uint32_t skipped_input_image_count;
+    uint32_t nonskipped_input_image_count;
+    uint32_t process_inference_results_count;
+    double total_run_input_image_time;
+    double total_process_inference_results_time;
+} track_stream_stats_t;
+
 struct track_stream
 {
     track_shared_state_t *tss;
@@ -138,6 +159,8 @@ struct track_stream
     pthread_mutex_t q_mutex;
     int queued_images;
     ts_queued_job_t *jobs[TRACK_STREAM_NUM_JOB_TYPES];
+
+    track_stream_stats_t stats;
 };
 
 static void track_stream_try_process_jobs(track_stream_t *ts);
@@ -208,6 +231,36 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
 image_format_t track_stream_get_stream_image_format(track_stream_t *ts)
 {
     return ts->stream_image_format;
+}
+
+const char *track_stream_get_stats(track_stream_t *ts)
+{
+    YAML::Node root;
+    YAML::Node jobs;
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
+    {
+        YAML::Node job_node;
+        if (ts->stats.total_queued_jobs[i]!=0)
+        {
+            job_node["total_queued_jobs"]=ts->stats.total_queued_jobs[i];
+            job_node["total_runtime"]=ts->stats.total_runtime[i];
+            jobs[queued_job_names[i]]=job_node;
+        }
+    }
+    root["job_queues"]=jobs;
+
+    YAML::Node main_processing;
+    main_processing["skipped_input_image_count"]=ts->stats.skipped_input_image_count;
+    main_processing["nonskipped_input_image_count"]=ts->stats.nonskipped_input_image_count;
+    main_processing["run_input_image_runtime"]=ts->stats.total_run_input_image_time;
+    main_processing["process_inference_results_count"]=ts->stats.process_inference_results_count;
+    main_processing["process_inference_results_runtime"]=ts->stats.total_process_inference_results_time;
+
+    root["main_processing"]=main_processing;
+
+    if (ts->decoder) root["decoder"]=simple_decoder_get_stats(ts->decoder);
+
+    return yaml_to_cstring(root);
 }
 
 void track_stream_destroy(track_stream_t *ts)
@@ -298,6 +351,9 @@ static void process_results(track_stream_t *ts, track_results_t *r)
 
 static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
 {
+    ts->stats.process_inference_results_count++;
+    double start_time=profile_time();
+
     track_results_t *r=track_results_create();
 
     motion_track_set_roi(ts->mt, ts->inference_roi);
@@ -342,6 +398,8 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     process_results(ts, r);
     destroy_image(ts->inference_image);
     ts->inference_image=0;
+    ts->stats.total_process_inference_results_time+=(profile_time()-start_time);
+
     pthread_mutex_unlock(&ts->main_job_mutex);
     schedule_job_run(ts);
 }
@@ -399,11 +457,15 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         track_results_t *r=track_results_create();
         r->result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
         r->time=time;
+        ts->stats.skipped_input_image_count++;
         process_results(ts, r);
         pthread_mutex_unlock(&ts->main_job_mutex);
         schedule_job_run(ts);
         return;
     }
+
+    double start_time=profile_time();
+    ts->stats.nonskipped_input_image_count++;
 
     determine_scale_size(img->width, img->height,
                          tss->max_width, tss->max_height, &scale_w, &scale_h,
@@ -466,6 +528,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     assert(ts->inference_image==0);
     ts->inference_image=image_scaled;
     infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
+    ts->stats.total_run_input_image_time+=(profile_time()-start_time);
     assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
 }
 
@@ -510,6 +573,7 @@ static ts_queued_job_t *ts_queued_job_create()
 static void track_stream_queue_job(track_stream_t *ts, ts_queued_job_t *new_job)
 {
     pthread_mutex_lock(&ts->q_mutex);
+    ts->stats.total_queued_jobs[(int)new_job->type]++;
     ts_queued_job_t **q=&ts->jobs[(int)new_job->type];
     ts_queued_job_t *job=*q;
     input_debugf("Queue input job type %d",new_job->type);
@@ -625,6 +689,7 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                 continue;
             }
             job->next=0;
+            double start_time=profile_time();
 
             switch(job->type)
             {
@@ -637,6 +702,7 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     block_free(job);
                     input_debugf("=====> running main decoder job\n");
                     assert(ts->destroying==false);
+                    ts->stats.total_runtime[(int)job->type]+=(profile_time()-start_time);
                     tss->thread_pool->push(thread_stream_run_input_image_job, ts, img, time, single_frame);
                     continue; // we DON'T unlock the mutex here, it's held until inference/tracking complete
                 }
@@ -646,7 +712,6 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     assert(ts->destroying==false);
                     if (ts->decoder==0)
                     {
-                        printf("Create decoder");
                         ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
                         simple_decoder_set_framerate(ts->decoder, job->fps);
                         if (job->end_time!=0) simple_decoder_set_max_time(ts->decoder, job->end_time);
@@ -753,6 +818,8 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                     break;
                 }
             }
+            ts->stats.total_runtime[(int)job->type]+=(profile_time()-start_time);
+
             pthread_mutex_unlock(mut);
         } // job type loop
 
