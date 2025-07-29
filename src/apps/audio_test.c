@@ -89,7 +89,6 @@ static void audio_event_detector_test_tinyclap_live()
         embedding_t *e=audio_event_process(ae, in);
         audio_event_postprocess_tinyclap(ae, e);
     }
-
 }
 
 static void audio_io_test()

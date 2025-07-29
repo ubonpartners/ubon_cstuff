@@ -20,12 +20,10 @@
 #if (UBONCSTUFF_PLATFORM == 0) // Desktop Nvidia GPU
 struct simple_decoder
 {
-    int coded_width;
-    int coded_height;
-    int out_width;
-    int out_height;
-    int target_width;
-    int target_height;
+    int coded_width, coded_height;
+    int out_width, out_height;
+    int target_width, target_height;
+    int scaled_width, scaled_height;
     simple_decoder_codec_t codec;
     void *context;
     image_format_t output_format;
@@ -40,9 +38,16 @@ struct simple_decoder
     CUVIDEOFORMAT videoFormat;
     void (*frame_callback)(void *context, image_t *decoded_frame);
 
+    int constraint_max_width;
+    int constraint_max_height;
+    double constraint_min_time_delta;
+    double last_output_time;
+
     uint64_t stats_bytes_decoded;
     uint64_t stats_macroblocks_decoded;
     uint32_t stats_frames_decoded;
+    uint32_t stats_frames_output_skipped;
+    uint32_t stats_output_time_reset;
     uint32_t stats_unconcealable_decode_errors;
     uint32_t stats_concealable_decode_errors;
     uint32_t stats_resolution_changes;
@@ -133,6 +138,9 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
     if (dec->destroyed) return 1; // ignore if "destroy" already called
 
+    dec->stats_frames_decoded++;
+    dec->stats_macroblocks_decoded+=((dec->out_width+15)>>4)*((dec->out_height+15)>>4);
+
     CUdeviceptr decodedFrame=0;
     CUVIDPROCPARAMS videoProcessingParameters = {0};
     videoProcessingParameters.progressive_frame = pDispInfo->progressive_frame;
@@ -141,7 +149,37 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
+    if (pDispInfo->timestamp!=0)
+    {
+        dec->time=pDispInfo->timestamp/90000.0;
+        assert(dec->time_increment==0);  // EITHER set time for each frame or use auto incrementing 'fixed framerate'
+    }
+
     bool skip=(dec->max_time>=0)&&(dec->time>dec->max_time);
+
+    if (dec->constraint_min_time_delta!=0)
+    {
+        float delta=dec->time-dec->last_output_time;
+        if ((delta>10.0)||(delta<0))
+        {
+            log_error("decoder time constraint unexpected delta %f->%f; restting",dec->last_output_time,dec->time);
+            dec->last_output_time=dec->time;
+            dec->stats_output_time_reset++;
+        }
+        else
+        {
+            skip|=(delta<dec->constraint_min_time_delta);
+        }
+    }
+    if (!skip) dec->last_output_time=dec->time;
+
+    if (skip)
+    {
+        // early return if the frame not needed, avoid a lot of work
+        dec->stats_frames_output_skipped++;
+        dec->time+=dec->time_increment;
+        return 1;
+    }
 
     image_t *dec_img=(IMAGE_FORMAT_NV12_DEVICE!=dec->output_format) ? create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE)
                                                                     : create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
@@ -151,14 +189,13 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
 
     CUVIDGETDECODESTATUS decodeStatus;
     CHECK_CUDA_CALL(cuvidGetDecodeStatus(dec->decoder, pDispInfo->picture_index, &decodeStatus));
-    dec->stats_frames_decoded++;
-    dec->stats_macroblocks_decoded+=((dec->out_width+15)>>4)*((dec->out_height+15)>>4);
     if ((decodeStatus.decodeStatus!=cuvidDecodeStatus_Success)
         && (decodeStatus.decodeStatus!=cuvidDecodeStatus_Error_Concealed))
     {
         log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
         // un-concealable decoder error
         dec->stats_unconcealable_decode_errors++;
+        dec->time+=dec->time_increment;
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
         return 1;
     }
@@ -200,7 +237,22 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     }
     dec->time+=dec->time_increment;
 
-    if (!skip) dec->frame_callback(dec->context, out_img);
+    image_t *scaled_out_img=0;
+    if (dec->constraint_max_width!=0 && dec->constraint_max_height!=0) {
+        determine_scale_size(out_img->width, out_img->height,
+                            dec->constraint_max_width, dec->constraint_max_width,
+                            &dec->scaled_width, &dec->scaled_height,
+                            10, 8, 8, false);
+        scaled_out_img=image_scale(out_img, dec->scaled_width, dec->scaled_height);
+    }
+    else {
+        dec->scaled_width=out_img->width;
+        dec->scaled_height=out_img->height;
+        scaled_out_img=image_reference(out_img);
+    }
+
+    dec->frame_callback(dec->context, scaled_out_img);
+    if (scaled_out_img) destroy_image(scaled_out_img);
     if (out_img) destroy_image(out_img);
     if (dec_img) destroy_image(dec_img);
     return 1;
@@ -225,6 +277,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
     dec->codec=codec;
+    dec->last_output_time=-5.0;
 
     CHECK_CUDA_CALL(cuvidCtxLockCreate(&dec->vidlock, get_CUcontext()));
 
@@ -262,7 +315,7 @@ void simple_decoder_destroy(simple_decoder_t *dec)
     }
 }
 
-void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size)
+void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time)
 {
     CUVIDSOURCEDATAPACKET packet = {0};
     packet.payload=bitstream_data;
@@ -281,17 +334,28 @@ void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
     dec->max_time=max_time;
 }
 
+void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int max_height, double min_time_delta)
+{
+    dec->constraint_max_width=max_width;
+    dec->constraint_max_height=max_height;
+    dec->constraint_min_time_delta=min_time_delta;
+}
+
 YAML::Node simple_decoder_get_stats(simple_decoder *dec)
 {
     YAML::Node root;
     root["codec"]=(dec->codec==SIMPLE_DECODER_CODEC_H264) ? "H264" : "H265";
     root["current_coded_width"]=dec->coded_width;
     root["current_coded_height"]=dec->coded_height;
-    root["current_output_width"]=dec->out_width;
-    root["current_output_height"]=dec->out_height;
+    root["current_decoder_output_width"]=dec->out_width;
+    root["current_decoder_output_height"]=dec->out_height;
+    root["current_scaled_output_width"]=dec->scaled_width;
+    root["current_scaled_output_height"]=dec->scaled_height;
     root["bytes_decoded"]=dec->stats_bytes_decoded;
     root["macroblocks_decoded"]=dec->stats_macroblocks_decoded;
     root["frames_decoded"]=dec->stats_frames_decoded;
+    root["frames_output_skipped"]=dec->stats_frames_output_skipped;
+    root["output_time_reset"]=dec->stats_output_time_reset;
     root["unconcealable_decode_errors"]=dec->stats_unconcealable_decode_errors;
     root["concealable_decode_errors"]=dec->stats_concealable_decode_errors;
     root["resolution_changes"]=dec->stats_resolution_changes;

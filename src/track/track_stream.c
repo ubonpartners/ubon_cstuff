@@ -250,12 +250,16 @@ const char *track_stream_get_stats(track_stream_t *ts)
     root["job_queues"]=jobs;
 
     YAML::Node main_processing;
-    main_processing["skipped_input_image_count"]=ts->stats.skipped_input_image_count;
-    main_processing["nonskipped_input_image_count"]=ts->stats.nonskipped_input_image_count;
-    main_processing["run_input_image_runtime"]=ts->stats.total_run_input_image_time;
-    main_processing["process_inference_results_count"]=ts->stats.process_inference_results_count;
-    main_processing["process_inference_results_runtime"]=ts->stats.total_process_inference_results_time;
-
+    YAML::Node config_summary;
+    config_summary["min_time_deta"]=ts->min_time_delta_process;
+    main_processing["config_summary"]=config_summary;
+    YAML::Node main_stats;
+    main_stats["skipped_input_image_count"]=ts->stats.skipped_input_image_count;
+    main_stats["nonskipped_input_image_count"]=ts->stats.nonskipped_input_image_count;
+    main_stats["run_input_image_runtime"]=ts->stats.total_run_input_image_time;
+    main_stats["process_inference_results_count"]=ts->stats.process_inference_results_count;
+    main_stats["process_inference_results_runtime"]=ts->stats.total_process_inference_results_time;
+    main_processing["stats"]=main_stats;
     root["main_processing"]=main_processing;
 
     if (ts->decoder) root["decoder"]=simple_decoder_get_stats(ts->decoder);
@@ -708,12 +712,14 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                 }
                 case TRACK_STREAM_JOB_VIDEO_DATA:
                 {
+                    track_shared_state_t *tss=ts->tss;
                     input_debugf("running input video data job");
                     assert(ts->destroying==false);
                     if (ts->decoder==0)
                     {
                         ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
                         simple_decoder_set_framerate(ts->decoder, job->fps);
+                        simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
                         if (job->end_time!=0) simple_decoder_set_max_time(ts->decoder, job->end_time);
                     }
 
@@ -763,13 +769,14 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                 }
                 case TRACK_STREAM_JOB_ENCODED_FRAME:
                 {
-                    if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len);
+                    if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
                     free(job->data);
                     block_free(job);
                     break;
                 }
                 case TRACK_STREAM_JOB_SDP:
                 {
+                    track_shared_state_t *tss=ts->tss;
                     if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
                     set_sdp_t sdp;
                     memset(&sdp, 0, sizeof(set_sdp_t));
@@ -782,6 +789,7 @@ static void track_stream_try_process_jobs(track_stream_t *ts)
                                                                      ts, h26x_frame_callback);
                             if (ts->decoder) simple_decoder_destroy(ts->decoder);
                             ts->decoder=simple_decoder_create(ts, decoder_process_image, sdp.is_h264 ? SIMPLE_DECODER_CODEC_H264 : SIMPLE_DECODER_CODEC_H265);
+                            simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
                         }
                         else // TODO: OPUS
                         {

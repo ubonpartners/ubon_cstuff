@@ -520,7 +520,7 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
     log_info("decoder destroyed cleanly");
 }
 
-void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size)
+void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time)
 {
     int ret;
     simple_decoder_t *ctx = dec;
@@ -593,6 +593,10 @@ void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
 {
     log_info("%s:%d fmt = %d", __func__, __LINE__, fmt);
     if (dec) dec->output_format = fmt;
+}
+
+void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int max_height, double min_time_delta)
+{
 }
 
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)

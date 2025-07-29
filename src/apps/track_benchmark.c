@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
     {
         static float q[4]={1.0, 0.1, 0.01, 0};
         config[nconfig].testset="Vary face embeddings";
-        config[nconfig].input_clip = &clips[i/4];
+        config[nconfig].input_clip = &clips[7];//i/4];
         config[nconfig].face_embedding_min_quality=q[i%4];
         sprintf(config[nconfig++].name, "FaceQ %s:%.3f",clips[i/4].friendly_name,q[i%4]);
     }
