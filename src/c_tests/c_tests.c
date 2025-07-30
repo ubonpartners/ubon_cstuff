@@ -16,9 +16,9 @@ static uint32_t test_convert_3(image_t *img, image_format_t fmt1, image_format_t
     image_t *converted2=image_convert(converted1, fmt2);
     image_t *converted3=image_convert(converted2, fmt3);
     uint32_t hash=image_hash(converted3);
-    destroy_image(converted1);
-    destroy_image(converted2);
-    destroy_image(converted3);
+    image_destroy(converted1);
+    image_destroy(converted2);
+    image_destroy(converted3);
     return hash;
 }
 
@@ -33,9 +33,9 @@ static uint32_t test_scale_generic(image_t *img, int w, int h, int w2, int h2, i
     image_t *scaled=image_scale(img, w, h);
     image_t *scaled2=image_scale(scaled, w2, h2);
     uint32_t hash=image_hash(scaled2);
-    destroy_image(scaled);
-    destroy_image(scaled2);
-    destroy_image(converted);
+    image_destroy(scaled);
+    image_destroy(scaled2);
+    image_destroy(converted);
     return hash;
 }
 

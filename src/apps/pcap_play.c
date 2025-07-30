@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
             image_t *i=pcap_decoder_get_frame(dec);
             if (i==0) exit(0);
             display_image("video",i);
-            destroy_image(i);
+            image_destroy(i);
         }
     }
 

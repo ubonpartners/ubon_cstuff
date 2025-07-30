@@ -96,9 +96,9 @@ image_t *image_blur(image_t *img)
     }
 
     // Create output image of the same format and size
-    image_t *dst = create_image(img->width, img->height, img->format);
+    image_t *dst = image_create(img->width, img->height, img->format);
     image_add_dependency(dst, img); // ensure dst processing waits for img
-    dst->time=img->time;
+    dst->meta=img->meta;
     NppStreamContext nppStreamCtx = get_nppStreamCtx();
     nppStreamCtx.hStream = dst->stream;
 
@@ -147,15 +147,15 @@ image_t *image_mad_4x4(image_t *a, image_t *b)
         image_t *inter_a=image_convert(a, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *inter_b=image_convert(b, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_mad_4x4(inter_a, inter_b);
-        destroy_image(inter_a);
-        destroy_image(inter_b);
+        image_destroy(inter_a);
+        image_destroy(inter_b);
         return ret;
     }
 
     int out_width = a->width / 4;
     int out_height = a->height / 4;
-    image_t *out = create_image(out_width, out_height, a->format);
-    out->time=b->time;
+    image_t *out = image_create(out_width, out_height, a->format);
+    out->meta=b->meta;
     image_add_dependency(out, a);
     image_add_dependency(out, b);
     compute_4x4_mad_mask(a->y, a->stride_y, b->y, b->stride_y,
@@ -181,7 +181,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
     {
         image_t *inter=image_convert(src, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_blend(inter, src2, sx, sy, w, h, dx, dy);
-        destroy_image(inter);
+        image_destroy(inter);
         return ret;
     }
 
@@ -189,7 +189,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
     {
         image_t *inter=image_convert(src2, src->format);
         image_t *ret=image_blend(src, inter, sx, sy, w, h, dx, dy);
-        destroy_image(inter);
+        image_destroy(inter);
         return ret;
     }
 
@@ -199,7 +199,7 @@ image_t *image_blend(image_t *src, image_t *src2, int sx, int sy, int w, int h, 
     if (w==0 || h==0) return image_reference(src);
 
     // Create a copy of src to modify and return
-    image_t *out = create_image(src->width, src->height, src->format);
+    image_t *out = image_create(src->width, src->height, src->format);
     image_add_dependency(out, src);
     image_add_dependency(out, src2);
 
@@ -284,16 +284,16 @@ image_t *image_crop(image_t *img, int x, int y, int w, int h)
     {
         image_t *inter=image_convert(img, IMAGE_FORMAT_YUV420_DEVICE);
         image_t *ret=image_crop(inter, x, y, w, h);
-        destroy_image(inter);
+        image_destroy(inter);
         return ret;
     }
 
     // what we do here is not actually any work - we just create a new shell surface
     // that points to the Y data of the original surface, and hold on to a reference
     // for that surface.
-    image_t *cropped=create_image_no_surface_memory(w, h, img->format);
+    image_t *cropped=image_create_no_surface_memory(w, h, img->format);
     cropped->referenced_surface=image_reference(img);
-    cropped->time=img->time;
+    cropped->meta=img->meta;
     image_add_dependency(cropped, img);
 
     if ( (cropped->format==IMAGE_FORMAT_RGB24_DEVICE)
@@ -361,7 +361,7 @@ image_t *image_pad_rgb24_device(image_t *img, int left, int top, int right, int 
     int new_width = img->width + left + right;
     int new_height = img->height + top + bottom;
 
-    image_t *dst = create_image(new_width, new_height, img->format);
+    image_t *dst = image_create(new_width, new_height, img->format);
     if (!dst) return 0;
     image_add_dependency(dst, img); // Wait until img is ready
 
@@ -458,7 +458,7 @@ image_t *image_tensor_subtensor_n(image_t *img, int n)
 {
     assert(image_format_is_tensor(img->format));
     assert(n>=0 && n<= img->n);
-    image_t *inf_tensor=create_image_no_surface_memory(img->width, img->height, img->format);
+    image_t *inf_tensor=image_create_no_surface_memory(img->width, img->height, img->format);
     inf_tensor->tensor_mem=image_tensor_mem_ptr(img, n, 0, 0, 0);
     inf_tensor->referenced_surface=image_reference(img);
     return inf_tensor;
@@ -478,8 +478,8 @@ image_t *image_make_tiled(image_format_t fmt,
 {
     assert(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE || fmt==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     int elt_size=(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
-    image_t *inf_image=create_image(dst_width, dst_height*num, fmt); // image big enough to hold "num" planar RGB images
-    image_t *inf_subimage=create_image_no_surface_memory(dst_width, dst_height, fmt);
+    image_t *inf_image=image_create(dst_width, dst_height*num, fmt); // image big enough to hold "num" planar RGB images
+    image_t *inf_subimage=image_create_no_surface_memory(dst_width, dst_height, fmt);
     for(int i=0;i<num;i++)
     {
         image_t *img=images[i];
@@ -534,7 +534,7 @@ image_t *image_make_tiled(image_format_t fmt,
         usleep(5*1000*1000);
     }*/
 
-    destroy_image(inf_subimage);
+    image_destroy(inf_subimage);
     return inf_image;
 }
 
@@ -543,10 +543,10 @@ void image_get_aligned_faces(image_t **images, float *face_points, int n, int w,
     image_t *temp_in[n];
     for(int i=0;i<n;i++) temp_in[i]=image_convert(images[i], IMAGE_FORMAT_YUV420_DEVICE);
 
-    image_t *img_rgb=create_image(w, h*n, IMAGE_FORMAT_RGB24_DEVICE);
+    image_t *img_rgb=image_create(w, h*n, IMAGE_FORMAT_RGB24_DEVICE);
     for(int i=0;i<n;i++)
     {
-        ret[i]=create_image_no_surface_memory(w, h, IMAGE_FORMAT_RGB24_DEVICE);
+        ret[i]=image_create_no_surface_memory(w, h, IMAGE_FORMAT_RGB24_DEVICE);
         ret[i]=image_reference(img_rgb);
         image_add_dependency(ret[i], img_rgb);
         ret[i]->rgb=img_rgb->rgb+w*h*3*i;
@@ -564,9 +564,9 @@ void image_get_aligned_faces(image_t **images, float *face_points, int n, int w,
         img_rgb->stream
     );
     free(M);
-    destroy_image(img_rgb);
+    image_destroy(img_rgb);
 
-    for(int i=0;i<n;i++) destroy_image(temp_in[i]);
+    for(int i=0;i<n;i++) image_destroy(temp_in[i]);
 }
 
 void determine_scale_size(int w, int h, int max_w, int max_h, int *res_w, int *res_h,
@@ -640,7 +640,7 @@ image_t *image_scale_convert(image_t *img, image_format_t format, int width, int
 {
     image_t *tmp=image_convert(img, format);
     image_t *scaled=image_scale(tmp, width, height);
-    destroy_image(tmp);
+    image_destroy(tmp);
     return scaled;
 }
 
@@ -669,7 +669,7 @@ image_t *image_load(const char * filename)
     assert(4==fread(&w, 1, 4, f));
     assert(4==fread(&h, 1, 4, f));
     assert(m==0xbeef1234);
-    image_t *host=create_image(w, h, IMAGE_FORMAT_YUV420_HOST);
+    image_t *host=image_create(w, h, IMAGE_FORMAT_YUV420_HOST);
     for(int i=0;i<host->height;i++) assert(host->width==fread(host->y+i*host->stride_y, 1, host->width, f));
     for(int i=0;i<host->height/2;i++) assert(host->width/2==fread(host->u+i*host->stride_uv, 1, host->width/2, f));
     for(int i=0;i<host->height/2;i++) assert(host->width/2==fread(host->v+i*host->stride_uv, 1, host->width/2, f));

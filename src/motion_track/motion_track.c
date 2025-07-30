@@ -82,8 +82,8 @@ void motion_track_destroy(motion_track_t *mt)
     cuda_free(mt->noise_floor_device);
     cuda_free(mt->row_masks_device);
     cuda_free_host(mt->row_masks_host);
-    if (mt->ref) destroy_image(mt->ref);
-    if (mt->in_img) destroy_image(mt->in_img);
+    if (mt->ref) image_destroy(mt->ref);
+    if (mt->in_img) image_destroy(mt->in_img);
     if (mt->noise_floor) free(mt->noise_floor);
     #ifdef NVOF_SUPPORTED
     if (mt->nvof) nvof_destroy(mt->nvof);
@@ -95,7 +95,7 @@ void motion_track_reset(motion_track_t *mt)
 {
     if (mt->ref)
     {
-        destroy_image(mt->ref);
+        image_destroy(mt->ref);
         mt->ref=0;
     }
     mt->roi=ROI_ONE;
@@ -139,7 +139,7 @@ static void motion_track_run_optical_flow(motion_track_t *mt, image_t *image_sca
             if (mt->scene_change_sensitivity!=0)
             {
                 mt->scene_change=(avg_cost>16.0*(1.0-mt->scene_change_sensitivity))&&(mt->frames_since_reset>2);
-                if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->time, avg_cost, total_cost, mt->frames_since_reset);
+                if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->meta.time, avg_cost, total_cost, mt->frames_since_reset);
             }
         }
         else
@@ -158,7 +158,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
 
     if (file_trace_enabled)
     {
-        FILE_TRACE("motiontracker add frame %dx%d fmt %d TS %f hash %lx",img->width,img->height,img->format,img->time, image_hash(img));
+        FILE_TRACE("motiontracker add frame %dx%d fmt %d TS %f hash %lx",img->width,img->height,img->format,img->meta.time, image_hash(img));
     }
 
     determine_scale_size(img->width, img->height,
@@ -180,7 +180,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         mt->roi=ROI_ONE;
         if (mt->in_img)
         {
-            destroy_image(mt->in_img);
+            image_destroy(mt->in_img);
             mt->in_img=0;
         }
         mt->in_img=image_scaled;
@@ -193,7 +193,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         image_t *image_blurred=image_blur(image_scaled);
         if (image_blurred)
         {
-            destroy_image(image_scaled);
+            image_destroy(image_scaled);
             image_scaled=image_blurred;
         }
     }
@@ -202,12 +202,12 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     {
         if (ref)
         {
-            destroy_image(mt->ref);
+            image_destroy(mt->ref);
             mt->ref=ref=0;
         }
         if (mt->in_img)
         {
-            destroy_image(mt->in_img);
+            image_destroy(mt->in_img);
             mt->in_img=0;
         }
         mt->roi.box[0]=0;
@@ -226,7 +226,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         memset(mt->noise_floor, 0, sizeof(float)*mt->block_w*mt->block_h);
         mt->frames_since_reset=0;
         motion_track_run_optical_flow(mt, nvof_image);
-        destroy_image(nvof_image);
+        image_destroy(nvof_image);
         return;
     }
 
@@ -271,7 +271,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     CHECK_CUDART_CALL(cudaStreamSynchronize(mad_img->stream));
     CHECK_CUDART_CALL(cudaMemcpy(mt->row_masks_host, mt->row_masks_device, 64*8, cudaMemcpyDeviceToHost));
 
-    destroy_image(mad_img);
+    image_destroy(mad_img);
 
     uint64_t *mp=(uint64_t *)mt->row_masks_host;
     uint64_t v_mask=0;
@@ -307,7 +307,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         nvof_set_no_motion(mt->nvof); // skip running NVOF, frames are too similar
     #endif
 
-    destroy_image(nvof_image);
+    image_destroy(nvof_image);
     mt->in_img=image_scaled;
     mt->roi=roi;
     mt->frames_since_reset++;
@@ -333,7 +333,7 @@ void motion_track_set_roi(motion_track_t *mt, roi_t roi)
 
     if (a>0.99)
     {
-        if (mt->ref) destroy_image(mt->ref);
+        if (mt->ref) image_destroy(mt->ref);
         mt->ref=mt->in_img;
         mt->in_img=0;
         return;
@@ -341,7 +341,7 @@ void motion_track_set_roi(motion_track_t *mt, roi_t roi)
     assert(mt->in_img!=0);
     if (a==0)
     {
-        destroy_image(mt->in_img);
+        image_destroy(mt->in_img);
         mt->in_img=0;
         return;
     }
@@ -355,8 +355,8 @@ void motion_track_set_roi(motion_track_t *mt, roi_t roi)
     y1=(y1+1)&(~1);
     //log_debug("Blend %d,%d->%d,%d\n",x0,y0,x1,y1);
     image_t *ref_new=image_blend(mt->ref, mt->in_img, x0, y0, x1-x0, y1-y0, x0, y0);
-    destroy_image(mt->ref);
-    destroy_image(mt->in_img);
+    image_destroy(mt->ref);
+    image_destroy(mt->in_img);
     mt->ref=0;
     mt->in_img=0;
     mt->ref=ref_new;

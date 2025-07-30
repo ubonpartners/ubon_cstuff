@@ -217,10 +217,10 @@ static void image_free_callback(void *context, void *block)
     image_t *referenced_surface=img->referenced_surface;
     free_image_mem(img);
     destroy_cuda_stream_pool(img->stream);
-    if (referenced_surface) destroy_image(referenced_surface);
+    if (referenced_surface) image_destroy(referenced_surface);
 }
 
-image_t *create_image_no_surface_memory(int width, int height, image_format_t fmt)
+image_t *image_create_no_surface_memory(int width, int height, image_format_t fmt)
 {
     image_t *img=(image_t *)block_alloc(image_allocator);
     if (!img) return 0;
@@ -235,18 +235,18 @@ image_t *create_image_no_surface_memory(int width, int height, image_format_t fm
     return img;
 }
 
-image_t *create_image(int width, int height, image_format_t fmt)
+image_t *image_create(int width, int height, image_format_t fmt)
 {
     assert(image_inited);
-    image_t *ret=create_image_no_surface_memory(width, height, fmt);
+    image_t *ret=image_create_no_surface_memory(width, height, fmt);
     allocate_image_surfaces(ret);
     return ret;
 }
 
-image_t *create_image_tensor(int n, int c, int height, int width, image_format_t fmt)
+image_t *image_create_tensor(int n, int c, int height, int width, image_format_t fmt)
 {
     assert(image_inited);
-    image_t *ret=create_image_no_surface_memory(width, height, fmt);
+    image_t *ret=image_create_no_surface_memory(width, height, fmt);
     ret->n=n;
     ret->c=c;
     allocate_image_surfaces(ret);
@@ -265,7 +265,7 @@ image_t *image_reference(image_t *img)
     return (image_t*)block_reference(img);
 }
 
-void destroy_image(image_t *img)
+void image_destroy(image_t *img)
 {
     block_free(img);
 }

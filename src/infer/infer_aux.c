@@ -244,7 +244,7 @@ void infer_aux_batch_tensor(infer_aux_t* inf, image_t **images, embedding_t **re
         cuda_stream_add_dependency(inf->stream, converted_images[i]->stream);
         do_inference(inf, converted_images[i]->tensor_mem, ret_emb+i, 1, images[0]->height, images[0]->width);
     }
-    for(int i=0;i<n;i++) destroy_image(converted_images[i]);
+    for(int i=0;i<n;i++) image_destroy(converted_images[i]);
 }
 
 static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t **ret_emb, float *M, int n)
@@ -257,7 +257,7 @@ static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t 
     size_t dtype = inf->md.input_fp16 ? 2 : 4;
 
     //int elt_size=(fmt==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE) ? 2 : 4;
-    image_t *inf_image=create_image(inf->md.input_w, inf->md.input_h*n,
+    image_t *inf_image=image_create(inf->md.input_w, inf->md.input_h*n,
         inf->md.input_fp16 ? IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE: IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
 
     image_t *img_yuv[n];
@@ -276,8 +276,8 @@ static void infer_aux_batch_affine(infer_aux_t* inf, image_t** img, embedding_t 
     do_inference(inf, inf_image->rgb, ret_emb, n, 0, 0);
 
     // Cleanup
-    destroy_image(inf_image);
-    for(int i=0;i<n;i++) destroy_image(img_yuv[i]);
+    image_destroy(inf_image);
+    for(int i=0;i<n;i++) image_destroy(img_yuv[i]);
 }
 
 float* infer_aux_batch(infer_aux_t* inf, image_t** img, float* kp, int n) {

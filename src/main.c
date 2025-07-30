@@ -21,12 +21,12 @@ static void frame_callback(void *context, image_t *img)
     detection_list_t *dets=infer(inf, img);
     image_t *blurred=image_blur(img);
     image_t *out_frame_rgb=detection_list_draw(dets, blurred);
-    destroy_image(blurred);
+    image_destroy(blurred);
 
     nvof_execute(v, img);
 
     display_image("video", out_frame_rgb);
-    destroy_image(out_frame_rgb);
+    image_destroy(out_frame_rgb);
     detection_list_destroy(dets);
 }
 
@@ -46,8 +46,8 @@ int main(int argc, char *argv[])
         //image_t *im2=detection_list_draw(gts,im);
         //display_image("this",im2);
         //usleep(1000000*10);
-        destroy_image(im);
-        //destroy_image(im2);
+        image_destroy(im);
+        //image_destroy(im2);
         detection_list_destroy(gts);
     }*/
 
@@ -86,9 +86,9 @@ int main(int argc, char *argv[])
             detection_list_t *dets=infer(inf, i);
             image_t *out=detection_list_draw(dets, i);
             display_image("infer", out);
-            destroy_image(out);
+            image_destroy(out);
             detection_list_destroy(dets);
-            destroy_image(i);
+            image_destroy(i);
         }
     }
 

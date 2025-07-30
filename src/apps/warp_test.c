@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
     {
         image_t *img0=load_jpeg("/mldata/image/arrest2.jpg");
         image_t *img=image_convert(img0, IMAGE_FORMAT_YUV420_DEVICE);
-        image_t *img_rgb=create_image(112, 112, IMAGE_FORMAT_RGB24_DEVICE);
+        image_t *img_rgb=image_create(112, 112, IMAGE_FORMAT_RGB24_DEVICE);
 
         float a=0.1;
         float s=1;

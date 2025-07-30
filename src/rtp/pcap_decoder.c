@@ -91,7 +91,7 @@ void pcap_decoder_destroy(pcap_decoder_t *p)
         if (p->decoder) simple_decoder_destroy(p->decoder);
         if (p->h26x_assembler) h26x_assembler_destroy(p->h26x_assembler);
         if (p->rtp_receiver) rtp_receiver_destroy(p->rtp_receiver);
-        for(int i=0;i<p->num_decoded_frames;i++) destroy_image(p->decoded_frames[i]);
+        for(int i=0;i<p->num_decoded_frames;i++) image_destroy(p->decoded_frames[i]);
         free(p);
     }
 }
@@ -124,7 +124,7 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
     if (p->num_decoded_frames>0)
     {
         ret=p->decoded_frames[0];
-        ret->time=p->frame_timestamp/90000.0;
+        ret->meta.time=p->frame_timestamp/90000.0;
         p->num_decoded_frames--;
         for(int i=0;i<p->num_decoded_frames;i++)
         {

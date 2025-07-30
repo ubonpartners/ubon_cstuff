@@ -34,11 +34,11 @@ public:
     image_t* img;
 
     c_image(int width, int height, image_format_t fmt) {
-        img = create_image(width, height, fmt);
+        img = image_create(width, height, fmt);
     }
 
     ~c_image() {
-        destroy_image(img);
+        image_destroy(img);
     }
 
     c_image(image_t* ptr) {
@@ -50,7 +50,7 @@ public:
     }
 
     double time() const {
-        return img->time;
+        return img->meta.time;
     }
 
     image_format_t format() const {
@@ -72,7 +72,7 @@ public:
         if (!input_rgb.flags() & py::array::c_style)
             throw std::runtime_error("Input array must be C-contiguous");
 
-        image_t* img = create_image(width, height, IMAGE_FORMAT_RGB24_HOST);
+        image_t* img = image_create(width, height, IMAGE_FORMAT_RGB24_HOST);
         uint8_t* dst_ptr = img->rgb;
         for (int y = 0; y < height; ++y) {
             uint8_t* row_dst = dst_ptr + y * img->stride_rgb;
@@ -80,7 +80,7 @@ public:
             std::memcpy(row_dst, row_src, width * 3);
         }
         image_t *image_device=image_convert(img, IMAGE_FORMAT_RGB24_DEVICE);
-        destroy_image(img);
+        image_destroy(img);
 
         return std::make_shared<c_image>(image_device);
     }
@@ -161,7 +161,7 @@ public:
                 for (int x = 0; x < tmp->width; ++x)
                     buf(y, x) = tmp->y[x + tmp->stride_y * y];
 
-            destroy_image(tmp);
+            image_destroy(tmp);
             return result;
         }
         else
@@ -180,7 +180,7 @@ public:
                 std::memcpy(dst_row, src_row, tmp->width * 3);
             }
 
-            destroy_image(tmp);
+            image_destroy(tmp);
             return result;
         }
     }
@@ -848,7 +848,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
             [](const c_image &self) {
                 std::ostringstream oss;
                 oss << "<c_image format='" << image_format_name(self.format())
-                    << "' timestamp: " << self.img->time
+                    << "' timestamp: " << self.img->meta.time
                     << " width:" << self.size().second << ", height:" << self.size().first << ")>";
                 return oss.str();
             }

@@ -125,7 +125,7 @@ image_t *webcam_capture(webcam_t *w)
     {
         if (w->frames==0) w->first_time=timestamp90k;
         w->frames++;
-        img->time = (timestamp90k-w->first_time)/90000.0;
+        img->meta.time = (timestamp90k-w->first_time)/90000.0;
     }
     else
     {

@@ -90,7 +90,7 @@ static bool jpeg_encode_function(int id, jpeg_t *jpeg) {
     image_t *img_cropped=image_crop_roi(jpeg->img, jpeg->roi, &crop_roi);
     size_t outsize=0;
     uint8_t *data=0;
-    destroy_image(jpeg->img);
+    image_destroy(jpeg->img);
     jpeg->img=0;
     if (img_cropped!=0)
     {
@@ -102,13 +102,13 @@ static bool jpeg_encode_function(int id, jpeg_t *jpeg) {
         {
             image_t *img_scaled=image_scale_convert(img_cropped, IMAGE_FORMAT_YUV420_HOST, jpeg_w, jpeg_h);
             data=save_jpeg_to_buffer(&outsize, img_scaled, (jpeg->encode_quality==0) ? 85 : jpeg->encode_quality);
-            destroy_image(img_scaled);
+            image_destroy(img_scaled);
         }
         else
         {
             log_error("JPEG too small %dx%d",jpeg_w,jpeg_h);
         }
-        destroy_image(img_cropped);
+        image_destroy(img_cropped);
     }
 
     jpeg->data=data;
@@ -140,7 +140,7 @@ jpeg_t *jpeg_thread_encode(jpeg_thread_t *jt, image_t *img, roi_t roi, int max_w
     jpeg->max_h=max_h;
     jpeg->encode_quality=encode_quality;
     jpeg->quality=quality;
-    jpeg->time=jpeg->img->time;
+    jpeg->time=jpeg->img->meta.time;
     jpeg->jt=jt;
     jpeg->submit_time=profile_time();
     uint64_t v=__atomic_add_fetch(&jt->outstanding_jpegs, 1, __ATOMIC_RELAXED);

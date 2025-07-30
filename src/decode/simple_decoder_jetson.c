@@ -312,18 +312,18 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
         return;
     }
 
-    image_t *dec_img = create_image(ctx->cfg.dec_width, ctx->cfg.dec_height, IMAGE_FORMAT_NV12_DEVICE);
+    image_t *dec_img = image_create(ctx->cfg.dec_width, ctx->cfg.dec_height, IMAGE_FORMAT_NV12_DEVICE);
     ret=nvSurfToImageNV12Device(nvbuf_surf, dec_img, dec_img->stream);
     if (0!=ret)
     {
         log_error("nvSurfToImageYUV420Device failed (%d)",(int)ret);
     }
-    dec_img->time = ctx->time;
+    dec_img->meta.time = ctx->time;
     ctx->time += ctx->time_increment;
     // use the frame callback to send the imadddge
     image_sync(dec_img);
     ctx->frame_callback(ctx->context, dec_img);
-    destroy_image(dec_img);
+    image_destroy(dec_img);
 }
 
 static void *dec_capture_loop_fn(void *arg)

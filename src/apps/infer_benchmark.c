@@ -113,7 +113,7 @@ static void *benchmark_thread(void *p)
             //printf("img_cnt %d img %p frame %p\n",img_cnt,img,out_frame);
             display_image("test", out_frame);
             //usleep(5000000);
-            destroy_image(out_frame);
+            image_destroy(out_frame);
         }
         total_detections += d.dets->num_detections;
         detection_list_destroy(d.dets);
@@ -182,7 +182,7 @@ static void benchmark(benchmark_config_t *config, benchmark_result_t *result)
     result->total_detections = total_detections;
 
     for (int i = 0; i < bc.num_images; i++) {
-        destroy_image(bc.images[i]);
+        image_destroy(bc.images[i]);
     }
     infer_thread_get_stats(bc.infer_thread, &result->infer_stats);
     infer_thread_destroy(bc.infer_thread);

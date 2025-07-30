@@ -21,7 +21,7 @@
 
 static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
 {
-    image_t *dst=create_image(width, height, IMAGE_FORMAT_YUV420_HOST);
+    image_t *dst=image_create(width, height, IMAGE_FORMAT_YUV420_HOST);
     if (!dst) return 0;
     image_add_dependency(dst, src);
     I420Scale(
@@ -35,7 +35,7 @@ static image_t *image_scale_yuv420_host(image_t *src, int width, int height)
             dst->width, dst->height,
             libyuv::kFilterBilinear
             );
-    dst->time=src->time;
+    dst->meta=src->meta;
     return dst;
 }
 
@@ -43,7 +43,7 @@ static image_t *image_scale_half(image_t *src)
 {
     int inter_w=src->width>>1;
     int inter_h=src->height>>1;
-    image_t *inter=create_image(inter_w, inter_h, src->format);
+    image_t *inter=image_create(inter_w, inter_h, src->format);
     if (!inter) return 0;
     image_add_dependency(inter, src); // don't run this until 'src' is ready
     cuda_downsample_2x2(src->y, src->stride_y, inter->y, inter->stride_y, inter_w, inter_h, inter->stream);
@@ -52,13 +52,13 @@ static image_t *image_scale_half(image_t *src)
         cuda_downsample_2x2(src->u, src->stride_uv, inter->u, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
         cuda_downsample_2x2(src->v, src->stride_uv, inter->v, inter->stride_uv, inter_w/2, inter_h/2, inter->stream);
     }
-    inter->time=src->time;
+    inter->meta=src->meta;
     return inter;
 }
 
 static image_t *image_scale_nv12_device(image_t *src, int width, int height)
 {
-    image_t *dst=create_image(width, height, src->format);
+    image_t *dst=image_create(width, height, src->format);
     if (!dst) return 0;
     image_add_dependency(dst, src); // don't run this until 'src' is ready
 
@@ -66,7 +66,7 @@ static image_t *image_scale_nv12_device(image_t *src, int width, int height)
     ResizeNv12(dst->y, dst->stride_y, dst->width, dst->height,
         src->y, src->stride_y, src->width, src->height,
         0, &dst->stream);
-    dst->time=src->time;
+    dst->meta=src->meta;
     /*NppiSize srcSize = {src->width, src->height};
     NppiRect srcROI = {0, 0, src->width, src->height};
     NppiRect dstROI = {0, 0, dst->width, dst->height};
@@ -94,13 +94,13 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
         {
             image_t *inter=image_scale_half(src);
             image_t *ret=image_scale_yuv420_device(inter, width, height);
-            ret->time=src->time;
-            destroy_image(inter);
+            ret->meta=src->meta;
+            image_destroy(inter);
             return ret;
         }
     }
 
-    image_t *dst=create_image(width, height, src->format);
+    image_t *dst=image_create(width, height, src->format);
     if (!dst) return 0;
     image_add_dependency(dst, src); // don't run this until 'src' is ready
 
@@ -138,13 +138,13 @@ static image_t *image_scale_yuv420_device(image_t *src, int width, int height)
                                 dst->v, dst->stride_uv, dstSizeUV, dstROIUV,
                                 interpolationMode, nppStreamCtx));
     }
-    dst->time=src->time;
+    dst->meta=src->meta;
     return dst;
 }
 
 static image_t *image_scale_rgb24_device(image_t *src, int width, int height)
 {
-    image_t *dst=create_image(width, height, src->format);
+    image_t *dst=image_create(width, height, src->format);
     if (!dst) return 0;
     image_add_dependency(dst, src); // don't run this until 'src' is ready
 
@@ -160,7 +160,7 @@ static image_t *image_scale_rgb24_device(image_t *src, int width, int height)
 
     CHECK_NPPcall(nppiResize_8u_C3R_Ctx(src->rgb, src->stride_rgb, srcSize, srcROI,
         dst->rgb, dst->stride_rgb, dstSize, dstROI, interpolationMode, nppStreamCtx));
-    dst->time=src->time;
+    dst->meta=src->meta;
     return dst;
 }
 
@@ -172,8 +172,8 @@ static image_t *image_scale_by_intermediate(image_t *img, int width, int height,
     assert(image_tmp!=0);
     image_t *scaled=image_scale(image_tmp, width, height);
     assert(scaled!=0);
-    destroy_image(image_tmp);
-    scaled->time=img->time;
+    image_destroy(image_tmp);
+    scaled->meta=img->meta;
     return scaled;
 }
 

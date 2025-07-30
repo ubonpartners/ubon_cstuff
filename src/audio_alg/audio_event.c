@@ -54,7 +54,7 @@ embedding_t *audio_event_process(audio_event_t *ae, audioframe_t *fr)
     assert(audioframe_get_sample_rate(fr)==ae->sample_rate);
     image_t *mel_tensor=audio_preprocess(ae->pp, audioframe_get_data(fr), audioframe_get_num_samples(fr));
     embedding_t *e=infer_thread_infer_embedding(ae->inf_thr, mel_tensor, 0);
-    destroy_image(mel_tensor);
+    image_destroy(mel_tensor);
     return e;
 }
 

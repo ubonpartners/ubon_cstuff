@@ -11,6 +11,7 @@
 #include "log.h"
 #include "misc.h"
 #include "yaml_stuff.h"
+#include "profile.h"
 
 #define debugf if (0) log_debug
 
@@ -182,8 +183,8 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         return 1;
     }
 
-    image_t *dec_img=(IMAGE_FORMAT_NV12_DEVICE!=dec->output_format) ? create_image_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE)
-                                                                    : create_image(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
+    image_t *dec_img=(IMAGE_FORMAT_NV12_DEVICE!=dec->output_format) ? image_create_no_surface_memory(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE)
+                                                                    : image_create(dec->out_width, dec->out_height, IMAGE_FORMAT_NV12_DEVICE);
     image_t *out_img=0;
     videoProcessingParameters.output_stream = dec_img->stream;
     CHECK_CUDA_CALL(cuvidMapVideoFrame(dec->decoder, pDispInfo->picture_index, &decodedFrame, &pitch, &videoProcessingParameters));
@@ -229,12 +230,14 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         out_img=image_convert(dec_img, dec->output_format);
         image_sync(out_img);
     }
-    out_img->time=dec->time;
+    out_img->meta.time=dec->time;
+    out_img->meta.capture_realtime=profile_time();
+    out_img->meta.flags=MD_CAPTURE_REALTIME_SET;
 
     CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
     if (file_trace_enabled)
     {
-        FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",out_img->width,out_img->height,out_img->format,out_img->time,(out_img==0) ? 0 : image_hash(out_img));
+        FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",out_img->width,out_img->height,out_img->format,out_img->meta.time,(out_img==0) ? 0 : image_hash(out_img));
     }
     dec->time+=dec->time_increment;
 
@@ -253,9 +256,9 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     }
 
     dec->frame_callback(dec->context, scaled_out_img);
-    if (scaled_out_img) destroy_image(scaled_out_img);
-    if (out_img) destroy_image(out_img);
-    if (dec_img) destroy_image(dec_img);
+    if (scaled_out_img) image_destroy(scaled_out_img);
+    if (out_img) image_destroy(out_img);
+    if (dec_img) image_destroy(dec_img);
     return 1;
 }
 

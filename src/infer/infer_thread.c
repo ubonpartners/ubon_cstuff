@@ -166,7 +166,7 @@ static void *infer_thread_fn(void *arg)
             {
                 detection_list_unmap_roi(dets_arr[i], inference_roi[i]);
                 //detection_list_show(dets_arr[i]);
-                destroy_image(img_cropped[i]);
+                image_destroy(img_cropped[i]);
 
                 d[i].dets=dets_arr[i];
                 d[i].inference_roi=inference_roi[i];
@@ -220,7 +220,7 @@ static void *infer_thread_fn(void *arg)
 
         // 5) Signal each job’s result handle, passing back its own detection_list_t*
         for (int i = 0; i < count; ++i) {
-            destroy_image(jobs[i]->img);
+            image_destroy(jobs[i]->img);
 
             if (jobs[i]->callback)
             {
@@ -373,8 +373,8 @@ embedding_t *infer_thread_infer_embedding(infer_thread_t *h, image_t *img, kp_t 
     assert(h->md_aux!=0);
     int sz=h->md_aux->embedding_size;
     assert(num_kp<=5);
-    embedding_t *e=embedding_create(sz, img->time);
-    embedding_set_time(e, img->time);
+    embedding_t *e=embedding_create(sz, img->meta.time);
+    embedding_set_time(e, img->meta.time);
     infer_job_t *job = (infer_job_t *)block_alloc(infer_job_allocator, sizeof(infer_job_t));
     assert(job != NULL);
     memset(job, 0, sizeof(infer_job_t));
@@ -411,7 +411,7 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
 {
     if (!h || !img) return NULL;
 
-    FILE_TRACE("infer_thread img %dx%d TS %f [%.4f,%.4f,%.4f,%.4f]", img->width,img->height,img->time, roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
+    FILE_TRACE("infer_thread img %dx%d TS %f [%.4f,%.4f,%.4f,%.4f]", img->width,img->height,img->meta.time, roi.box[0],roi.box[1],roi.box[2],roi.box[3]);
 
     // Allocate and initialize a new result handle
     infer_thread_result_handle_t *handle = (infer_thread_result_handle_t *)malloc(sizeof(infer_thread_result_handle_t));

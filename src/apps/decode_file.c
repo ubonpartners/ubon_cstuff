@@ -9,7 +9,7 @@ static void process_image(void *context, image_t *img)
     double start_time= *((double *)context);
     if (img)
     {
-        double target_time = img->time;
+        double target_time = img->meta.time;
         while (profile_time() - start_time < target_time)
         {
             usleep(1000); // wait until the target time is reached

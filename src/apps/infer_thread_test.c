@@ -51,7 +51,7 @@ static void frame_callback(void *context, image_t *img)
     detection_list_destroy(db.dets);
 
     display_image("video", out_frame);
-    destroy_image(out_frame);
+    image_destroy(out_frame);
 }
 
 int main(int argc, char *argv[])
@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
         {
             image_t *i=webcam_capture(w);
             frame_callback(0, i);
-            destroy_image(i);
+            image_destroy(i);
         }
     }
 

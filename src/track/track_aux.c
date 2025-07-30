@@ -184,11 +184,11 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
     track_shared_state *tss=ta->tss;
     if (ta->main_jpeg_enabled && img!=0)
     {
-        double time_delta=img->time-ta->main_jpeg_last_time;
+        double time_delta=img->meta.time-ta->main_jpeg_last_time;
         if (time_delta>ta->main_jpeg_min_interval_seconds || single_frame)
         {
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
-            ta->main_jpeg_last_time=img->time;
+            ta->main_jpeg_last_time=img->meta.time;
 
             dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);
             embedding_set_quality(dets->clip_embedding, 1.0f);

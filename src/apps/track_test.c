@@ -51,9 +51,9 @@ static void track_result(void *context, track_results_t *r)
             if (out_frame_rgb!=0)
             {
                 display_image("video", out_frame_rgb);
-                destroy_image(out_frame_rgb);
+                image_destroy(out_frame_rgb);
             }
-            destroy_image(img);
+            image_destroy(img);
         }
         double target_time=r->time;
         /*while(profile_time()-s->start_time<target_time)
@@ -80,7 +80,7 @@ static void process_image(void *context, image_t *img)
     state_t *s=(state_t *)context;
     image_t *old_img=s->img;
     s->img=image_reference(img);
-    destroy_image(old_img);
+    image_destroy(old_img);
     track_stream_run_frame_time(s->ts, img);
     //track_stream_run_single_frame(s->ts, img);
 }
@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
         {
             image_t *i=webcam_capture(w);
             process_image(&s, i);
-            destroy_image(i);
+            image_destroy(i);
         }
     }
 

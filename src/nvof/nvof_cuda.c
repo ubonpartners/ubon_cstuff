@@ -227,8 +227,8 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
     v->results.costs=v->costBufHost;
     v->results.flow=(flow_vector_t*)v->flowBufHost;
 
-    destroy_image(scaled);
-    destroy_image(img);
+    image_destroy(scaled);
+    image_destroy(img);
 
     return &v->results;
 }

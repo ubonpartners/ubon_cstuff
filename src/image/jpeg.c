@@ -62,7 +62,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     if (setjmp(jerr.setjmp_buffer)) {
         /* If we get here, the JPEG code signaled an error. */
         if (img) {
-            destroy_image(img);
+            image_destroy(img);
             img=0;
         }
         return 0;
@@ -110,7 +110,7 @@ image_t *decode_jpeg(uint8_t *buffer, size_t size) {
     jpeg_start_decompress(&cinfo);
 
     /* 5) Allocate only after header is validated */
-    img = create_image(cinfo.output_width,
+    img = image_create(cinfo.output_width,
                        cinfo.output_height,
                        IMAGE_FORMAT_RGB24_HOST);
     if (!img) {
@@ -220,7 +220,7 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
         return 0;
     }
 
-    image_t *img=create_image(width, height, IMAGE_FORMAT_RGB24_DEVICE);
+    image_t *img=image_create(width, height, IMAGE_FORMAT_RGB24_DEVICE);
 
     nv_image.channel[0] = img->rgb;
     nv_image.pitch[0] = img->stride_rgb;
@@ -233,7 +233,7 @@ image_t *decode_jpeg_nvjpeg(uint8_t *buffer, size_t size)
     if (status != NVJPEG_STATUS_SUCCESS)
     {
         //log_error("NVJPEG nvjpegDecode failed");
-        destroy_image(img);
+        image_destroy(img);
         return 0;
     }
     cudaError_t err = cudaGetLastError();
@@ -285,7 +285,7 @@ image_t *load_jpeg(const char *file)
     }
 
     //image_t *ret_yuv=image_convert(ret, IMAGE_FORMAT_YUV420_DEVICE);
-    //destroy_image(ret);
+    //image_destroy(ret);
     //return ret_yuv;
     return ret;
 }
@@ -537,7 +537,7 @@ void save_jpeg(const char *filename, image_t *img)
 
     image_t *temp=image_convert(img, inter);
     save_jpeg(filename, temp);
-    destroy_image(temp);
+    image_destroy(temp);
 }
 
 static int has_jpeg_extension(const char *filename) {

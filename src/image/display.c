@@ -228,7 +228,7 @@ static void destroy_named_entry(named_display_entry_t *prev, named_display_entry
     if (e->d->texture) SDL_DestroyTexture(e->d->texture);
     if (e->d->renderer) SDL_DestroyRenderer(e->d->renderer);
     if (e->d->window) SDL_DestroyWindow(e->d->window);
-    if (e->d->current_img) destroy_image(e->d->current_img);
+    if (e->d->current_img) image_destroy(e->d->current_img);
     free(e->d);
 
     free(e);
@@ -307,14 +307,14 @@ static void *sdl_thread_loop(void *arg) {
                 /* Convert to RGB24 if needed */
                 if (img_for_use->format != IMAGE_FORMAT_RGB24_HOST) {
                     image_t *tmp = image_convert(img_for_use, IMAGE_FORMAT_RGB24_HOST);
-                    destroy_image(img_for_use);
+                    image_destroy(img_for_use);
                     img_for_use = tmp;
                 }
 
                 /* Replace current_img: destroy old reference if any */
                 if (d->current_img) {
                     image_check(d->current_img);
-                    destroy_image(d->current_img);
+                    image_destroy(d->current_img);
                     d->current_img=0;
                 }
                 d->current_img = img_for_use;
@@ -374,7 +374,7 @@ static void *sdl_thread_loop(void *arg) {
                 render_display_with_current_image(d);
 
                 image_check(d->current_img);
-                destroy_image(d->current_img);
+                image_destroy(d->current_img);
                 d->current_img=0;
 
                 free(name_for_free);
@@ -386,13 +386,13 @@ static void *sdl_thread_loop(void *arg) {
                 /* Convert to RGB24 if needed */
                 if (img_for_use->format != IMAGE_FORMAT_RGB24_HOST) {
                     image_t *tmp = image_convert(img_for_use, IMAGE_FORMAT_RGB24_HOST);
-                    destroy_image(img_for_use);
+                    image_destroy(img_for_use);
                     img_for_use = tmp;
                 }
 
                 /* Replace current_img: destroy old reference if any */
                 if (d->current_img) {
-                    destroy_image(d->current_img);
+                    image_destroy(d->current_img);
                 }
                 d->current_img = img_for_use;
                 d->img_width   = img_for_use->width;
@@ -464,7 +464,7 @@ static void *sdl_thread_loop(void *arg) {
                     if (d->texture) SDL_DestroyTexture(d->texture);
                     if (d->renderer) SDL_DestroyRenderer(d->renderer);
                     if (d->window) SDL_DestroyWindow(d->window);
-                    if (d->current_img) destroy_image(d->current_img);
+                    if (d->current_img) image_destroy(d->current_img);
                     free(d);
                 }
             }

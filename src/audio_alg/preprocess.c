@@ -209,7 +209,7 @@ image_t *audio_preprocess(audio_preproc_t* h,
     }
 
     /* Step 7: log + affine -> output */
-    image_t *out = create_image_tensor(1, 1, c->n_mels, frames,
+    image_t *out = image_create_tensor(1, 1, c->n_mels, frames,
                                        IMAGE_FORMAT_TENSOR_FP32_HOST);
     float *dst = (float*)out->host_mem;
 

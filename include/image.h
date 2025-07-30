@@ -72,13 +72,22 @@ static bool image_format_is_host(image_format_t format)
 #include <cuda_runtime.h>
 #include <assert.h>
 
+#define MD_CAPTURE_REALTIME_SET     (1<<0)
+
+typedef struct image_metadata
+{
+  float time;             // time (in seconds) corresponding to underlying RTP sample time, may not be realtime
+  float capture_realtime; // profile_time() for when the event that generate this image was captured
+  uint32_t flags;
+} image_metadata_t;
+
 struct image
 {
     int width;
     int height;
     int n,c; // used for TENSOR format
     image_format_t format;
-    double time;
+    image_metadata_t meta;
     uint8_t *y;
     uint8_t *u;
     uint8_t *v;
@@ -112,16 +121,16 @@ const char *image_format_name(image_format_t format);
 // doesn't have to care
 
 // create image: allocate a new surface and it's video memory
-image_t *create_image(int width, int height, image_format_t fmt);
+image_t *image_create(int width, int height, image_format_t fmt);
 // tensor images
-image_t *create_image_tensor(int n, int c, int h, int w, image_format_t fmt);
-// create_image_no_surface_memory: create an empty shell surface with
+image_t *image_create_tensor(int n, int c, int h, int w, image_format_t fmt);
+// image_create_no_surface_memory: create an empty shell surface with
 // no underlying video memory. This is useful in cases where different
 // surfaces share underlying memory - e.g. if one is a crop of another
-image_t *create_image_no_surface_memory(int width, int height, image_format_t fmt);
+image_t *image_create_no_surface_memory(int width, int height, image_format_t fmt);
 // destroy image reduces the ref count by one but the surface will remain
 // until the ref count is zero.
-void destroy_image(image_t *img);
+void image_destroy(image_t *img);
 // run checks on an image (ref count valid, memory still valid)
 void image_check(image_t *img);
 image_t *image_reference(image_t *img);

@@ -102,7 +102,7 @@ static void simple_decoder_decode_one_nalu(simple_decoder_t *dec, uint8_t *bitst
         int src_width = dec->bufInfo.UsrData.sSystemBuffer.iWidth;
         int src_height = dec->bufInfo.UsrData.sSystemBuffer.iHeight;
 
-        image_t *img=create_image_no_surface_memory(src_width, src_height, IMAGE_FORMAT_YUV420_HOST);
+        image_t *img=image_create_no_surface_memory(src_width, src_height, IMAGE_FORMAT_YUV420_HOST);
 
         img->y=data[0];
         img->u=data[1];
@@ -113,8 +113,8 @@ static void simple_decoder_decode_one_nalu(simple_decoder_t *dec, uint8_t *bitst
         image_t *scaled_img=image_scale(img, dec->out_width, dec->out_height);
 
         dec->frame_callback(dec->context, scaled_img);
-        destroy_image(scaled_img);
-        destroy_image(img);
+        image_destroy(scaled_img);
+        image_destroy(img);
     }
 }
 

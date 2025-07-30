@@ -101,7 +101,7 @@ static inline bool is_nv12_variant(NvBufSurfaceColorFormat fmt)
         case NVBUF_COLOR_FORMAT_NV12_ER:
         case NVBUF_COLOR_FORMAT_NV12_709:
         case NVBUF_COLOR_FORMAT_NV12_709_ER:
-        case NVBUF_COLOR_FORMAT_NV12_2020:       
+        case NVBUF_COLOR_FORMAT_NV12_2020:
             return true;
         default:
             return false;
@@ -132,7 +132,7 @@ int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
 NvBufSurface *surf = nullptr;
 NvBufSurfaceFromFd(dec_buffer->planes[0].fd, (void**)&surf);
 
-image_t *img = create_image(w, h, IMAGE_FORMAT_YUV420_DEVICE);
+image_t *img = image_create(w, h, IMAGE_FORMAT_YUV420_DEVICE);
 nvSurfToImageYUV420Device(surf, img, 0);   // 0 = default CUstream
 
 ------------------------------------------------------------------------*/

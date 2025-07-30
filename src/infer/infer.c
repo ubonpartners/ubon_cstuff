@@ -93,7 +93,7 @@ image_t *load_rgb32_tensor(const char *file, int w, int h)
         log_error("Could not open file %s",file);
         return 0;
     }
-    image_t *img=create_image(w, h, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
+    image_t *img=image_create(w, h, IMAGE_FORMAT_RGB_PLANAR_FP32_HOST);
     assert(w*h*4*3==fread(img->rgb, 1, w*h*4*3, f));
     fclose(f);
     return img;
@@ -792,7 +792,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
 
         max_w=std::max(max_w, scale_w);
         max_h=std::max(max_h, scale_h);
-        FILE_TRACE("%d) TS %f %dx%d->%dx%d fmt %d hash %lx",i,img->time,img->width,img->height,scale_w,scale_h, img->format, image_hash(img_list[i]));
+        FILE_TRACE("%d) TS %f %dx%d->%dx%d fmt %d hash %lx",i,img->meta.time,img->width,img->height,scale_w,scale_h, img->format, image_hash(img_list[i]));
     }
     inf_max_w=std::max(inf->inf_limit_min_width, inf_max_w);
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
@@ -837,10 +837,10 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         else
             fmt=IMAGE_FORMAT_YUV420_DEVICE;
         image_scaled_conv[i]=image_convert(image_scaled, fmt);
-        destroy_image(image_scaled);
+        image_destroy(image_scaled);
     }
 
-    if (testimage) destroy_image(testimage);
+    if (testimage) image_destroy(testimage);
 
     // step 3: make planar RGB image with all batch images
 
@@ -920,10 +920,10 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         }
     }
 
-    destroy_image(inf_image);
+    image_destroy(inf_image);
     for(int i=0;i<num;i++)
     {
-        double t=image_scaled_conv[i]->time;
+        double t=image_scaled_conv[i]->meta.time;
         dets[i]->time=t;
         for(int j=0;j<dets[i]->num_detections;j++)
         {
@@ -945,7 +945,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
             }
             list_dets->last_seen_time=t;
         }
-        destroy_image(image_scaled_conv[i]);
+        image_destroy(image_scaled_conv[i]);
     }
     // map detections to the original image
 

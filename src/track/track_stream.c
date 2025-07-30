@@ -24,6 +24,8 @@
 #include "jpeg.h"
 #include "profile.h"
 #include "work_queue.h"
+#include "profile.h"
+#include "fast_histogram.h"
 
 #define debugf if (0) log_debug
 #define input_debugf if (0) log_error
@@ -113,8 +115,9 @@ typedef struct track_stream_stats
     uint32_t skipped_input_image_count;
     uint32_t nonskipped_input_image_count;
     uint32_t process_inference_results_count;
-    double total_run_input_image_time;
-    double total_process_inference_results_time;
+    fast_histogram_t h_pipeline_latency;
+    fast_histogram_t h_inference_results_time;
+    fast_histogram_t h_input_image_time;
 } track_stream_stats_t;
 
 struct track_stream
@@ -221,6 +224,10 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     ts->taux=track_aux_create(tss);
 
+    fast_histogram_init(&ts->stats.h_pipeline_latency, 0.0f, 1.0f, 1.2f);
+    fast_histogram_init(&ts->stats.h_inference_results_time, 0.0f, 1.0f, 1.2f);
+    fast_histogram_init(&ts->stats.h_input_image_time, 0.0f, 1.0f, 1.2f);
+
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
     {
         work_queue_init(&ts->wq[i], tss->thread_pool, ts, work_queue_process_job, queued_job_names[i]);
@@ -251,9 +258,9 @@ const char *track_stream_get_stats(track_stream_t *ts)
     YAML::Node main_stats;
     main_stats["skipped_input_image_count"]=ts->stats.skipped_input_image_count;
     main_stats["nonskipped_input_image_count"]=ts->stats.nonskipped_input_image_count;
-    main_stats["run_input_image_runtime"]=ts->stats.total_run_input_image_time;
-    main_stats["process_inference_results_count"]=ts->stats.process_inference_results_count;
-    main_stats["process_inference_results_runtime"]=ts->stats.total_process_inference_results_time;
+    main_stats["pipeline_latency_histogram"]=fast_histogram_get_stats(&ts->stats.h_pipeline_latency);
+    main_stats["inference_results_time_histogram"]=fast_histogram_get_stats(&ts->stats.h_inference_results_time);
+    main_stats["input_image_time_histogram"]=fast_histogram_get_stats(&ts->stats.h_input_image_time);
     main_processing["stats"]=main_stats;
     root["main_processing"]=main_processing;
 
@@ -266,7 +273,7 @@ static void destroy_wq_job(void *context, work_queue_item_header_t *item)
 {
     ts_queued_job_t *job=(ts_queued_job_t *)item;
     if (job->data) free(job->data);
-    if (job->img) destroy_image(job->img);
+    if (job->img) image_destroy(job->img);
     block_free((void *)job);
 }
 
@@ -373,10 +380,17 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
         ts->tracked_object_roi.box[3]=y1;
     }
 
+    if ((ts->inference_image->meta.flags & MD_CAPTURE_REALTIME_SET)!=0)
+    {
+        float pipeline_latency=(float)(profile_time()-ts->inference_image->meta.capture_realtime);
+        fast_histogram_add_sample(&ts->stats.h_pipeline_latency, pipeline_latency);
+
+    }
+
     process_results(ts, r);
-    destroy_image(ts->inference_image);
+
     ts->inference_image=0;
-    ts->stats.total_process_inference_results_time+=(profile_time()-start_time);
+    fast_histogram_add_sample(&ts->stats.h_inference_results_time, (float)(profile_time()-start_time));
     input_debugf("====>main pipe done, resuming WQ");
     end_of_main_pipeline(ts);
 }
@@ -428,7 +442,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     //printf("time %f delta %f min %f skip %d\n",time,time_delta,ts->min_time_delta_process,(time_delta<ts->min_time_delta_process));
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
-        if (img!=0) destroy_image(img);
+        if (img!=0) image_destroy(img);
         track_results_t *r=track_results_create();
         r->result_type=(img==0) ? TRACK_FRAME_SKIP_NO_IMG : TRACK_FRAME_SKIP_FRAMERATE;
         r->time=time;
@@ -449,7 +463,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     image_t *image_scaled=image_scale_convert(img, ts->stream_image_format, scale_w, scale_h);
     image_check(image_scaled);
     image_check(img);
-    destroy_image(img);
+    image_destroy(img);
     assert(ts->destroying==false);
     if (single_frame)
         motion_track_reset(ts->mt);
@@ -470,7 +484,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         assert(ts->single_frame==false); // should never skip single frames
         debugf("skip inference ROI area %f < %f", roi_area(&motion_roi), skip_roi_thr);
         motion_track_set_roi(ts->mt, ROI_ZERO);
-        destroy_image(image_scaled);
+        image_destroy(image_scaled);
 
         track_results_t *r=track_results_create();
         r->result_type=TRACK_FRAME_SKIP_NO_MOTION;
@@ -501,7 +515,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     assert(ts->inference_image==0);
     ts->inference_image=image_scaled;
     infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
-    ts->stats.total_run_input_image_time+=(profile_time()-start_time);
+    fast_histogram_add_sample(&ts->stats.h_input_image_time, (float)(profile_time()-start_time));
 }
 
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
@@ -554,10 +568,10 @@ static void decoder_process_image(void *context, image_t *img)
     ts_queued_job_t *job=ts_queued_job_create();
     job->type=TRACK_STREAM_JOB_MAIN_PIPELINE;
     job->img=image_reference(img);
-    job->time=img->time;
+    job->time=img->meta.time;
     job->single_frame=false;
     ts->decoded_frames++;
-    input_debugf("got decoded image %dx%d time %f\n",img->width,img->height,img->time);
+    input_debugf("got decoded image %dx%d time %f\n",img->width,img->height,img->meta.time);
     track_stream_queue_job(ts, job);
 }
 
@@ -660,7 +674,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             free(job->data);
             if (!img)
             {
-                img=create_image(128, 128, IMAGE_FORMAT_YUV420_DEVICE);
+                img=image_create(128, 128, IMAGE_FORMAT_YUV420_DEVICE);
                 // fixme - we need to always give a results callback for jpeg even if corrupt/missing/...
                 // better to explicitly flag this
             }
@@ -757,19 +771,19 @@ void track_stream_run(track_stream_t *ts, image_t *img, double time)
 void track_stream_run_frame_time(track_stream_t *ts, image_t *img)
 {
     assert(img!=0);
-    do_track_stream_run(ts, img, img->time, false);
+    do_track_stream_run(ts, img, img->meta.time, false);
 }
 
 void track_stream_run_single_frame(track_stream_t *ts, image_t *img)
 {
     assert(img!=0);
-    do_track_stream_run(ts, img, img->time, true);
+    do_track_stream_run(ts, img, img->meta.time, true);
 }
 
 static void track_run_video_process_image(void *context, image_t *img)
 {
     track_stream_t *ts=(track_stream_t *)context;
-    if (img!=0 && img->time>=ts->start_time) track_stream_run_frame_time(ts, img);
+    if (img!=0 && img->meta.time>=ts->start_time) track_stream_run_frame_time(ts, img);
 }
 
 extern float file_decoder_parse_fps(const char *s);

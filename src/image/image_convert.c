@@ -25,7 +25,7 @@
 
 static image_t *image_convert_nv12_to_yuv420(image_t *src, image_format_t format)
 {
-    image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *dst = image_create(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     image_add_dependency(dst, src);
 
     int width = src->width;
@@ -53,7 +53,7 @@ static image_t *image_convert_nv12_to_yuv420(image_t *src, image_format_t format
 
 static image_t *image_convert_yuv420_to_nv12_device(image_t *src, image_format_t format)
 {
-    image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_NV12_DEVICE);
+    image_t *dst = image_create(src->width, src->height, IMAGE_FORMAT_NV12_DEVICE);
     image_add_dependency(dst, src);
 
     int width = src->width;
@@ -109,7 +109,7 @@ static void yuv2rgb_bt709(uint8_t y, uint8_t u, uint8_t v, uint8_t* r, uint8_t* 
 static image_t* image_convert_yuv420_to_rgb24_host(image_t* src, image_format_t format)
 {
     assert(src->format == IMAGE_FORMAT_YUV420_HOST);
-    image_t* dst = create_image(src->width, src->height, IMAGE_FORMAT_RGB24_HOST);
+    image_t* dst = image_create(src->width, src->height, IMAGE_FORMAT_RGB24_HOST);
     if (!dst) return NULL;
 
     image_add_dependency(dst, src);
@@ -131,7 +131,7 @@ static image_t* image_convert_yuv420_to_rgb24_host(image_t* src, image_format_t 
 static image_t* image_convert_yuv420_to_rgb24_device(image_t* src, image_format_t format)
 {
     assert(src->format == IMAGE_FORMAT_YUV420_DEVICE);
-    image_t* dst = create_image(src->width, src->height, IMAGE_FORMAT_RGB24_DEVICE);
+    image_t* dst = image_create(src->width, src->height, IMAGE_FORMAT_RGB24_DEVICE);
     if (!dst) return NULL;
 
     image_add_dependency(dst, src);
@@ -145,7 +145,7 @@ static image_t* image_convert_yuv420_to_rgb24_device(image_t* src, image_format_
 
 static image_t *image_convert_rgb24_to_yuv_device(image_t *src, image_format_t format)
 {
-    image_t *dest=create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *dest=image_create(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     if (!dest) return 0;
 
     image_add_dependency(dest, src);
@@ -175,7 +175,7 @@ static image_t *image_convert_yuv420_device_host(image_t *img, image_format_t fo
 {
     bool src_device=image_format_is_device(img->format);
     bool dest_device=image_format_is_device(format);
-    image_t *ret=create_image(img->width, img->height, format);
+    image_t *ret=image_create(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     copyasync2d(img->y,img->stride_y,src_device,ret->y,ret->stride_y,dest_device,img->width,img->height,ret->stream);
@@ -190,7 +190,7 @@ static image_t *image_convert_tensor_device_host(image_t *img, image_format_t fo
     bool dest_device=image_format_is_device(format);
     int bpf=image_format_bytes_per_component(format);
     assert(bpf==image_format_bytes_per_component(img->format));
-    image_t *ret=create_image_tensor(img->n, img->c, img->height, img->width, format);
+    image_t *ret=image_create_tensor(img->n, img->c, img->height, img->width, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     CHECK_CUDART_CALL(cudaMemcpyAsync(tensor_mem_ptr(ret), tensor_mem_ptr(img), img->width*img->height*bpf*img->n*img->c, dest_device ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost, ret->stream));
@@ -201,7 +201,7 @@ static image_t *image_convert_rgb24_device_host(image_t *img, image_format_t for
 {
     bool src_device=image_format_is_device(img->format);
     bool dest_device=image_format_is_device(format);
-    image_t *ret=create_image(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB24_DEVICE : IMAGE_FORMAT_RGB24_HOST);
+    image_t *ret=image_create(img->width, img->height, dest_device ? IMAGE_FORMAT_RGB24_DEVICE : IMAGE_FORMAT_RGB24_HOST);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     copyasync2d(img->rgb,img->stride_rgb,src_device,ret->rgb,ret->stride_rgb,dest_device,img->width*3,img->height,ret->stream);
@@ -210,7 +210,7 @@ static image_t *image_convert_rgb24_device_host(image_t *img, image_format_t for
 
 static image_t *image_convert_yuv420_device_planar_rgb_fp16(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
+    image_t *ret=image_create(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_convert_yuv420_to_fp_planar(img->y, img->u, img->v, img->stride_y, img->stride_uv,
@@ -221,7 +221,7 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp16(image_t *img, image_
 
 static image_t *image_convert_yuv420_device_planar_rgb_fp32(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
+    image_t *ret=image_create(img->width, img->height, IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_convert_yuv420_to_fp_planar(img->y, img->u, img->v, img->stride_y, img->stride_uv,
@@ -232,7 +232,7 @@ static image_t *image_convert_yuv420_device_planar_rgb_fp32(image_t *img, image_
 
 static image_t *tensor_fp16_fp32_device(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, format);
+    image_t *ret=image_create(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_half_to_float(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
@@ -241,7 +241,7 @@ static image_t *tensor_fp16_fp32_device(image_t *img, image_format_t format)
 
 static image_t *tensor_fp16_fp32_host(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, format);
+    image_t *ret=image_create(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     vec_copy_float_to_half(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
@@ -250,7 +250,7 @@ static image_t *tensor_fp16_fp32_host(image_t *img, image_format_t format)
 
 static image_t *tensor_fp32_fp16_device(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, format);
+    image_t *ret=image_create(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_float_to_half(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
@@ -259,7 +259,7 @@ static image_t *tensor_fp32_fp16_device(image_t *img, image_format_t format)
 
 static image_t *tensor_fp32_fp16_host(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, format);
+    image_t *ret=image_create(img->width, img->height, format);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     vec_copy_half_to_float(tensor_mem_ptr(img), tensor_mem_ptr(ret), img->n*img->c*img->width*img->height);
@@ -268,7 +268,7 @@ static image_t *tensor_fp32_fp16_host(image_t *img, image_format_t format)
 
 static image_t *image_convert_planar_fp16_rgb24_device(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
+    image_t *ret=image_create(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_convert_fp16_planar_to_RGB24(img->rgb, ret->rgb, ret->stride_rgb, img->width, img->height, ret->stream);
@@ -277,7 +277,7 @@ static image_t *image_convert_planar_fp16_rgb24_device(image_t *img, image_forma
 
 static image_t *image_convert_planar_fp32_rgb24_device(image_t *img, image_format_t format)
 {
-    image_t *ret=create_image(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
+    image_t *ret=image_create(img->width, img->height, IMAGE_FORMAT_RGB24_DEVICE);
     if (!ret) return 0;
     image_add_dependency(ret, img);
     cuda_convert_fp32_planar_to_RGB24(img->rgb, ret->rgb, ret->stride_rgb, img->width, img->height, ret->stream);
@@ -292,7 +292,7 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
 
     if (true)
     {
-        image_t *mono=create_image_no_surface_memory(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
+        image_t *mono=image_create_no_surface_memory(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
         mono->referenced_surface=image_reference(src);
         mono->y=src->y;
         mono->stride_y=src->stride_y;
@@ -301,7 +301,7 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
     }
     else
     {
-        image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
+        image_t *dst = image_create(src->width, src->height, IMAGE_FORMAT_MONO_DEVICE);
         image_add_dependency(dst, src);
         cudaStream_t stream = dst->stream;
         // Async copy Y plane
@@ -313,7 +313,7 @@ static image_t *image_convert_yuv420_mono(image_t *src, image_format_t format)
 
 static image_t *image_convert_rgb24_planar_fp32_device(image_t *src, image_format_t format)
 {
-    image_t *dst = create_image(src->width, src->height, format);
+    image_t *dst = image_create(src->width, src->height, format);
     assert(format==IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE);
     image_add_dependency(dst, src);
     cuda_convert_rgb24_to_fp_planar(src->rgb, src->stride_rgb,
@@ -325,7 +325,7 @@ static image_t *image_convert_rgb24_planar_fp32_device(image_t *src, image_forma
 
 static image_t *image_convert_rgb24_planar_fp16_device(image_t *src, image_format_t format)
 {
-    image_t *dst = create_image(src->width, src->height, format);
+    image_t *dst = image_create(src->width, src->height, format);
     assert(format==IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE);
     image_add_dependency(dst, src);
     cuda_convert_rgb24_to_fp_planar(src->rgb, src->stride_rgb,
@@ -337,7 +337,7 @@ static image_t *image_convert_rgb24_planar_fp16_device(image_t *src, image_forma
 
 static image_t *image_convert_mono_yuv420(image_t *src, image_format_t format)
 {
-    image_t *dst = create_image(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
+    image_t *dst = image_create(src->width, src->height, IMAGE_FORMAT_YUV420_DEVICE);
     image_add_dependency(dst, src);
     cudaStream_t stream = dst->stream;
     // Async copy Y plane
@@ -356,9 +356,9 @@ static image_t *convert_reference(image_t *src, image_format_t format)
 {
     assert(src->n==1);
     assert(src->c==1);
-    image_t *ret=create_image_no_surface_memory(src->width, src->height, format);
+    image_t *ret=image_create_no_surface_memory(src->width, src->height, format);
     ret->referenced_surface=image_reference(src);
-    ret->time=src->time;
+    ret->meta=src->meta;
     if (image_format_is_tensor(format))
     {
         assert(src->rgb!=0);
@@ -493,7 +493,7 @@ image_t *image_convert(image_t *img, image_format_t format)
         //log_debug("convert direct");
         image_t *ret=c->convert_direct(img, format);
         //log_debug("ok");
-        ret->time=img->time;
+        ret->meta=img->meta;
         return ret;
     }
     else if (c->convert_intermediate!=IMAGE_FORMAT_NONE)
@@ -501,9 +501,9 @@ image_t *image_convert(image_t *img, image_format_t format)
         //log_debug("convert intermediate");
         image_t *intermediate=image_convert(img, c->convert_intermediate);
         image_t *ret=image_convert(intermediate, format);
-        destroy_image(intermediate);
+        image_destroy(intermediate);
         //log_debug("OK!");
-        ret->time=img->time;
+        ret->meta=img->meta;
         return ret;
     }
 
