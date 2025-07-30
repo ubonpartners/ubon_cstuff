@@ -346,6 +346,10 @@ block_allocator_t *block_allocator_create(const char *name, size_t block_size) {
     return ba;
 }
 
+uint32_t block_allocator_allocated_blocks(block_allocator_t *ba) {
+    return ba->allocated_blocks;
+}
+
 void block_allocator_destroy(block_allocator_t *ba) {
     if (!ba) return;
     pthread_mutex_lock(&ba->lock);

@@ -67,6 +67,7 @@ typedef struct block_allocator block_allocator_t;
 block_allocator_t *block_allocator_create(const char *name, size_t block_size);
 void block_allocator_destroy(block_allocator_t *b);
 void block_allocator_destroy(block_allocator_t *b);
+uint32_t block_allocator_allocated_blocks(block_allocator_t *ba);
 size_t block_allocator_block_size(block_allocator_t *ba);
 void *block_alloc(block_allocator_t *b);
 void *block_alloc(block_allocator_t *b, size_t sz);

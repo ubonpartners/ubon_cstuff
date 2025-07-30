@@ -223,6 +223,7 @@ static void image_free_callback(void *context, void *block)
 image_t *image_create_no_surface_memory(int width, int height, image_format_t fmt)
 {
     image_t *img=(image_t *)block_alloc(image_allocator);
+    //printf("%d images\n",block_allocator_allocated_blocks(image_allocator));
     if (!img) return 0;
     memset(img, 0, sizeof(image_t));
     img->width=width;
