@@ -141,8 +141,7 @@ static void *infer_thread_fn(void *arg)
         for(int i=0;i<count;i++)
         {
             double queue_time=infer_start_time-jobs[i]->enqueue_time;
-            h->stats.total_queue_time+=queue_time;
-            h->stats.max_queue_time=std::max(queue_time, h->stats.max_queue_time);
+            fast_histogram_add_sample(&h->stats.queue_latency_histogram, queue_time);
         }
 
         if (h->type==INFER_THREAD_DETECTION)
@@ -276,6 +275,7 @@ infer_thread_t *infer_thread_start(const char *model_trt, const char *config_yam
     pthread_cond_init(&h->queue_cond, NULL);
     h->job_head = h->job_tail = NULL;
     h->stop = 0;
+    fast_histogram_init(&h->stats.queue_latency_histogram, 0.0f, 1.0f, 1.2f);
 
     // Spawn the worker thread
     int ret = pthread_create(&h->thread_handle, NULL, infer_thread_fn, h);
@@ -517,8 +517,7 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
     root["total_roi_area"]  = ss.total_roi_area;
     root["mean_batch_size"] = ss.mean_batch_size;
     root["mean_roi_area"]   = ss.mean_roi_area;
-    root["avg_queue_time"]  = ss.total_queue_time/(ss.total_images+1e-7);
-    root["max_queue_time"]  = ss.max_queue_time;
+    root["queue_latency_histogram"]=fast_histogram_get_stats(&h->stats.queue_latency_histogram);
 
     YAML::Node histogram;
     for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {

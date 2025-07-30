@@ -5,6 +5,7 @@
 #include "infer_aux.h"
 #include "roi.h"
 #include "detections.h"
+#include "fast_histogram.h"
 #include <yaml-cpp/yaml.h>
 
 #define INFER_THREAD_MAX_BATCH 32
@@ -41,8 +42,7 @@ typedef struct infer_thread_stats
     float total_roi_area;
     float mean_batch_size;
     float mean_roi_area;
-    double total_queue_time;
-    double max_queue_time;
+    fast_histogram_t queue_latency_histogram;
 } infer_thread_stats_t;
 
 typedef struct infer_thread_result_data

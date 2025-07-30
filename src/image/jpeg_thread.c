@@ -11,6 +11,8 @@
 #include "memory_stuff.h"
 #include "jpeg_thread.h"
 #include "jpeg.h"
+#include "fast_histogram.h"
+#include "profile.h"
 
 #define debugf if (1) log_debug
 static std::once_flag initFlag;
@@ -22,6 +24,7 @@ struct jpeg_thread
     int num_worker_threads;
     uint64_t outstanding_jpegs;
     uint64_t outstanding_jpegs_hwm;
+    fast_histogram_t fh_latency;
 };
 
 struct jpeg
@@ -37,6 +40,7 @@ struct jpeg
     float quality; // metric how well framed the subject is
     uint8_t *data;
     size_t data_len;
+    double submit_time;
 };
 
 static void jpeg_thread_init()
@@ -59,6 +63,7 @@ jpeg_thread_t *jpeg_thread_create(const char *yaml_config)
     assert(jt!=0);
     memset(jt, 0, sizeof(jpeg_thread_t));
     debugf("Jpeg thread create");
+    fast_histogram_init(&jt->fh_latency, 0, 1.0, 1.2);
     jt->num_worker_threads=yaml_get_int_value(yaml_base["jpeg_num_worker_threads"], 2);
     debugf("%d jpeg worker threads", jt->num_worker_threads);
     // create worker threads
@@ -108,6 +113,8 @@ static bool jpeg_encode_function(int id, jpeg_t *jpeg) {
 
     jpeg->data=data;
     jpeg->data_len=outsize;
+    double latency=profile_time()-jpeg->submit_time;
+    fast_histogram_add_sample(&jpeg->jt->fh_latency, (float)latency);
     __atomic_sub_fetch(&jpeg->jt->outstanding_jpegs, 1, __ATOMIC_RELAXED);
     return true;
 }
@@ -135,6 +142,7 @@ jpeg_t *jpeg_thread_encode(jpeg_thread_t *jt, image_t *img, roi_t roi, int max_w
     jpeg->quality=quality;
     jpeg->time=jpeg->img->time;
     jpeg->jt=jt;
+    jpeg->submit_time=profile_time();
     uint64_t v=__atomic_add_fetch(&jt->outstanding_jpegs, 1, __ATOMIC_RELAXED);
     if (v>jt->outstanding_jpegs_hwm)
     {
@@ -179,4 +187,12 @@ void jpeg_destroy(jpeg_t *jpeg)
         if (jpeg->data) free(jpeg->data);
     }
     block_free(jpeg);
+}
+
+YAML::Node jpeg_thread_stats(jpeg_thread_t *jpeg_thread)
+{
+    YAML::Node root;
+    root["outstanding_jpegs_hwm"]=jpeg_thread->outstanding_jpegs_hwm;
+    root["latency_histogram"]=fast_histogram_get_stats(&jpeg_thread->fh_latency);
+    return root;
 }

@@ -152,6 +152,7 @@ const char *track_shared_state_get_stats(track_shared_state_t *tss)
         }
     }
     root["infer_threads"]=infer_threads;
+    root["jpeg_threads"]=jpeg_thread_stats(tss->jpeg_thread);
 
     return yaml_to_cstring(root);
 }
