@@ -388,7 +388,7 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     }
 
     process_results(ts, r);
-
+    image_destroy(ts->inference_image);
     ts->inference_image=0;
     fast_histogram_add_sample(&ts->stats.h_inference_results_time, (float)(profile_time()-start_time));
     input_debugf("====>main pipe done, resuming WQ");
