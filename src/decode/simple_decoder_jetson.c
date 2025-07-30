@@ -605,7 +605,7 @@ void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
     if (dec) dec->max_time = max_time;
 }
 
-YAML::Node decoder_get_stats(simple_decoder *dec)
+YAML::Node simple_decoder_get_stats(simple_decoder *dec)
 {
     YAML::Node root;
     root["stats_bytes_decoded"]=dec->stats_bytes_decoded;
