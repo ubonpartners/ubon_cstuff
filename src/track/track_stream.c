@@ -23,6 +23,8 @@
 #include "h26x_assembler.h"
 #include "jpeg.h"
 #include "profile.h"
+#include "work_queue.h"
+
 #define debugf if (0) log_debug
 #define input_debugf if (0) log_error
 
@@ -32,9 +34,9 @@ static block_allocator_t *ts_queued_job_allocator;
 
 typedef enum ts_queued_job_type
 {
-    TRACK_STREAM_JOB_IMAGE=0,         // decode image waiting for the main pipeline
-    TRACK_STREAM_JOB_VIDEO_DATA=1,    // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_IMAGE)
-    TRACK_STREAM_JOB_JPEG=2,          // compressed JPEG image waiting to be decoded (makes TRACK_STREAM_JOB_IMAGE)
+    TRACK_STREAM_JOB_MAIN_PIPELINE=0, // decode image waiting for the main pipeline
+    TRACK_STREAM_JOB_VIDEO_DATA=1,    // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_MAIN_PIPELINE)
+    TRACK_STREAM_JOB_JPEG=2,          // compressed JPEG image waiting to be decoded (makes TRACK_STREAM_JOB_MAIN_PIPELINE)
     TRACK_STREAM_JOB_ENCODED_FRAME=3, // complete frames of H26x data waiting to be decoded
     TRACK_STREAM_JOB_SDP=4,           // SDP config
     TRACK_STREAM_JOB_RTP=5,           // RTP packets waiting to be assembled to H26x frames
@@ -42,7 +44,7 @@ typedef enum ts_queued_job_type
 } ts_queued_job_type_t;
 
 static const char *queued_job_names[]={
-    "decode_image",
+    "main_pipeline",
     "chunk_video_file",
     "decode_jpeg",
     "h26x_assembler",
@@ -92,7 +94,7 @@ typedef struct ts_queued_job ts_queued_job_t;
 
 struct ts_queued_job
 {
-    ts_queued_job_t *next;
+    work_queue_item_header wq_hdr;
     ts_queued_job_type_t type;
     double time;
     image_t *img;
@@ -103,13 +105,11 @@ struct ts_queued_job
     size_t data_len;
     simple_decoder_codec_t codec;
     float fps;
-    float start_time, end_time;
+    bool loop;
 };
 
 typedef struct track_stream_stats
 {
-    uint32_t total_queued_jobs[TRACK_STREAM_NUM_JOB_TYPES];
-    double total_runtime[TRACK_STREAM_NUM_JOB_TYPES];
     uint32_t skipped_input_image_count;
     uint32_t nonskipped_input_image_count;
     uint32_t process_inference_results_count;
@@ -126,7 +126,6 @@ struct track_stream
     void *result_callback_context;
     void (*result_callback)(void *context, track_results_t *results);
     //
-    pthread_mutex_t main_job_mutex;
     uint32_t frame_count;
     bool single_frame; // treat frame as an individual frame, not a video frame
     bool destroying;
@@ -153,12 +152,9 @@ struct track_stream
     //
     rtp_receiver_t *rtp_receiver;
     h26x_assembler_t *h26x_assembler;
-    uint64_t try_schedule_push_count, try_schedule_complete_count;
-    pthread_mutex_t input_job_mutex;
     simple_decoder_t *decoder;
-    pthread_mutex_t q_mutex;
     int queued_images;
-    ts_queued_job_t *jobs[TRACK_STREAM_NUM_JOB_TYPES];
+    work_queue_t wq[TRACK_STREAM_NUM_JOB_TYPES];
 
     track_stream_stats_t stats;
 };
@@ -189,6 +185,8 @@ void track_results_destroy(track_results_t *r)
     block_free(r);
 }
 
+static void work_queue_process_job(void *context, work_queue_item_header_t *item);
+
 track_stream_t *track_stream_create(track_shared_state_t *tss,
                                     void *result_callback_context, void (*result_callback)(void *context, track_results_t *results),
                                     const char *config_yaml)
@@ -202,9 +200,6 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     YAML::Node yaml_base=yaml_merge(tss->config_yaml, config_yaml);
     ts->config_yaml=yaml_to_cstring(yaml_base);
 
-    pthread_mutex_init(&ts->main_job_mutex, 0);
-    pthread_mutex_init(&ts->input_job_mutex, 0);
-    pthread_mutex_init(&ts->q_mutex, 0);
     ts->frame_count=0;
     ts->tss=tss;
     ts->result_callback_context=result_callback_context;
@@ -225,6 +220,11 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->tracked_object_roi=ROI_ZERO;
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     ts->taux=track_aux_create(tss);
+
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
+    {
+        work_queue_init(&ts->wq[i], tss->thread_pool, ts, work_queue_process_job, queued_job_names[i]);
+    }
     return ts;
 }
 
@@ -239,15 +239,10 @@ const char *track_stream_get_stats(track_stream_t *ts)
     YAML::Node jobs;
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
     {
-        YAML::Node job_node;
-        if (ts->stats.total_queued_jobs[i]!=0)
-        {
-            job_node["total_queued_jobs"]=ts->stats.total_queued_jobs[i];
-            job_node["total_runtime"]=ts->stats.total_runtime[i];
-            jobs[queued_job_names[i]]=job_node;
-        }
+        YAML::Node wq_node=work_queue_get_stats(&ts->wq[i]);
+        jobs[queued_job_names[i]]=wq_node;
     }
-    root["job_queues"]=jobs;
+    root["work_queues"]=jobs;
 
     YAML::Node main_processing;
     YAML::Node config_summary;
@@ -267,6 +262,14 @@ const char *track_stream_get_stats(track_stream_t *ts)
     return yaml_to_cstring(root);
 }
 
+static void destroy_wq_job(void *context, work_queue_item_header_t *item)
+{
+    ts_queued_job_t *job=(ts_queued_job_t *)item;
+    if (job->data) free(job->data);
+    if (job->img) destroy_image(job->img);
+    block_free((void *)job);
+}
+
 void track_stream_destroy(track_stream_t *ts)
 {
     if (!ts) return;
@@ -275,51 +278,18 @@ void track_stream_destroy(track_stream_t *ts)
     // first we are safe to destroy all input work
     // as long as under mutex
 
-    pthread_mutex_lock(&ts->input_job_mutex);
-    pthread_mutex_lock(&ts->q_mutex);
-    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
-    {
-        ts_queued_job_t *j=ts->jobs[i];
-        if (!j) continue;
-        ts->jobs[i]=j->next;
-        if (j->data) free(j->data);
-        if (j->img) destroy_image(j->img);
-        block_free(j);
-    }
-    pthread_mutex_unlock(&ts->q_mutex);
-    pthread_mutex_unlock(&ts->input_job_mutex);
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) work_queue_stop(&ts->wq[i]);
 
-    // now lets make sure any 'try work' functions have finished
-    // no more should be scheduled because of the above
-    while(ts->try_schedule_push_count!=ts->try_schedule_complete_count) usleep(500);
-
-    // now we are safe to destroy the main work stuff
-    // destroy the decoder first as it can be a bit annoying
-    pthread_mutex_lock(&ts->main_job_mutex);
-    pthread_mutex_lock(&ts->input_job_mutex);
     ts->destroying=true;
+
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) work_queue_destroy(&ts->wq[i], ts, destroy_wq_job);
+
     simple_decoder_t *dec=ts->decoder;
     if (dec)
     {
         ts->decoder=0;
         simple_decoder_destroy(dec);
     }
-    pthread_mutex_unlock(&ts->input_job_mutex);
-    pthread_mutex_unlock(&ts->main_job_mutex);
-
-    pthread_mutex_lock(&ts->main_job_mutex);
-    pthread_mutex_lock(&ts->q_mutex);
-    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
-    {
-        ts_queued_job_t *j=ts->jobs[i];
-        if (!j) continue;
-        ts->jobs[i]=j->next;
-        if (j->data) free(j->data);
-        if (j->img) destroy_image(j->img);
-        block_free(j);
-    }
-    pthread_mutex_unlock(&ts->q_mutex);
-    pthread_mutex_unlock(&ts->main_job_mutex);
 
     // nothing should be running now
     if (ts->rtp_receiver) rtp_receiver_destroy(ts->rtp_receiver);
@@ -332,9 +302,6 @@ void track_stream_destroy(track_stream_t *ts)
     if (ts->utrack) utrack_destroy(ts->utrack);
     ts->utrack=0;
     track_aux_destroy(ts->taux);
-    pthread_mutex_destroy(&ts->q_mutex);
-    pthread_mutex_destroy(&ts->input_job_mutex);
-    pthread_mutex_destroy(&ts->main_job_mutex);
     free((void*)ts->config_yaml);
     free(ts);
 }
@@ -353,8 +320,15 @@ static void process_results(track_stream_t *ts, track_results_t *r)
         ts->track_results_vec.push_back(r);
 }
 
+static void end_of_main_pipeline(track_stream_t *ts)
+{
+    work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+    work_queue_resume(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+}
+
 static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
 {
+    assert(ts->destroying==false);
     ts->stats.process_inference_results_count++;
     double start_time=profile_time();
 
@@ -403,15 +377,15 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     destroy_image(ts->inference_image);
     ts->inference_image=0;
     ts->stats.total_process_inference_results_time+=(profile_time()-start_time);
-
-    pthread_mutex_unlock(&ts->main_job_mutex);
-    schedule_job_run(ts);
+    input_debugf("====>main pipe done, resuming WQ");
+    end_of_main_pipeline(ts);
 }
 
 static void infer_done_callback(void *context, infer_thread_result_data_t *r)
 {
     debugf("infer_done_callback");
     track_stream_t *ts=(track_stream_t *)context;
+    assert(ts->destroying==false);
     track_shared_state_t *tss=ts->tss;
     ts->inference_detections=r->dets;
     ts->inference_roi=r->inference_roi;
@@ -420,30 +394,27 @@ static void infer_done_callback(void *context, infer_thread_result_data_t *r)
 
 void track_stream_set_minimum_frame_intervals(track_stream_t *ts, double min_process, double min_full_roi)
 {
-    pthread_mutex_lock(&ts->main_job_mutex);
+    //pthread_mutex_lock(&ts->main_job_mutex);
     ts->min_time_delta_process=min_process;
     ts->min_time_delta_full_roi=min_full_roi;
-    pthread_mutex_unlock(&ts->main_job_mutex);
+    //pthread_mutex_unlock(&ts->main_job_mutex);
 }
 
 void track_stream_enable_face_embeddings(track_stream_t *ts, bool enabled, float min_quality)
 {
-    pthread_mutex_lock(&ts->main_job_mutex);
+    //pthread_mutex_lock(&ts->main_job_mutex);
     track_aux_enable_face_embeddings(ts->taux, enabled, min_quality);
-    pthread_mutex_unlock(&ts->main_job_mutex);
+    //pthread_mutex_unlock(&ts->main_job_mutex);
 }
 
 static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_t *img, double time, bool single_frame)
 {
+    assert(ts->destroying==false);
     debugf("thread_stream_run_input_image_job run");
     track_shared_state_t *tss=ts->tss;
     int scale_w, scale_h;
     double time_delta=0;
-    if (ts->destroying)
-    {
-        destroy_image(img);
-        return;
-    }
+    input_debugf("====> running main pipe here");
     if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
 
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
@@ -463,8 +434,8 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         r->time=time;
         ts->stats.skipped_input_image_count++;
         process_results(ts, r);
-        pthread_mutex_unlock(&ts->main_job_mutex);
-        schedule_job_run(ts);
+        input_debugf("====>main pipe done (skip), resuming WQ");
+        end_of_main_pipeline(ts);
         return;
     }
 
@@ -479,7 +450,6 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     image_check(image_scaled);
     image_check(img);
     destroy_image(img);
-    assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
     assert(ts->destroying==false);
     if (single_frame)
         motion_track_reset(ts->mt);
@@ -512,9 +482,8 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         ts->last_run_time=time;
         ts->last_skip=true;
         process_results(ts, r);
-        assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
-        pthread_mutex_unlock(&ts->main_job_mutex);
-        schedule_job_run(ts);
+        input_debugf("====>main pipe done (skip2) resuming WQ");
+        end_of_main_pipeline(ts);
         return;
     }
     ts->last_skip=false;
@@ -533,28 +502,15 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     ts->inference_image=image_scaled;
     infer_thread_infer_async_callback(tss->infer_thread[INFER_THREAD_DETECTION], image_scaled, expanded_roi, infer_done_callback, ts);
     ts->stats.total_run_input_image_time+=(profile_time()-start_time);
-    assert(0!=pthread_mutex_trylock(&ts->main_job_mutex));
 }
 
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
 {
-    int wait=100;
-    while(1)
-    {
-        pthread_mutex_lock(&ts->input_job_mutex);
-        pthread_mutex_lock(&ts->q_mutex);
-        bool ok=true;
-        for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) ok&=(ts->jobs[i]==0);
-        pthread_mutex_unlock(&ts->q_mutex);
-        pthread_mutex_unlock(&ts->input_job_mutex);
-        if (ok) break;
-        usleep(wait);
-        wait=std::min(5000, wait*2);
-    }
-    pthread_mutex_lock(&ts->main_job_mutex);
+    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) work_queue_sync(&ts->wq[i]);
+    //pthread_mutex_lock(&ts->main_job_mutex);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();
-    pthread_mutex_unlock(&ts->main_job_mutex);
+    //pthread_mutex_unlock(&ts->main_job_mutex);
     return ret;
 }
 
@@ -563,8 +519,6 @@ void track_shared_state_configure_inference(track_shared_state_t *tss, infer_con
     if (!tss || !config) return;
     infer_thread_configure(tss->infer_thread[INFER_THREAD_DETECTION], config);
 }
-
-static void track_stream_try_process_jobs(track_stream_t *ts);
 
 static ts_queued_job_t *ts_queued_job_create()
 {
@@ -576,34 +530,21 @@ static ts_queued_job_t *ts_queued_job_create()
 
 static void track_stream_queue_job(track_stream_t *ts, ts_queued_job_t *new_job)
 {
-    pthread_mutex_lock(&ts->q_mutex);
-    ts->stats.total_queued_jobs[(int)new_job->type]++;
-    ts_queued_job_t **q=&ts->jobs[(int)new_job->type];
-    ts_queued_job_t *job=*q;
-    input_debugf("Queue input job type %d",new_job->type);
-    if (job==0)
-        *q=new_job;
-    else
+    work_queue_add_job(&ts->wq[(int)new_job->type], (work_queue_item_header_t *)new_job);
+
+    if (new_job->type==TRACK_STREAM_JOB_MAIN_PIPELINE)
     {
-        while(job->next!=0) job=job->next;
-        job->next=new_job;
+        if (work_queue_length(&ts->wq[new_job->type])>2)
+        {
+            input_debugf("==pausing video data queue===");
+            work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+        }
     }
-    if (new_job->type==TRACK_STREAM_JOB_IMAGE) ts->queued_images++;
-    pthread_mutex_unlock(&ts->q_mutex);
-    schedule_job_run(ts);
 }
 
 static void track_stream_queue_job_head(track_stream_t *ts, ts_queued_job_t *new_job)
 {
-    pthread_mutex_lock(&ts->q_mutex);
-    ts_queued_job_t **q=&ts->jobs[(int)new_job->type];
-    ts_queued_job_t *job=*q;
-    input_debugf("Queue input job type %d",new_job->type);
-    *q=new_job;
-    new_job->next=job;
-    if (new_job->type==TRACK_STREAM_JOB_IMAGE) ts->queued_images++;
-    pthread_mutex_unlock(&ts->q_mutex);
-    schedule_job_run(ts);
+    work_queue_add_job_head(&ts->wq[(int)new_job->type], (work_queue_item_header_t *)new_job);
 }
 
 static void decoder_process_image(void *context, image_t *img)
@@ -611,7 +552,7 @@ static void decoder_process_image(void *context, image_t *img)
     track_stream_t *ts=(track_stream_t *)context;
     if (ts->destroying) return;
     ts_queued_job_t *job=ts_queued_job_create();
-    job->type=TRACK_STREAM_JOB_IMAGE;
+    job->type=TRACK_STREAM_JOB_MAIN_PIPELINE;
     job->img=image_reference(img);
     job->time=img->time;
     job->single_frame=false;
@@ -653,199 +594,145 @@ static void h26x_frame_callback(void *context, const h26x_frame_descriptor_t *de
     track_stream_queue_job(ts, job);
 }
 
-static void track_stream_try_process_jobs(track_stream_t *ts)
+static void work_queue_process_job(void *context, work_queue_item_header_t *item)
 {
-    while(1)
+    track_stream_t *ts=(track_stream_t *)context;
+    ts_queued_job_t *job=(ts_queued_job_t *)item;
+    block_check(job);
+    switch(job->type)
     {
-        for(int t=0;t<TRACK_STREAM_NUM_JOB_TYPES;t++)
+        case TRACK_STREAM_JOB_MAIN_PIPELINE:
         {
-            if (ts->jobs[t]==0) continue;
-            input_debugf("Loop type %d",t);
-            if (t>0 && ts->queued_images>2) continue;
-            pthread_mutex_t *mut=(t==0) ? &ts->main_job_mutex : &ts->input_job_mutex;
-
-            if (0!=pthread_mutex_trylock(mut))
+            track_shared_state_t *tss=ts->tss;
+            image_t *img=job->img;
+            double time=job->time;
+            bool single_frame=job->single_frame;
+            block_free(job);
+            input_debugf("=====> running main decoder job\n");
+            assert(ts->destroying==false);
+            // stop further jobs running until main pipeline finished for this input
+            work_queue_pause(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], true /*also 'lock' prevents destroy whilst running*/);
+            tss->thread_pool->push(thread_stream_run_input_image_job, ts, img, time, single_frame);
+            break;
+        }
+        case TRACK_STREAM_JOB_VIDEO_DATA:
+        {
+            track_shared_state_t *tss=ts->tss;
+            input_debugf("running input video data job");
+            assert(ts->destroying==false);
+            if (ts->decoder==0)
             {
-                input_debugf("Mutex is locked");
-                continue; // come back later, already busy
+                ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
+                simple_decoder_set_framerate(ts->decoder, job->fps);
+                simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
             }
 
-            if (ts->destroying)
-            {
-                pthread_mutex_unlock(mut);
-                continue;
-            }
+            size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
+            //
+            input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
+            simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
+            job->data_offset+=data_len;
 
-            input_debugf("Processing type %d",t);
-            pthread_mutex_lock(&ts->q_mutex);
-            ts_queued_job_t **q=&ts->jobs[t];
-            ts_queued_job_t *job=*q;
-            if (job!=0)
-                *q=job->next;
+            if (job->data_offset<job->data_len)
+            {
+                // requeue remaining video data
+                track_stream_queue_job_head(ts, job);
+            }
+            else if (job->loop)
+            {
+                job->data_offset=0;
+                log_info("video loop");
+                track_stream_queue_job_head(ts, job);
+            }
             else
-                *q=0;
-            if (t==TRACK_STREAM_JOB_IMAGE) ts->queued_images--;
-            pthread_mutex_unlock(&ts->q_mutex);
-            if (job==0)
             {
-                //input_debugf("track_stream_try_process_input_jobs - no job");
-                pthread_mutex_unlock(mut);
-                continue;
+                free(job->data);
+                input_debugf("free job1");
+                block_free(job);
+                input_debugf("free job2");
             }
-            job->next=0;
-            double start_time=profile_time();
-
-            switch(job->type)
+            //input_debugf("running input video data job done");
+            break;
+        }
+        case TRACK_STREAM_JOB_JPEG:
+        {
+            image_t *img=decode_jpeg(job->data, job->data_len);
+            free(job->data);
+            if (!img)
             {
-                case TRACK_STREAM_JOB_IMAGE:
+                img=create_image(128, 128, IMAGE_FORMAT_YUV420_DEVICE);
+                // fixme - we need to always give a results callback for jpeg even if corrupt/missing/...
+                // better to explicitly flag this
+            }
+            // queue decoded image for further processing
+            ts_queued_job_t *out_job=ts_queued_job_create();
+            out_job->type=TRACK_STREAM_JOB_MAIN_PIPELINE;
+            out_job->img=img;
+            out_job->time=job->time;
+            out_job->single_frame=true;
+            block_free(job);
+            track_stream_queue_job(ts, out_job);
+            break;
+        }
+        case TRACK_STREAM_JOB_ENCODED_FRAME:
+        {
+            if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
+            free(job->data);
+            block_free(job);
+            break;
+        }
+        case TRACK_STREAM_JOB_SDP:
+        {
+            track_shared_state_t *tss=ts->tss;
+            if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
+            set_sdp_t sdp;
+            memset(&sdp, 0, sizeof(set_sdp_t));
+            if (0==rtp_receiver_set_sdp(ts->rtp_receiver, (const char *)job->data, &sdp))
+            {
+                if (sdp.is_h264 || sdp.is_h265)
                 {
-                    track_shared_state_t *tss=ts->tss;
-                    image_t *img=job->img;
-                    double time=job->time;
-                    bool single_frame=job->single_frame;
-                    block_free(job);
-                    input_debugf("=====> running main decoder job\n");
-                    assert(ts->destroying==false);
-                    ts->stats.total_runtime[(int)job->type]+=(profile_time()-start_time);
-                    tss->thread_pool->push(thread_stream_run_input_image_job, ts, img, time, single_frame);
-                    continue; // we DON'T unlock the mutex here, it's held until inference/tracking complete
+                    if (ts->h26x_assembler)  h26x_assembler_destroy(ts->h26x_assembler);
+                    ts->h26x_assembler=h26x_assembler_create(sdp.is_h264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
+                                                                ts, h26x_frame_callback);
+                    if (ts->decoder) simple_decoder_destroy(ts->decoder);
+                    ts->decoder=simple_decoder_create(ts, decoder_process_image, sdp.is_h264 ? SIMPLE_DECODER_CODEC_H264 : SIMPLE_DECODER_CODEC_H265);
+                    simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
                 }
-                case TRACK_STREAM_JOB_VIDEO_DATA:
+                else // TODO: OPUS
                 {
-                    track_shared_state_t *tss=ts->tss;
-                    input_debugf("running input video data job");
-                    assert(ts->destroying==false);
-                    if (ts->decoder==0)
-                    {
-                        ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
-                        simple_decoder_set_framerate(ts->decoder, job->fps);
-                        simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
-                        if (job->end_time!=0) simple_decoder_set_max_time(ts->decoder, job->end_time);
-                    }
-
-                    uint64_t decoded_frames=ts->decoded_frames;
-                    for (int i=0;i<32;i++)
-                    {
-                        size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
-                        //
-                        input_debugf("Decode video %d/%d",(int)job->data_offset,(int)job->data_len);
-                        simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
-                        job->data_offset+=data_len;
-                        if (ts->decoded_frames!=decoded_frames) break;
-                    }
-
-                    if (job->data_offset<job->data_len)
-                    {
-                        // requeue remaining video data
-                        track_stream_queue_job_head(ts, job);
-                    }
-                    else
-                    {
-                        free(job->data);
-                        block_free(job);
-                    }
-                    //input_debugf("running input video data job done");
-                    break;
-                }
-                case TRACK_STREAM_JOB_JPEG:
-                {
-                    image_t *img=decode_jpeg(job->data, job->data_len);
-                    free(job->data);
-                    if (!img)
-                    {
-                        img=create_image(128, 128, IMAGE_FORMAT_YUV420_DEVICE);
-                        // fixme - we need to always give a results callback for jpeg even if corrupt/missing/...
-                        // better to explicitly flag this
-                    }
-                    // queue decoded image for further processing
-                    ts_queued_job_t *out_job=ts_queued_job_create();
-                    out_job->type=TRACK_STREAM_JOB_IMAGE;
-                    out_job->img=img;
-                    out_job->time=job->time;
-                    out_job->single_frame=true;
-                    block_free(job);
-                    track_stream_queue_job(ts, out_job);
-                    break;
-                }
-                case TRACK_STREAM_JOB_ENCODED_FRAME:
-                {
-                    if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
-                    free(job->data);
-                    block_free(job);
-                    break;
-                }
-                case TRACK_STREAM_JOB_SDP:
-                {
-                    track_shared_state_t *tss=ts->tss;
-                    if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
-                    set_sdp_t sdp;
-                    memset(&sdp, 0, sizeof(set_sdp_t));
-                    if (0==rtp_receiver_set_sdp(ts->rtp_receiver, (const char *)job->data, &sdp))
-                    {
-                        if (sdp.is_h264 || sdp.is_h265)
-                        {
-                            if (ts->h26x_assembler)  h26x_assembler_destroy(ts->h26x_assembler);
-                            ts->h26x_assembler=h26x_assembler_create(sdp.is_h264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
-                                                                     ts, h26x_frame_callback);
-                            if (ts->decoder) simple_decoder_destroy(ts->decoder);
-                            ts->decoder=simple_decoder_create(ts, decoder_process_image, sdp.is_h264 ? SIMPLE_DECODER_CODEC_H264 : SIMPLE_DECODER_CODEC_H265);
-                            simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
-                        }
-                        else // TODO: OPUS
-                        {
-                            log_error("SDP configured is not H264/H265");
-                        }
-                    }
-                    else
-                    {
-                        log_error("rtp_receiver_set_sdp failed");
-                    }
-                    free(job->data);
-                    block_free(job);
-                    break;
-                }
-                case TRACK_STREAM_JOB_RTP:
-                {
-                    if (ts->rtp_receiver)
-                    {
-                        int offs=0;
-                        while(offs<job->data_len)
-                        {
-                            uint32_t len=*((uint32_t *)(job->data+offs));
-                            offs+=4;
-                            assert(offs+len<=job->data_len);
-                            rtp_receiver_add_packet(ts->rtp_receiver, job->data+offs, len);
-                        }
-                    }
-                    free(job->data);
-                    block_free(job);
-                    break;
-                }
-                default:
-                {
-                    break;
+                    log_error("SDP configured is not H264/H265");
                 }
             }
-            ts->stats.total_runtime[(int)job->type]+=(profile_time()-start_time);
-
-            pthread_mutex_unlock(mut);
-        } // job type loop
-
-        break;
+            else
+            {
+                log_error("rtp_receiver_set_sdp failed");
+            }
+            free(job->data);
+            block_free(job);
+            break;
+        }
+        case TRACK_STREAM_JOB_RTP:
+        {
+            if (ts->rtp_receiver)
+            {
+                int offs=0;
+                while(offs<job->data_len)
+                {
+                    uint32_t len=*((uint32_t *)(job->data+offs));
+                    offs+=4;
+                    assert(offs+len<=job->data_len);
+                    rtp_receiver_add_packet(ts->rtp_receiver, job->data+offs, len);
+                }
+            }
+            free(job->data);
+            block_free(job);
+            break;
+        }
+        default:
+        {
+            break;
+        }
     }
-    (void)__atomic_add_fetch(&ts->try_schedule_complete_count, 1, __ATOMIC_RELAXED);
-}
-
-static void track_stream_try_process_jobs_id(int id, track_stream_t *ts)
-{
-    track_stream_try_process_jobs(ts);
-}
-
-static void schedule_job_run(track_stream_t *ts)
-{
-    track_shared_state_t *tss=ts->tss;
-    (void)__atomic_add_fetch(&ts->try_schedule_push_count, 1, __ATOMIC_RELAXED);
-    tss->thread_pool->push(track_stream_try_process_jobs_id, ts);
 }
 
 static void do_track_stream_run(track_stream_t *ts, image_t *img, double time, bool single_frame)
@@ -855,7 +742,7 @@ static void do_track_stream_run(track_stream_t *ts, image_t *img, double time, b
         usleep(1000); // backpressure
     }
     ts_queued_job_t *job=ts_queued_job_create();
-    job->type=TRACK_STREAM_JOB_IMAGE;
+    job->type=TRACK_STREAM_JOB_MAIN_PIPELINE;
     job->img=image_reference(img);
     job->time=time;
     job->single_frame=single_frame;
@@ -888,7 +775,7 @@ static void track_run_video_process_image(void *context, image_t *img)
 extern float file_decoder_parse_fps(const char *s);
 extern simple_decoder_codec_t file_decoder_parse_codec(const char *file);
 
-void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time)
+void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_decoder_codec_t codec, double video_fps, bool loop_forever)
 {
     if (codec==SIMPLE_DECODER_CODEC_UNKNOWN)
     {
@@ -942,8 +829,7 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
     job->data_len=sz;
     job->codec=codec;
     job->fps=video_fps;
-    job->start_time=start_time;
-    job->end_time=end_time;
+    job->loop=loop_forever;
     track_stream_queue_job(ts, job);
 }
 

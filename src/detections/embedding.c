@@ -11,7 +11,7 @@
 #include "maths_stuff.h"
 
 static std::once_flag initFlag;
-static block_allocator_t *embedding_allocator;
+static block_allocator_t *embedding_allocator[4];
 
 struct embedding
 {
@@ -32,9 +32,14 @@ using embedding_t = embedding;
 /*------------------------------------------------------------*/
 static void embedding_init()
 {
-    embedding_allocator =
-        block_allocator_create("embedding",
-                               sizeof(embedding_t) + 128 * sizeof(float));
+    for(int i=0;i<4;i++)
+    {
+        char name[128];
+        int size=128*(i+1);
+        sprintf(name, "embedding_%d",size);
+        embedding_allocator[i] = block_allocator_create(strdup(name), sizeof(embedding_t) + size * sizeof(float));
+
+    }
 }
 
 /*------------------------------------------------------------*/
@@ -43,9 +48,13 @@ embedding_t *embedding_create(int size, double time)
     std::call_once(initFlag, embedding_init);
 
     /* raw storage */
+
+    int alloc_size=(size+127)&(~127);
+    int allocator=std::max(0, std::min(3, (alloc_size>>7)-1));
+
     embedding_t *e = static_cast<embedding_t *>(
-        block_alloc(embedding_allocator,
-                    sizeof(embedding_t) + size * sizeof(float)));
+        block_alloc(embedding_allocator[allocator],
+                    sizeof(embedding_t) + alloc_size * sizeof(float)));
 
     /* zero everything so POD fields start clean */
     memset(e, 0, sizeof(embedding_t));

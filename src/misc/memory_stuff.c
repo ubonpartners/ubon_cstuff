@@ -416,6 +416,11 @@ void *block_alloc(block_allocator_t *ba) {
     return (void*)((uint8_t*)bh + sub_hdr_sz);
 }
 
+size_t block_allocator_block_size(block_allocator_t *ba)
+{
+    return ba->block_size;
+}
+
 void *block_reference(void *block) {
     if (!block) return NULL;
     block_header_t *bh = (block_header_t*)((uint8_t*)block - sizeof(block_header_t));

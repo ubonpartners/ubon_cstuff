@@ -116,7 +116,7 @@ static void *run_track_worker(void *arg) {
     // decode_file continues (looping if necessary) until 'stop callback'
     //decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
 
-    for(int i=0;i<10;i++) track_stream_run_video_file(s.ts, args->video_file_filename, SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f);
+    track_stream_run_video_file(s.ts, args->video_file_filename, SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f, true);
     while(keep_running) usleep(30000);
 
     pthread_mutex_lock(args->lock);
@@ -284,20 +284,21 @@ int main(int argc, char *argv[]) {
     for(int i=0;i<64;i++) config[i]=dconfig;
     int nconfig;
 
+    for(int i=0;i<2;i++)
+    {
+        if (i==0) config[nconfig].num_threads=1;
+        config[nconfig].testset="Basic tests test";
+        config[nconfig].input_clip = &clips[0];
+        sprintf(config[nconfig++].name, "%s, %d threads",clips[0].friendly_name, config[nconfig].num_threads);
+    }
+
     for(int i=0;i<8;i++)
     {
         static float q[4]={1.0, 0.1, 0.01, 0};
         config[nconfig].testset="Vary face embeddings";
-        config[nconfig].input_clip = &clips[7];//i/4];
+        config[nconfig].input_clip = &clips[i/4];
         config[nconfig].face_embedding_min_quality=q[i%4];
         sprintf(config[nconfig++].name, "FaceQ %s:%.3f",clips[i/4].friendly_name,q[i%4]);
-    }
-
-    {
-        config[nconfig].testset="Single test UK OF 1512p H265";
-        config[nconfig].input_clip = &clips[12];
-        config[nconfig].num_threads=1;
-        sprintf(config[nconfig++].name, "%s",clips[12].friendly_name);
     }
 
     if (platform_is_jetson()==false)

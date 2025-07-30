@@ -72,7 +72,7 @@ static void nvof_set_size(nvof_t *v, int width, int height)
 {
     if (v->width==width && v->height==height) return;
 
-    log_trace("NVOF resize to %dx%d nv12:%d",width,height,v->use_nv12);
+    //log_trace("NVOF resize to %dx%d nv12:%d",width,height,v->use_nv12);
 
     destroy_nvof_buffer(v, &v->inputFrame);
     destroy_nvof_buffer(v, &v->referenceFrame);

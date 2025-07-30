@@ -41,6 +41,8 @@ typedef struct infer_thread_stats
     float total_roi_area;
     float mean_batch_size;
     float mean_roi_area;
+    double total_queue_time;
+    double max_queue_time;
 } infer_thread_stats_t;
 
 typedef struct infer_thread_result_data

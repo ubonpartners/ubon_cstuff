@@ -674,8 +674,8 @@ public:
             track_stream_run_single_frame(stream, img->raw());
     }
 
-    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, double start_time, double end_time) {
-        track_stream_run_video_file(stream, file, codec, video_fps, start_time, end_time);
+    void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, bool loop_forever) {
+        track_stream_run_video_file(stream, file, codec, video_fps, loop_forever);
     }
 
     std::vector<py::dict> get_results() {
@@ -949,16 +949,6 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
         .def("run_on_video_file", &c_track_stream::run_on_video_file)
-        // Async version: GIL is released during execution
-        .def("run_on_video_file_async", [](c_track_stream &self,
-                                   const std::string &file,
-                                   simple_decoder_codec_t codec,
-                                   double video_fps,
-                                   double start_time,
-                                   double end_time) {
-            py::gil_scoped_release release;
-            self.run_on_video_file(file.c_str(), codec, video_fps, start_time, end_time);
-        })
         .def("get_results", &c_track_stream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")

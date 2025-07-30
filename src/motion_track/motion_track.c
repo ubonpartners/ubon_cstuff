@@ -40,6 +40,7 @@ struct motion_track
     roi_t roi;
     bool scene_change;
     bool generate_of_results;
+    bool destroyed;
     of_results_t of_results;
     #ifdef NVOF_SUPPORTED
     nvof_t *nvof;
@@ -77,6 +78,7 @@ motion_track_t *motion_track_create(const char *yaml_config)
 void motion_track_destroy(motion_track_t *mt)
 {
     if (!mt) return;
+    mt->destroyed=true;
     cuda_free(mt->noise_floor_device);
     cuda_free(mt->row_masks_device);
     cuda_free_host(mt->row_masks_host);
@@ -318,6 +320,9 @@ roi_t motion_track_get_roi(motion_track_t *mt)
 
 void motion_track_set_roi(motion_track_t *mt, roi_t roi)
 {
+    assert(mt!=0);
+    assert(mt->destroyed==false);
+
     float a=roi_area(&roi);
     debugf("Mt set roi area %f\n",a);
 

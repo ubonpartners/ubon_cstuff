@@ -27,6 +27,7 @@ typedef struct infer_job {
     infer_thread_result_handle_t *handle;
     void (*callback)(void *context, infer_thread_result_data_t *rd);
     void *callback_context;
+    double enqueue_time;
     struct infer_job *next;
 } infer_job_t;
 
@@ -137,6 +138,12 @@ static void *infer_thread_fn(void *arg)
         h->stats.total_batches++;
         h->stats.total_images+=count;
         double infer_start_time=profile_time();
+        for(int i=0;i<count;i++)
+        {
+            double queue_time=infer_start_time-jobs[i]->enqueue_time;
+            h->stats.total_queue_time+=queue_time;
+            h->stats.max_queue_time=std::max(queue_time, h->stats.max_queue_time);
+        }
 
         if (h->type==INFER_THREAD_DETECTION)
         {
@@ -341,6 +348,7 @@ static void infer_thread_infer_enqueue_job(infer_thread_t *h, infer_job_t *job)
         // First job in the queue
         h->job_head = h->job_tail = job;
     }
+    job->enqueue_time=profile_time();
     pthread_cond_signal(&h->queue_cond);
     pthread_mutex_unlock(&h->queue_mutex);
 }
@@ -420,6 +428,7 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
     job->roi = roi;
     job->handle = handle;
     job->next = NULL;
+    job->enqueue_time=profile_time();
 
     // Enqueue the job
     pthread_mutex_lock(&h->queue_mutex);
@@ -508,6 +517,8 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
     root["total_roi_area"]  = ss.total_roi_area;
     root["mean_batch_size"] = ss.mean_batch_size;
     root["mean_roi_area"]   = ss.mean_roi_area;
+    root["avg_queue_time"]  = ss.total_queue_time/(ss.total_images+1e-7);
+    root["max_queue_time"]  = ss.max_queue_time;
 
     YAML::Node histogram;
     for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {
@@ -515,8 +526,8 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
             YAML::Node entry;
             entry["batch_size"]       = i;
             entry["count"]            = ss.batch_size_histogram[i];
-            entry["time_per_infer_ms"]= ss.batch_size_histogram_time_per_inference[i] * 1000.0;
-            entry["time_per_img_ms"]  = (ss.batch_size_histogram_time_per_inference[i] * 1000.0) / i;
+            entry["avg_time_per_infer"]= ss.batch_size_histogram_time_per_inference[i];
+            entry["avg_time_per_img"]  = (ss.batch_size_histogram_time_per_inference[i]) / i;
             histogram.push_back(entry);
         }
     }
