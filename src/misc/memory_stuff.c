@@ -53,6 +53,7 @@ struct block_allocator {
     pthread_mutex_t lock;
     size_t total_big_blocks;
     size_t free_big_blocks;
+    size_t high_watermark_allocated_blocks;
     size_t allocated_blocks;
     size_t high_watermark_big_blocks;
     size_t total_variable_blocks;
@@ -230,7 +231,7 @@ char *allocation_tracker_stats(void)
                     (unsigned long long)e.block_allocator->allocated_blocks,
                     (unsigned long long)e.block_allocator->total_big_blocks,
                     (unsigned long long)e.block_allocator->free_big_blocks,
-                    (unsigned long long)e.block_allocator->high_watermark_big_blocks,
+                    (unsigned long long)e.block_allocator->high_watermark_allocated_blocks,
                     (unsigned long long)e.block_allocator->total_variable_blocks,
                     (unsigned long long)e.block_allocator->total_variable_memory,
                     (unsigned long long)e.block_allocator->total_variable_memory_hwm
@@ -277,6 +278,7 @@ YAML::Node allocation_tracker_stats_node() {
             node["total_big_blocks"]             = e.block_allocator->total_big_blocks;
             node["free_big_blocks"]              = e.block_allocator->free_big_blocks;
             node["high_watermark_big_blocks"]    = e.block_allocator->high_watermark_big_blocks;
+            node["high_watermark_blocks"]        = e.block_allocator->high_watermark_allocated_blocks;
             node["total_variable_blocks"]        = e.block_allocator->total_variable_blocks;
             node["total_variable_memory_bytes"]  = e.block_allocator->total_variable_memory;
             node["total_variable_memory_hwm"]    = e.block_allocator->total_variable_memory_hwm;
@@ -416,6 +418,7 @@ void *block_alloc(block_allocator_t *ba) {
     bh->callback_context = NULL;
 
     ba->allocated_blocks++;
+    if (ba->allocated_blocks>ba->high_watermark_allocated_blocks) ba->high_watermark_allocated_blocks=ba->allocated_blocks;
     pthread_mutex_unlock(&ba->lock);
     return (void*)((uint8_t*)bh + sub_hdr_sz);
 }

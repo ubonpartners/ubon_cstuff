@@ -206,7 +206,11 @@ static void run_one_test(test_config_t *config)
     //printf("MACROS %f SEC %d / %f rate %f 720; %f\n", (double)total_decoded_macroblocks, config->duration_sec, elapsed, config->mbps, config->mbps/3600.0);
     //printf("%40s: %.2f (total) %.2f (nonskip)\n", config->filename, avg_fps, avg_fps_nonskipped);
 
+    const char *platform_stats=platform_get_stats();
+    printf("======== PLATFORM STATS ===========\n");
+    printf("%s\n",platform_stats);
     const char *stats=track_shared_state_get_stats(shared_state);
+    printf("======== SHARED TRACK STATS ===========\n");
     printf("%s\n\n",stats);
     free((void*)stats);
     track_shared_state_destroy(shared_state);
