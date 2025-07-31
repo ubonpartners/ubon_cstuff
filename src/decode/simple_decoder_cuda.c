@@ -29,8 +29,6 @@ struct simple_decoder
     void *context;
     image_format_t output_format;
     double time;
-    double time_increment;
-    double max_time;
     bool destroyed;
     bool use_frame_times;
     bool low_latency;
@@ -132,11 +130,6 @@ static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicPara
     return 1;
 }
 
-void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
-{
-    dec->time_increment=1.0/fps;
-}
-
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
     debugf("Handle picture display");
@@ -154,21 +147,17 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     videoProcessingParameters.unpaired_field = pDispInfo->repeat_first_field < 0;
     unsigned int pitch;
 
-    if (dec->use_frame_times)
-    {
-        dec->time=pDispInfo->timestamp/90000.0;
-        assert(dec->time_increment==0);  // EITHER set time for each frame or use auto incrementing 'fixed framerate'
-    }
+    double time=pDispInfo->timestamp/90000.0;
 
-    bool skip=(dec->max_time>=0)&&(dec->time>dec->max_time);
+    bool skip=false;
 
     if (dec->constraint_min_time_delta!=0)
     {
-        float delta=dec->time-dec->last_output_time;
+        float delta=time-dec->last_output_time;
         if ((delta>10.0)||(delta<0))
         {
-            log_error("decoder time constraint unexpected delta %f->%f; restting",dec->last_output_time,dec->time);
-            dec->last_output_time=dec->time;
+            log_error("decoder time constraint unexpected delta %f->%f; restting",dec->last_output_time,time);
+            dec->last_output_time=time;
             dec->stats_output_time_reset++;
         }
         else
@@ -176,13 +165,12 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
             skip|=(delta<dec->constraint_min_time_delta);
         }
     }
-    if (!skip) dec->last_output_time=dec->time;
+    if (!skip) dec->last_output_time=time;
 
     if (skip)
     {
         // early return if the frame not needed, avoid a lot of work
         dec->stats_frames_output_skipped++;
-        dec->time+=dec->time_increment;
         return 1;
     }
 
@@ -200,7 +188,6 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         log_error("Cuda decoder error %d",(int)decodeStatus.decodeStatus);
         // un-concealable decoder error
         dec->stats_unconcealable_decode_errors++;
-        dec->time+=dec->time_increment;
         CHECK_CUDA_CALL(cuvidUnmapVideoFrame(dec->decoder, decodedFrame));
         return 1;
     }
@@ -233,7 +220,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         out_img=image_convert(dec_img, dec->output_format);
         image_sync(out_img);
     }
-    out_img->meta.time=dec->time;
+    out_img->meta.time=time;
     out_img->meta.capture_realtime=profile_time();
     out_img->meta.flags=MD_CAPTURE_REALTIME_SET;
 
@@ -242,7 +229,6 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     {
         FILE_TRACE("Simple decoder %dx%d fmt %d TS %f hash %lx",out_img->width,out_img->height,out_img->format,out_img->meta.time,(out_img==0) ? 0 : image_hash(out_img));
     }
-    dec->time+=dec->time_increment;
 
     image_t *scaled_out_img=0;
     if (dec->constraint_max_width!=0 && dec->constraint_max_height!=0) {
@@ -280,10 +266,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->target_height=0;
     dec->out_width=1280;
     dec->out_height=720;
-    dec->time_increment=0;//3003.0/90000.0; // in seconds
     dec->low_latency=low_latency;
-    dec->time=0;
-    dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
     dec->codec=codec;
     dec->last_output_time=-5.0;
@@ -341,17 +324,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         dec->use_frame_times=false;
     }
     dec->stats_bytes_decoded+=data_size;
-    if (dec->max_time>=0)
-    {
-        double time=dec->time/90000.0;
-        if (time>dec->max_time) return;
-    }
     CHECK_CUDA_CALL(cuvidParseVideoData(dec->videoParser, &packet));
-}
-
-void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
-{
-    dec->max_time=max_time;
 }
 
 void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int max_height, double min_time_delta)

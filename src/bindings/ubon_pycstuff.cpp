@@ -519,10 +519,6 @@ class c_decoder {
             if (dec) simple_decoder_destroy(dec);
         }
 
-        void set_framerate(double fps) {
-            simple_decoder_set_framerate(dec, fps);
-        }
-
         py::list decode(py::bytes bitstream) {
             current_output.clear();
 
@@ -959,8 +955,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
 
     py::class_<c_decoder, std::shared_ptr<c_decoder>>(m, "c_decoder")
         .def(py::init<simple_decoder_codec_t>())
-        .def("decode", &c_decoder::decode, py::arg("bitstream"))
-        .def("set_framerate", &c_decoder::set_framerate, py::arg("framerate"));
+        .def("decode", &c_decoder::decode, py::arg("bitstream"));
 
     py::class_<c_nvof, std::shared_ptr<c_nvof>>(m, "c_nvof")
         .def(py::init<int, int>(), py::arg("width"), py::arg("height"))

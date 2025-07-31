@@ -452,7 +452,7 @@ static void *dec_capture_loop_fn(void *arg)
             //tv.tv_usec = (suseconds_t)((t - buf.timestamp.tv_sec) * 1e6);
             //printf("2tv_sec = %ld, tv_usec = %ld\n",
             //    (long)tv.tv_sec, (long)tv.tv_usec);
-            
+
             double time_in_seconds =(double)v4l2_buf.timestamp.tv_sec +
                                     (double)v4l2_buf.timestamp.tv_usec*0.000001;
 
@@ -613,7 +613,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         memset(&v4l2_buf, 0, sizeof(v4l2_buf));
         memset(planes, 0, sizeof(planes));
         v4l2_buf.m.planes = planes;
-    
+
         if(ctx->nr_output < ctx->cfg.out_plane_nrbuffer) {
             buffer = ctx->dec->output_plane.getNthBuffer(ctx->nr_output);
             v4l2_buf.index = ctx->nr_output;
@@ -659,9 +659,6 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     return;
 }
 
-void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
-{
-}
 
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
 {
@@ -674,10 +671,6 @@ void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int m
     dec->constraint_max_width=max_width;
     dec->constraint_max_height=max_height;
     dec->constraint_min_time_delta=min_time_delta;
-}
-
-void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
-{
 }
 
 YAML::Node simple_decoder_get_stats(simple_decoder *dec)
