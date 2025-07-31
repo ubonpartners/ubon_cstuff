@@ -16,6 +16,7 @@
 #include "simple_decoder.h"
 #include "cuda_stuff.h"
 #include "yaml_stuff.h"
+#include "profile.h"
 
 #define debugf if (0) log_info
 
@@ -79,9 +80,6 @@ struct simple_decoder
     int out_height;
 
     image_format_t output_format;
-    double time;
-    double time_increment;
-    double max_time;
     void *context;
     void (*frame_callback)(void *context, image_t *decoded_frame);
 
@@ -91,6 +89,8 @@ struct simple_decoder
     int scaled_width, scaled_height;
     double last_output_time;
 
+    uint32_t stats_num_output_surf;
+    uint32_t stats_num_decode_calls;
     uint32_t stats_output_time_reset;
     uint32_t stats_frames_output_skipped;
     uint64_t stats_bytes_decoded;
@@ -257,7 +257,7 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     /* Request, Query and export (min + 5) decoder capture plane buffers.
        Refer ioctl VIDIOC_REQBUFS, VIDIOC_QUERYBUF and VIDIOC_EXPBUF */
     ret = dec->capture_plane.setupPlane(V4L2_MEMORY_MMAP,
-                                       min_dec_capture_buffers + 2, false,
+                                       min_dec_capture_buffers + 1, false,
                                        false);
     CHECK_ERROR(ret < 0, "Error in decoder capture plane setup");
     ctx->cfg.cap_plane_nrbuffer = dec->capture_plane.getNumBuffers();
@@ -314,17 +314,17 @@ extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
                               image_t      *img,
                               CUstream      stream );
 
-static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
+static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer, double time)
 {
     bool skip=false;
-    debugf("Process nvbuffer time %f",ctx->time);
+    debugf("Process nvbuffer time %f",time);
     if (ctx->constraint_min_time_delta!=0)
     {
-        float delta=ctx->time-ctx->last_output_time;
+        float delta=time-ctx->last_output_time;
         if ((delta>10.0)||(delta<0))
         {
-            log_error("decoder time constraint unexpected delta %f->%f; restting",ctx->last_output_time,ctx->time);
-            ctx->last_output_time=ctx->time;
+            log_error("decoder time constraint unexpected delta %f->%f; restting",ctx->last_output_time,time);
+            ctx->last_output_time=time;
             ctx->stats_output_time_reset++;
         }
         else
@@ -332,13 +332,11 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
             skip|=(delta<ctx->constraint_min_time_delta);
         }
     }
-    if (!ctx) ctx->last_output_time=ctx->time;
 
     if (skip)
     {
         // early return if the frame not needed, avoid a lot of work
         ctx->stats_frames_output_skipped++;
-        ctx->time+=ctx->time_increment;
         return;
     }
 
@@ -355,9 +353,11 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
     {
         log_error("nvSurfToImageYUV420Device failed (%d)",(int)ret);
     }
-    dec_img->meta.time = ctx->time;
-    ctx->last_output_time=ctx->time;
-    ctx->time += ctx->time_increment;
+    dec_img->meta.time = time;
+    dec_img->meta.capture_realtime=profile_time();
+    dec_img->meta.flags=MD_CAPTURE_REALTIME_SET;
+
+    ctx->last_output_time=time;
     // use the frame callback to send the imadddge
     image_sync(dec_img);
 
@@ -375,7 +375,8 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
         ctx->scaled_height=dec_img->height;
         scaled_out_img=image_reference(dec_img);
     }
-
+    ctx->stats_num_output_surf++;
+    debugf("output surf %d: %f",ctx->stats_num_output_surf, scaled_out_img->meta.time);
     ctx->frame_callback(ctx->context, scaled_out_img);
     image_destroy(scaled_out_img);
     image_destroy(dec_img);
@@ -393,7 +394,7 @@ static void *dec_capture_loop_fn(void *arg)
     struct v4l2_plane planes[MAX_PLANES];
     NvBuffer *dec_buffer;
     struct v4l2_event ev;
-    struct timeval tv;
+    //struct timeval tv;
     v4l2_ctrl_videodec_outputbuf_metadata d;
 
     snprintf(thr_name, sizeof(thr_name), "dec_cap_%p", ctx->context);
@@ -417,7 +418,7 @@ static void *dec_capture_loop_fn(void *arg)
                     continue;
             }
         }
-        gettimeofday(&tv, NULL);
+        //gettimeofday(&tv, NULL);
 
         /* Decoder capture loop */
         while(1) {
@@ -446,11 +447,20 @@ static void *dec_capture_loop_fn(void *arg)
                 log_error("unexpected error on capture_plane.dqBuffer");
                 break;
             }
+
+            //tv.tv_sec  = (time_t)t;
+            //tv.tv_usec = (suseconds_t)((t - buf.timestamp.tv_sec) * 1e6);
+            //printf("2tv_sec = %ld, tv_usec = %ld\n",
+            //    (long)tv.tv_sec, (long)tv.tv_usec);
+            
+            double time_in_seconds =(double)v4l2_buf.timestamp.tv_sec +
+                                    (double)v4l2_buf.timestamp.tv_usec*0.000001;
+
             if(USE_DEC_METADATA) {
                 ret = dec->getMetadata(v4l2_buf.index, d);
                 print_metadata(ctx, &d);
             }
-            process_nvbuffer(ctx, dec_buffer);
+            process_nvbuffer(ctx, dec_buffer, time_in_seconds);
             /* If not writing to file,
              * Queue the buffer back once it has been used. */
             if (!ctx->got_eos)
@@ -505,8 +515,19 @@ simple_decoder_t *simple_decoder_create(void *context,
        so that application can send chunks of encoded data instead of forming
        complete frames. This needs to be done before setting format on the
        output plane. */
-    r = dec->setFrameInputMode(1);
+    r = dec->setFrameInputMode(0);
     CHECK_ERROR(r < 0, "Error in decoder setFrameInputMode");
+
+    int ret = dec->disableDPB();
+    if (ret < 0)
+        log_error("Failed to set V4L2_CID_MPEG_VIDEO_DISABLE_DPB");
+    else
+        log_info("Disabled DPB for lower latency");
+
+    dec->setSkipFrames(V4L2_SKIP_FRAMES_TYPE_NONREF);
+    log_info("Only decoding reference frames (B/dispP skipped)");
+
+
     /* Request MMAP buffers for writing encoded video data */
     r = dec->output_plane.setupPlane(V4L2_MEMORY_MMAP, NR_OUTPUT_BUF_ENCODED_VIDEO_DATA, true, false);
     CHECK_ERROR(r < 0, "Error while setting up output plane");
@@ -523,15 +544,6 @@ simple_decoder_t *simple_decoder_create(void *context,
     CHECK_ERROR(r < 0, "Error in output plane stream on");
 
     ctx->cfg.out_pixfmt = 2; /* YUV420 */
-
-    int ret = dec->disableDPB();
-    if (ret < 0)
-        log_error("Failed to set V4L2_CID_MPEG_VIDEO_DISABLE_DPB");
-    else
-        log_info("Disabled DPB for lower latency");
-
-    dec->setSkipFrames(V4L2_SKIP_FRAMES_TYPE_NONREF);
-    log_info("Only decoding reference frames (B/dispP skipped)");
 
     log_info("%s:%d creating thread", __func__, __LINE__);
     r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, ctx);
@@ -593,14 +605,15 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     NvBuffer *buffer;
     v4l2_ctrl_videodec_inputbuf_metadata d;
 
-    dec->stats_bytes_decoded+=data_size;
+    dec->stats_num_decode_calls++;
+    debugf("Decode %d: %f",dec->stats_num_decode_calls, frame_time);
 
+    dec->stats_bytes_decoded+=data_size;
     do {
         memset(&v4l2_buf, 0, sizeof(v4l2_buf));
         memset(planes, 0, sizeof(planes));
         v4l2_buf.m.planes = planes;
-        gettimeofday(&tv, NULL);
-
+    
         if(ctx->nr_output < ctx->cfg.out_plane_nrbuffer) {
             buffer = ctx->dec->output_plane.getNthBuffer(ctx->nr_output);
             v4l2_buf.index = ctx->nr_output;
@@ -619,10 +632,10 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         memcpy(buffer->planes[0].data, bitstream_data, data_size);
         buffer->planes[0].bytesused = data_size;
         v4l2_buf.m.planes[0].bytesused = buffer->planes[0].bytesused;
-        /* NVDEC currently only preserves timestamp, so
-         * using the timestamp filed to send the buffer index
-         * v4l2_buf timestamp as buffer index */
+        /* NVDEC currently only preserves timestamp*/
         v4l2_buf.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
+        tv.tv_sec  = (time_t)frame_time;
+        tv.tv_usec = (suseconds_t)((frame_time - tv.tv_sec) * 1e6);
         v4l2_buf.timestamp = tv;
 
         /* Queue an empty buffer to signal EOS to the decoder
@@ -648,8 +661,6 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
 
 void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 {
-    log_info("%s:%d fps = %.3f", __func__, __LINE__, fps);
-    if (dec && fps > 0) dec->time_increment = 1.0 / fps;
 }
 
 void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
@@ -667,8 +678,6 @@ void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int m
 
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
 {
-    log_info("%s:%d max_time = %.3f", __func__, __LINE__, max_time);
-    if (dec) dec->max_time = max_time;
 }
 
 YAML::Node simple_decoder_get_stats(simple_decoder *dec)

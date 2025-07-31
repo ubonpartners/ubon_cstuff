@@ -340,8 +340,13 @@ static void process_results(track_stream_t *ts, track_results_t *r)
 static void end_of_main_pipeline(track_stream_t *ts)
 {
     assert(ts->inference_image==0);
-    work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
-    work_queue_resume(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+    if (work_queue_length(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA])<2)
+    {
+        input_debugf("========== RESUME =========");
+        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
+    }
 }
 
 static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
@@ -560,10 +565,13 @@ static void track_stream_queue_job(track_stream_t *ts, ts_queued_job_t *new_job)
 
     if (new_job->type==TRACK_STREAM_JOB_MAIN_PIPELINE)
     {
+        input_debugf("WQ %d %d",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]), work_queue_length(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]));
+
         if (work_queue_length(&ts->wq[new_job->type])>2)
         {
             input_debugf("==pausing video data queue===");
             work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+            work_queue_pause(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
         }
     }
 }
@@ -658,10 +666,11 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
                 ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
                                                          ts, h26x_frame_callback);
             }
-            int ql=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+            int ql_main=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+            int ql_enc=work_queue_length(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
             //printf("here %d\n",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
 
-            if (ql>2)
+            if ((ql_main>2)||(ql_enc>2))
             {
                 work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
             }
