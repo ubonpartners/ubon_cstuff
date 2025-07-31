@@ -57,12 +57,15 @@ static void decoder_callback(void *context, image_t *frame)
 {
     decode_file_state_t *s=(decode_file_state_t *)context;
     s->callback(s->context, frame);
+    //printf("got frame!\n");
 }
 
 static void assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     decode_file_state_t *s=(decode_file_state_t *)context;
+    //printf("Do decode %d\n",desc->annexb_length);;
     simple_decoder_decode(s->dec, desc->annexb_data, desc->annexb_length, desc->extended_rtp_timestamp/90000.0);
+    //usleep(100000);
 }
 
 // decode a file, including .h264, .h265, .pcap, .pcapng

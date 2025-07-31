@@ -33,6 +33,7 @@ struct simple_decoder
     double max_time;
     bool destroyed;
     bool use_frame_times;
+    bool low_latency;
     //CUstream stream;
     CUvideoctxlock vidlock;
     CUvideodecoder decoder;
@@ -120,12 +121,13 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
     }
-    return pFormat->min_num_decode_surfaces; // override the parser DPB size; who knew!
+    return ((dec->low_latency && dec->codec==SIMPLE_DECODER_CODEC_H264)) ? 2 : pFormat->min_num_decode_surfaces; // override the parser DPB size; who knew!
 }
 
 static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicParams)
 {
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
+    debugf("Handle picture decode");
     CHECK_CUDA_CALL(cuvidDecodePicture(dec->decoder, pPicParams));
     return 1;
 }
@@ -137,6 +139,7 @@ void simple_decoder_set_framerate(simple_decoder_t *dec, double fps)
 
 int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo)
 {
+    debugf("Handle picture display");
     simple_decoder_t *dec=(simple_decoder_t *)pUserData;
     if (dec->destroyed) return 1; // ignore if "destroy" already called
 
@@ -264,7 +267,8 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
 
 simple_decoder_t *simple_decoder_create(void *context,
                                         void (*frame_callback)(void *context, image_t *decoded_frame),
-                                        simple_decoder_codec_t codec)
+                                        simple_decoder_codec_t codec,
+                                        bool low_latency)
 {
     check_cuda_inited();
     simple_decoder_t *dec = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
@@ -277,6 +281,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->out_width=1280;
     dec->out_height=720;
     dec->time_increment=0;//3003.0/90000.0; // in seconds
+    dec->low_latency=low_latency;
     dec->time=0;
     dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
@@ -321,6 +326,7 @@ void simple_decoder_destroy(simple_decoder_t *dec)
 
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time)
 {
+    debugf("decode %d bytes; time=%f",data_size,frame_time);
     CUVIDSOURCEDATAPACKET packet = {0};
     packet.payload=bitstream_data;
     packet.payload_size=data_size;

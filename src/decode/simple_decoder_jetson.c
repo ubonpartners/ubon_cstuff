@@ -71,6 +71,7 @@ struct simple_decoder
     pthread_t dec_capture_loop;
     bool got_error;
     bool got_eos;
+    bool low_latency;
 
     int width;
     int height;
@@ -466,7 +467,10 @@ static void *dec_capture_loop_fn(void *arg)
     return NULL;
 }
 
-simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(void *context, image_t *decoded_frame), simple_decoder_codec_t codec)
+simple_decoder_t *simple_decoder_create(void *context,
+                                        void (*frame_callback)(void *context, image_t *decoded_frame),
+                                        simple_decoder_codec_t codec,
+                                        bool low_latency)
 {
     int j, r;
     NvVideoDecoder *dec = NULL;
@@ -480,6 +484,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
     ctx->frame_callback = frame_callback;
     ctx->context = context;
+    ctx->low_latency=low_latency;
 
     if(codec == SIMPLE_DECODER_CODEC_H265) {
         ctx->is_h265 = 1;
