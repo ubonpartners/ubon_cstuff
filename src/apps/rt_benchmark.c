@@ -22,7 +22,7 @@
 #include "platform_stuff.h"
 #include "pcap_stuff.h"
 
-#define MAX_STREAMS     8
+#define MAX_STREAMS     64
 
 typedef struct rtp_packet
 {
@@ -111,7 +111,8 @@ static void rt_benchmark()
 {
     const char *config="/mldata/config/track/trackers/uc_reid.yaml";
 
-    parsed_pcap_t *parsed=parse_pcap("/mldata/video/operahouse.pcap");
+    //parsed_pcap_t *parsed=parse_pcap("/mldata/video/operahouse.pcap");
+    parsed_pcap_t *parsed=parse_pcap("/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap");
 
     context_t ctx;
     memset(&ctx, 0, sizeof(context_t));
@@ -126,6 +127,7 @@ static void rt_benchmark()
         ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result);
         ctx.ss[i].parsed_pcap=parsed;
         track_stream_set_sdp(ctx.ss[i].ts, ctx.ss[i].parsed_pcap->sdp);
+        track_stream_set_minimum_frame_intervals(ctx.ss[i].ts, 1.0/8.0, 10.0);
     }
 
     usleep(100000);
@@ -171,12 +173,12 @@ static void rt_benchmark()
     double runtime=profile_time()-start_time;
     for(int i=0;i<num_streams;i++) ctx.ss[i].running=false;
 
+
     for(int i=0;i<num_streams;i++)
     {
         stream_state_t *ss=&ctx.ss[i];
         float fps=ss->tracked_frames/runtime;
         printf("Stream %2d/%2d : %f fr=%d %f\n",i,num_streams,ss->time,ss->tracked_frames,fps);
-
         track_stream_destroy(ss->ts);
     }
     track_shared_state_destroy(ctx.tss);

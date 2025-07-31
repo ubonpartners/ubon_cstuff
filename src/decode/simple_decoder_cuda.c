@@ -119,7 +119,7 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
 
         CHECK_CUDA_CALL(cuvidCreateDecoder(&dec->decoder, &decodeCreateInfo));
     }
-    return ((dec->low_latency && dec->codec==SIMPLE_DECODER_CODEC_H264)) ? 2 : pFormat->min_num_decode_surfaces; // override the parser DPB size; who knew!
+    return ((dec->low_latency && dec->codec==SIMPLE_DECODER_CODEC_H264)) ? pFormat->min_num_decode_surfaces : pFormat->min_num_decode_surfaces; // override the parser DPB size; who knew!
 }
 
 static int CUDAAPI HandlePictureDecode(void *pUserData, CUVIDPICPARAMS *pPicParams)

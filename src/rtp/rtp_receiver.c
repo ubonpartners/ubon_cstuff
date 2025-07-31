@@ -158,7 +158,7 @@ rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
     if (!r) return NULL;
 
     // One-time libsrtp initialization
-    log_info("SRTP init");
+    //log_debug("SRTP init");
     srtp_init();
 
     r->context      = context;
