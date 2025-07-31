@@ -614,8 +614,10 @@ static void h26x_frame_callback(void *context, const h26x_frame_descriptor_t *de
     ts_queued_job_t *job=ts_queued_job_create();
     job->type=TRACK_STREAM_JOB_ENCODED_FRAME;
     job->data=(uint8_t *)malloc(desc->annexb_length);
+    job->data_len=desc->annexb_length;
     memcpy(job->data, desc->annexb_data, desc->annexb_length);
     job->time=desc->extended_rtp_timestamp/90000.0;
+    input_debugf("h26x assembled frame t=%f",job->time);
     job->is_iframe=desc->nal_stats.idr_count!=0;
     track_stream_queue_job(ts, job);
 }
@@ -649,8 +651,12 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             if (ts->decoder==0)
             {
                 ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
-                simple_decoder_set_framerate(ts->decoder, job->fps);
                 simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
+            }
+            if (ts->h26x_assembler==0)
+            {
+                ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
+                                                         ts, h26x_frame_callback);
             }
             int ql=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
             //printf("here %d\n",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
@@ -661,11 +667,17 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             }
             else
             {
-                size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
-                //
-                input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
-                simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
-                job->data_offset+=data_len;
+                for(int i=0;i<32;i++)
+                {
+                    size_t data_len=std::min((size_t)4096, job->data_len-job->data_offset);
+                    //
+                    //input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
+                    //simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
+                    int fr=h26x_assembler_process_raw_video(ts->h26x_assembler, job->fps, job->data+job->data_offset, data_len);
+                    input_debugf("feed %d %d %d",fr,(int)job->data_offset, (int)data_len);
+                    job->data_offset+=data_len;
+                    if (fr!=0 || job->data_len==0) break;
+                }
             }
 
             if (job->data_offset<job->data_len)
@@ -711,6 +723,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
         }
         case TRACK_STREAM_JOB_ENCODED_FRAME:
         {
+            input_debugf("Run encoded frame job time %f len %d",job->time,job->data_len);
             if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
             free(job->data);
             block_free(job);
