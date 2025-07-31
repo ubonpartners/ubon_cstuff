@@ -107,7 +107,7 @@ static parsed_pcap_t *parse_pcap(const char *pcap)
     return p;
 }
 
-static std::string rt_benchmark(parsed_pcap_t *parsed, int num_streams, double target_runtime)
+static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_streams, double target_runtime)
 {
     const char *config="/mldata/config/track/trackers/uc_reid.yaml";
     context_t ctx;
@@ -117,10 +117,17 @@ static std::string rt_benchmark(parsed_pcap_t *parsed, int num_streams, double t
     for(int i=0;i<num_streams;i++)
     {
         ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result);
-        ctx.ss[i].parsed_pcap=parsed;
+        ctx.ss[i].parsed_pcap=parsed[i%n_parsed];
         track_stream_set_sdp(ctx.ss[i].ts, ctx.ss[i].parsed_pcap->sdp);
-        track_stream_set_minimum_frame_intervals(ctx.ss[i].ts, 1.0/8.0, 10.0);
+        track_stream_set_minimum_frame_intervals(ctx.ss[i].ts, 1.0/10.0, 10.0);
     }
+
+    infer_config_t inf_config={0};
+    inf_config.limit_max_width = 640;
+    inf_config.set_limit_max_width = true;
+    inf_config.limit_max_height = 640;
+    inf_config.set_limit_max_height = true;
+    track_shared_state_configure_inference(ctx.tss, &inf_config);
 
     usleep(100000);
 
@@ -151,9 +158,6 @@ static std::string rt_benchmark(parsed_pcap_t *parsed, int num_streams, double t
                 rtp_packet_t *pkt=pp->pkt[ss->packet_play_offs];
                 if (pkt->capture_time<ss->packet_play_time)
                 {
-                    //printf("play %d (%d) : \n",ss->packet_play_offs,pkt->packet_length);
-                    //for(int i=0;i<12;i++) printf("%2.2x ",pkt->data[i]);
-                    //printf("\n");
                     track_stream_add_rtp_packets(ss->ts, 1, &pkt->data, &pkt->packet_length);
                     ss->packet_play_offs++;
                     continue;
@@ -217,6 +221,12 @@ static std::string rt_benchmark(parsed_pcap_t *parsed, int num_streams, double t
     return oss.str();
 }
 
+
+static const char *inputs[]={
+    "/mldata/video/test/uk_off_1280x720_6.25fps_264.pcap",
+    "/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap"
+};
+
 int main(int argc, char *argv[]) {
 
     log_debug("ubon_cstuff version = %s", ubon_cstuff_get_version());
@@ -225,18 +235,21 @@ int main(int argc, char *argv[]) {
     log_debug("Initial GPU mem %f",get_process_gpu_mem(false, false));
     image_init();
 
-    parsed_pcap_t *parsed=parse_pcap("/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap");
+    int n_in=sizeof(inputs)/sizeof(const char *);
+
+    parsed_pcap_t *parsed[n_in];
+    for(int i=0;i<n_in;i++) parsed[i]=parse_pcap(inputs[i]);
 
     std::ostringstream r;
 
     int min_str=(platform_is_jetson()) ? 1 : 10;
     int max_str=(platform_is_jetson()) ? 10 : 100;
-    int step=(platform_is_jetson()) ? 2 : 10;
+    int step=(platform_is_jetson()) ? 1 : 10;
     double target_runtime=platform_is_jetson() ? 20 : 10;
 
     for(int ns=min_str;ns<=max_str;ns+=step)
     {
-        r << rt_benchmark(parsed, ns, target_runtime) << "\n";
+        r << rt_benchmark(parsed, n_in, ns, target_runtime) << "\n";
         std::cout << r.str();
     }
 }

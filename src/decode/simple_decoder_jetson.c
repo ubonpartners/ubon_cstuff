@@ -292,6 +292,11 @@ static int first_resolution_change(simple_decoder_t *ctx)
     for(j = 0; j < MAX_FIRST_RESCHANGE; j++) {
         ret = dec->dqEvent(ev, 1000);
         if(ret < 0) {
+            if (ctx->got_eos)
+            {
+                log_error("Timeout V4L2_EVENT_RESOLUTION_CHANGE with EOS set");
+                return 0;
+            }
             if(errno == EAGAIN) {
                 log_error("Timeout V4L2_EVENT_RESOLUTION_CHANGE");
                 ret = -1;
