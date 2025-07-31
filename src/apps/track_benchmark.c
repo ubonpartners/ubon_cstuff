@@ -286,7 +286,7 @@ int main(int argc, char *argv[]) {
     sprintf(dconfig.name, "default");
     dconfig.yaml_config = "/mldata/config/track/trackers/uc_reid.yaml";
     dconfig.input_clip = &clips[0];
-    dconfig.duration_sec = 10;
+    dconfig.duration_sec = platform_is_jetson() ? 20 : 10;
     dconfig.track_framerate = 8;
     dconfig.face_embedding_min_quality=0.01;
     dconfig.num_threads = platform_is_jetson() ? 8 : 16;
@@ -399,7 +399,7 @@ int main(int argc, char *argv[]) {
                 << " " << std::setw(8)  << ((int)(this_config->mbps/3600.0))
                 << " " << std::setw(5)  << ((int)this_config->fps)
                 << " " << std::setw(7)  << std::fixed << std::setprecision(1) << (this_config->total_time)
-                << " " << std::setw(5)  << ((int)this_config->feps)
+                << " " << std::setw(5)  << std::fixed << std::setprecision(1) << this_config->feps
                 << " " << std::setw(4)  << skip_percent
                 << " " << std::setw(8)  << std::fixed << std::setprecision(1) << format_mb(allocation_tracker_get_mem_HWM("image device alloc"))
                 << " " << std::setw(8)  << format_mb(allocation_tracker_get_mem_HWM("trt alloc"))

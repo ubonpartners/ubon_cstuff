@@ -17,6 +17,8 @@
 #include "cuda_stuff.h"
 #include "yaml_stuff.h"
 
+#define debugf if (0) log_info
+
 using namespace std;
 
 #define CHECK_ERROR(cond, str) \
@@ -82,6 +84,14 @@ struct simple_decoder
     void *context;
     void (*frame_callback)(void *context, image_t *decoded_frame);
 
+    int constraint_max_width;
+    int constraint_max_height;
+    double constraint_min_time_delta;
+    int scaled_width, scaled_height;
+    double last_output_time;
+
+    uint32_t stats_output_time_reset;
+    uint32_t stats_frames_output_skipped;
     uint64_t stats_bytes_decoded;
 };
 
@@ -305,6 +315,32 @@ extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
 
 static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
 {
+    bool skip=false;
+    debugf("Process nvbuffer time %f",ctx->time);
+    if (ctx->constraint_min_time_delta!=0)
+    {
+        float delta=ctx->time-ctx->last_output_time;
+        if ((delta>10.0)||(delta<0))
+        {
+            log_error("decoder time constraint unexpected delta %f->%f; restting",ctx->last_output_time,ctx->time);
+            ctx->last_output_time=ctx->time;
+            ctx->stats_output_time_reset++;
+        }
+        else
+        {
+            skip|=(delta<ctx->constraint_min_time_delta);
+        }
+    }
+    if (!ctx) ctx->last_output_time=ctx->time;
+
+    if (skip)
+    {
+        // early return if the frame not needed, avoid a lot of work
+        ctx->stats_frames_output_skipped++;
+        ctx->time+=ctx->time_increment;
+        return;
+    }
+
     NvBufSurface *nvbuf_surf = nullptr;
     int ret = NvBufSurfaceFromFd(dec_buffer->planes[0].fd, (void**)(&nvbuf_surf));
     if(ret != 0) {
@@ -319,10 +355,28 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer)
         log_error("nvSurfToImageYUV420Device failed (%d)",(int)ret);
     }
     dec_img->meta.time = ctx->time;
+    ctx->last_output_time=ctx->time;
     ctx->time += ctx->time_increment;
     // use the frame callback to send the imadddge
     image_sync(dec_img);
-    ctx->frame_callback(ctx->context, dec_img);
+
+    image_t *scaled_out_img=0;
+    if (ctx->constraint_max_width!=0 && ctx->constraint_max_height!=0) {
+        determine_scale_size(dec_img->width, dec_img->height,
+                            ctx->constraint_max_width, ctx->constraint_max_width,
+                            &ctx->scaled_width, &ctx->scaled_height,
+                            10, 8, 8, false);
+        scaled_out_img=image_scale(dec_img, ctx->scaled_width, ctx->scaled_height);
+        debugf("scale to %dx%d",ctx->scaled_width, ctx->scaled_height);
+    }
+    else {
+        ctx->scaled_width=dec_img->width;
+        ctx->scaled_height=dec_img->height;
+        scaled_out_img=image_reference(dec_img);
+    }
+
+    ctx->frame_callback(ctx->context, scaled_out_img);
+    image_destroy(scaled_out_img);
     image_destroy(dec_img);
 }
 
@@ -350,7 +404,7 @@ static void *dec_capture_loop_fn(void *arg)
     }
     /* Received the resolution change event, do query_and_set_capture */
     if(!ctx->got_error) query_and_set_capture(ctx, __LINE__);
-
+    debugf("Dec captureloop");
     /* Exit on error or EOS which is signalled in main() */
     while(!(ctx->got_error || dec->isInError() || ctx->got_eos)) {
         /* Check for resolution change again */
@@ -418,6 +472,8 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
     NvVideoDecoder *dec = NULL;
     simple_decoder_t *ctx = NULL;
 
+    debugf("Jetson decoder create");
+
     ctx = (simple_decoder_t *)malloc(sizeof(simple_decoder_t));
     if (ctx == 0) return 0;
     memset(ctx, 0, sizeof(simple_decoder_t));
@@ -429,7 +485,7 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
         ctx->is_h265 = 1;
     }
     ctx->decoder_pixfmt = (ctx->is_h265) ? V4L2_PIX_FMT_H265 : V4L2_PIX_FMT_H264;
-
+    ctx->last_output_time=-5.0;
     dec = NvVideoDecoder::createVideoDecoder("dec0");
     CHECK_ERROR(!dec, "Could not create the decoder");
     log_trace("ctx = %p dec = %p", ctx, dec);
@@ -474,6 +530,8 @@ simple_decoder_t *simple_decoder_create(void *context, void (*frame_callback)(vo
 
     log_info("%s:%d creating thread", __func__, __LINE__);
     r = pthread_create(&ctx->dec_capture_loop, NULL, dec_capture_loop_fn, ctx);
+
+    debugf("Jetson decoder created ok");
 
     return ctx;
 }
@@ -597,6 +655,9 @@ void simple_decoder_set_output_format(simple_decoder_t *dec, image_format_t fmt)
 
 void simple_decoder_constrain_output(simple_decoder_t *dec, int max_width, int max_height, double min_time_delta)
 {
+    dec->constraint_max_width=max_width;
+    dec->constraint_max_height=max_height;
+    dec->constraint_min_time_delta=min_time_delta;
 }
 
 void simple_decoder_set_max_time(simple_decoder_t *dec, double max_time)
