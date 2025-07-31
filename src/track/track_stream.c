@@ -222,7 +222,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->last_skip=false;
     ts->tracked_object_roi=ROI_ZERO;
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
-    ts->taux=track_aux_create(tss);
+    ts->taux=track_aux_create(tss, ts->config_yaml);
 
     fast_histogram_init(&ts->stats.h_pipeline_latency, 0.0f, 1.0f, 1.2f);
     fast_histogram_init(&ts->stats.h_inference_results_time, 0.0f, 1.0f, 1.2f);
@@ -315,8 +315,18 @@ void track_stream_destroy(track_stream_t *ts)
 
 static void process_results(track_stream_t *ts, track_results_t *r)
 {
+    // callback that receives main inference results
+    // asynchronously from the shared main inference thread
+
+    // run track aux (asynchronously does remaining jobs such as
+    // jpeg generation, clip, face embeddings etc)
+
     track_shared_state_t *tss=ts->tss;
     track_aux_run(ts->taux, ts->inference_image, r->track_dets, ts->single_frame);
+
+    // call back with results
+    // note the track_aux results may not be complete and are
+    // represented as futures in the results callback
 
     if (ts->result_callback)
     {
@@ -329,6 +339,7 @@ static void process_results(track_stream_t *ts, track_results_t *r)
 
 static void end_of_main_pipeline(track_stream_t *ts)
 {
+    assert(ts->inference_image==0);
     work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
     work_queue_resume(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
 }
@@ -429,6 +440,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     int scale_w, scale_h;
     double time_delta=0;
     input_debugf("====> running main pipe here");
+
     if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
 
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
@@ -640,12 +652,21 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
                 simple_decoder_set_framerate(ts->decoder, job->fps);
                 simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
             }
+            int ql=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+            //printf("here %d\n",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
 
-            size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
-            //
-            input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
-            simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
-            job->data_offset+=data_len;
+            if (ql>2)
+            {
+                work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
+            }
+            else
+            {
+                size_t data_len=std::min((size_t)8192, job->data_len-job->data_offset);
+                //
+                input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
+                simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
+                job->data_offset+=data_len;
+            }
 
             if (job->data_offset<job->data_len)
             {

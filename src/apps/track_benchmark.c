@@ -28,6 +28,7 @@ typedef struct state {
     uint64_t decoded_macroblocks;
     uint64_t decoded_frames;
     uint64_t face_embeddings;
+    double time;
 } state_t;
 
 typedef struct test_clip
@@ -47,6 +48,7 @@ typedef struct {
     unsigned int *total_tracked_nonskip;
     uint64_t *total_decoded_macroblocks;
     uint64_t *total_face_embeddings;
+    double *total_time;
     pthread_mutex_t *lock;
     double duration_sec;
     track_shared_state_t *tss;
@@ -62,6 +64,7 @@ static void track_result(void *context, track_results_t *r) {
         if (r->result_type == TRACK_FRAME_TRACKED_ROI || r->result_type == TRACK_FRAME_TRACKED_FULL_REFRESH) {
             s->tracked_frames_nonskip++;
         }
+        s->time=r->time;
         detection_list_t *track_dets=r->track_dets;
         if (track_dets)
         {
@@ -124,6 +127,7 @@ static void *run_track_worker(void *arg) {
     *args->total_tracked += s.tracked_frames;
     *args->total_decoded_macroblocks += s.decoded_macroblocks;
     *args->total_face_embeddings += s.face_embeddings;
+    *args->total_time+=s.time;
     pthread_mutex_unlock(args->lock);
 
     fclose(input);
@@ -150,6 +154,7 @@ typedef struct test_config
     float fps_nonskip;
     float mbps;
     float feps;
+    float total_time;
 } test_config_t;
 
 static void run_one_test(test_config_t *config)
@@ -171,6 +176,7 @@ static void run_one_test(test_config_t *config)
     unsigned int total_tracked_nonskip = 0;
     uint64_t total_decoded_macroblocks = 0;
     uint64_t total_face_embeddings = 0;
+    double total_time=0;
     pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
     for (int i = 0; i < config->num_threads; ++i) {
@@ -182,6 +188,7 @@ static void run_one_test(test_config_t *config)
         args[i].total_tracked = &total_tracked;
         args[i].total_tracked_nonskip = &total_tracked_nonskip;
         args[i].total_decoded_macroblocks = &total_decoded_macroblocks;
+        args[i].total_time = &total_time;
         args[i].total_face_embeddings=&total_face_embeddings;
         args[i].lock = &lock;
         args[i].duration_sec = config->duration_sec;
@@ -203,6 +210,7 @@ static void run_one_test(test_config_t *config)
     config->fps_nonskip=avg_fps_nonskipped;
     config->mbps=((double)total_decoded_macroblocks)/config->duration_sec;
     config->feps=((double)total_face_embeddings)/config->duration_sec;
+    config->total_time=total_time/elapsed;
     //printf("MACROS %f SEC %d / %f rate %f 720; %f\n", (double)total_decoded_macroblocks, config->duration_sec, elapsed, config->mbps, config->mbps/3600.0);
     //printf("%40s: %.2f (total) %.2f (nonskip)\n", config->filename, avg_fps, avg_fps_nonskipped);
 
@@ -258,11 +266,12 @@ int main(int argc, char *argv[]) {
 
     std::ostringstream oss, hdr;
 
-    hdr   << std::setw(42)  << "Test Description" << "  "
+    hdr   << std::setw(44)  << "Test Description" << " "
           << std::setw(20)  << "Cfg" << " "
           << std::setw(4)   << "Str" << " "
           << std::setw(8)   << "Dec" << " "
           << std::setw(5)   << "FPS" << " "
+          << std::setw(7)   << "Str" << " "
           << std::setw(5)   << "FE/S" << " "
           << std::setw(4)   << "Skp%" << " "
           << std::setw(8)   << "ImgMem" << " "
@@ -384,11 +393,12 @@ int main(int argc, char *argv[]) {
             oss << "\n== " << this_config->testset << " ==\n";
             oss << hdr.str();
         }
-        oss     << std::setw(42) << this_config->name
+        oss     << std::setw(44) << this_config->name
                 << " " << std::setw(20) << get_last_path_part(this_config->yaml_config)
                 << " " << std::setw(4)  << this_config->num_threads
                 << " " << std::setw(8)  << ((int)(this_config->mbps/3600.0))
                 << " " << std::setw(5)  << ((int)this_config->fps)
+                << " " << std::setw(7)  << std::fixed << std::setprecision(1) << (this_config->total_time)
                 << " " << std::setw(5)  << ((int)this_config->feps)
                 << " " << std::setw(4)  << skip_percent
                 << " " << std::setw(8)  << std::fixed << std::setprecision(1) << format_mb(allocation_tracker_get_mem_HWM("image device alloc"))

@@ -85,7 +85,7 @@ static void track_aux_init()
     aux_data_allocator=block_allocator_create("aux_data", sizeof(aux_data_t));
 }
 
-track_aux_t *track_aux_create(track_shared_state *tss)
+track_aux_t *track_aux_create(track_shared_state *tss, const char *config_yaml)
 {
     std::call_once(initFlag, track_aux_init);
 
@@ -98,7 +98,7 @@ track_aux_t *track_aux_create(track_shared_state *tss)
     ta->clip_infer_thread=tss->infer_thread[INFER_THREAD_AUX_CLIP];
     ta->fiqa_infer_thread=tss->infer_thread[INFER_THREAD_AUX_FIQA];
 
-    YAML::Node yaml_base=yaml_load(tss->config_yaml);
+    YAML::Node yaml_base=yaml_load(config_yaml);
 
     ta->main_jpeg_enabled=yaml_get_bool(yaml_base, false, 2, "main_jpeg", "enabled");
     ta->main_jpeg_max_width=yaml_get_int(yaml_base, 320, 2, "main_jpeg", "max_width");
