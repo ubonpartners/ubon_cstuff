@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
@@ -43,6 +44,27 @@ float file_decoder_parse_fps(const char *s) {
     return 0.0f;
 }
 
+typedef struct decode_file_state
+{
+    void *context;
+    void (*callback)(void *context, image_t *img);
+    simple_decoder_t *dec;
+    h26x_assembler_t *a;
+} decode_file_state_t;
+
+
+static void decoder_callback(void *context, image_t *frame)
+{
+    decode_file_state_t *s=(decode_file_state_t *)context;
+    s->callback(s->context, frame);
+}
+
+static void assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
+{
+    decode_file_state_t *s=(decode_file_state_t *)context;
+    simple_decoder_decode(s->dec, desc->annexb_data, desc->annexb_length, desc->extended_rtp_timestamp/90000.0);
+}
+
 // decode a file, including .h264, .h265, .pcap, .pcapng
 // if framerate is 0, it will try to parse the framerate from the filename
 // if framerate is still 0, it will use a default of 30 fps
@@ -55,8 +77,6 @@ void decode_file(const char *file, void *context,
                  bool (*stop_callback)(void *context))
 {
     rtp_receiver_t *rtp_receiver;
-    h26x_assembler_t *h26x_assembler;
-    simple_decoder_t *decoder;
 
     bool is_h264=file_decoder_file_ends(file, ".h264")||file_decoder_file_ends(file, ".264");
     bool is_h265=file_decoder_file_ends(file, ".h265")||file_decoder_file_ends(file, ".265")||file_decoder_file_ends(file, ".hevc");
@@ -95,9 +115,12 @@ void decode_file(const char *file, void *context,
             }
         }
 
-        simple_decoder_t *dec = simple_decoder_create(context, callback, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
-        assert(dec!=0);
-        simple_decoder_set_framerate(dec, framerate);
+        decode_file_state_t s;
+        s.callback=callback;
+        s.context=context;
+        s.a=h26x_assembler_create(is_h265 ? H26X_CODEC_H265 : H26X_CODEC_H264, &s, assembler_callback);
+        s.dec = simple_decoder_create(&s, decoder_callback, is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
+        assert(s.dec!=0);
         FILE *f=fopen(file, "rb");
         if (!f)
         {
@@ -111,7 +134,7 @@ void decode_file(const char *file, void *context,
             bool stop=false;
             while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0)
             {
-                simple_decoder_decode(dec, (uint8_t *)buffer, bytes_read);
+                int fr=h26x_assembler_process_raw_video(s.a, framerate, (uint8_t *)buffer, bytes_read);
                 if (stop_callback)
                 {
                     stop=stop_callback(context);
@@ -123,7 +146,8 @@ void decode_file(const char *file, void *context,
             fseek(f, 0, SEEK_SET); // loop
         }
         fclose(f);
-        simple_decoder_destroy(dec);
+        h26x_assembler_destroy(s.a);
+        simple_decoder_destroy(s.dec);
         return;
     }
 

@@ -25,12 +25,18 @@ struct h26x_assembler {
 
     h26x_nal_stats_t        nal_stats;
     h26x_nal_stats_t        cum_nal_stats;
+
+     // Fields for raw Annex-B processing
+    uint8_t *raw_buffer;       // leftover bytes buffer
+    int raw_buffer_len;        // number of bytes currently stored
+    int raw_buffer_capacity;   // total allocated capacity
+    double raw_ts;
 };
 
 /*
  * Emit the assembled frame (if any) via callback, then reset state for next frame.
  */
-static inline void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
+static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
     if (!a->in_frame || a->frame_len == 0) {
         return;
     }
@@ -369,6 +375,204 @@ h26x_assembler_t *h26x_assembler_create(h26x_codec_t codec, void *context, h26x_
     return a;
 }
 
+// Bit-reader for parsing Exp-Golomb
+typedef struct {
+    const uint8_t *buf;
+    int            size_bytes;
+    int            bit_pos;
+} bs_t;
+
+static void bs_init(bs_t *bs, const uint8_t *buf, int sz) {
+    bs->buf = buf;
+    bs->size_bytes = sz;
+    bs->bit_pos = 0;
+}
+
+static int bs_read_bit(bs_t *bs) {
+    if (bs->bit_pos >= bs->size_bytes * 8) return 0;
+    int b = bs->buf[bs->bit_pos >> 3];
+    int shift = 7 - (bs->bit_pos & 7);
+    bs->bit_pos++;
+    return (b >> shift) & 1;
+}
+
+// reads an unsigned Exp-Golomb code (ue(v))
+static int bs_read_ue(bs_t *bs) {
+    int zeros = 0;
+    while (bs_read_bit(bs) == 0 && bs->bit_pos < bs->size_bytes * 8) {
+        zeros++;
+    }
+    int value = 1;
+    for (int i = 0; i < zeros; i++) {
+        value = (value << 1) | bs_read_bit(bs);
+    }
+    return value - 1;
+}
+
+static int remove_emulation_bytes(const uint8_t *src, int src_len, uint8_t *dst) {
+    int dst_len = 0;
+    int zeros = 0;
+    for (int i = 0; i < src_len; i++) {
+        uint8_t b = src[i];
+        if (zeros >= 2 && b == 0x03) {
+            // skip
+            zeros = 0;
+            continue;
+        }
+        dst[dst_len++] = b;
+        if (b == 0) zeros++; else zeros = 0;
+    }
+    return dst_len;
+}
+
+// H.264: first_mb_in_slice == 0 → first slice of picture
+static bool h264_is_first_mb(const uint8_t *nalu, int len) {
+    if (len <= 1) return false;
+    const uint8_t *payload = nalu + 1;
+    int payload_len = len - 1;
+
+    uint8_t rbsp[16];
+    int to_parse=payload_len<16 ? payload_len : 16;
+    int rbsp_len = remove_emulation_bytes(payload, to_parse, rbsp);
+
+    bs_t bs; bs_init(&bs, rbsp, rbsp_len);
+    int first_mb = bs_read_ue(&bs);
+    return (first_mb == 0);
+}
+
+// H.265: first_slice_segment_in_pic_flag == 1 → first slice of picture
+static bool h265_is_first_slice(const uint8_t *nalu, int len) {
+    if (len <= 2) return false;
+    const uint8_t *payload = nalu + 2;
+    int payload_len = len - 2;
+
+    uint8_t rbsp[16];
+    int to_parse=payload_len<16 ? payload_len : 16;
+    int rbsp_len = remove_emulation_bytes(payload, to_parse, rbsp);
+
+    bs_t bs; bs_init(&bs, rbsp, rbsp_len);
+    int first_flag = bs_read_bit(&bs);
+    return (first_flag == 1);
+}
+
+#define MAX_FRAME_SIZE (2 * 1024 * 1024)
+#define INITIAL_RAW_CAPACITY (512 * 1024)
+
+int h26x_assembler_process_raw_video(h26x_assembler_t *a,
+                                     double frame_rate,
+                                     const uint8_t *data,
+                                     int data_len) {
+    if (!a || data_len <= 0) return 0;
+
+    // lazy buffer alloc/grow
+    if (!a->raw_buffer) {
+        a->raw_buffer = (uint8_t *)malloc(INITIAL_RAW_CAPACITY);
+        if (!a->raw_buffer) return 0;
+        a->raw_buffer_capacity = INITIAL_RAW_CAPACITY;
+        a->raw_buffer_len = 0;
+    }
+    int needed = a->raw_buffer_len + data_len;
+    if (needed > a->raw_buffer_capacity) {
+        int new_cap = a->raw_buffer_capacity;
+        while (new_cap < needed) new_cap <<= 1;
+        uint8_t *nb = (uint8_t *)realloc(a->raw_buffer, new_cap);
+        if (!nb) { a->raw_buffer_len = 0; return 0; }
+        a->raw_buffer = nb;
+        a->raw_buffer_capacity = new_cap;
+    }
+    memcpy(a->raw_buffer + a->raw_buffer_len, data, data_len);
+
+    uint8_t *buf = a->raw_buffer;
+    int      buf_len = a->raw_buffer_len + data_len;
+    int      frames  = 0;
+
+    // find start codes (optimized)
+    int start_pos[1024], scn = 0;
+    uint8_t *base = buf;
+    uint8_t *p    = buf;
+    uint8_t *end  = buf + buf_len;
+
+    // we need at least 3 bytes for a 3-byte start code, and 4 for a 4-byte one
+    while (p + 3 < end && scn < 1024) {
+        // fast-forward to the next zero
+        p = (uint8_t*)memchr(p, 0, end - p);
+        if (!p || p + 3 >= end) break;
+
+        // count how many zeros in a row (up to 3)
+        int zeros = 1;
+        if (p[1] == 0) {
+            zeros++;
+            if (p + 2 < end && p[2] == 0) zeros++;
+        }
+
+        // check for start code after those zeros
+        if (zeros >= 2 && p + 3 < end && p[zeros] == 1) {
+            // p points at the first zero of 00{0,1}01
+            start_pos[scn++] = (int)(p - base);
+            p += zeros + 1;   // skip past the 00…01
+        } else {
+            p += zeros;       // not a start code, skip the zeros we counted
+        }
+    }
+
+    if (scn < 1) {
+        a->raw_buffer_len = buf_len;
+        return 0;
+    }
+
+    for (int i=0; i<scn-1; i++) {
+        int pos  = start_pos[i];
+        int next = start_pos[i+1];
+        int sc_len = (buf[pos+2]==1 ? 3 : 4);
+        uint8_t *nalu = buf + pos + sc_len;
+        int      n_len = next - (pos + sc_len);
+        if (n_len <= 0) continue;
+
+        // nal_type
+        int nal_type = (a->codec==H26X_CODEC_H264)
+                     ? (nalu[0] & 0x1F)
+                     : ((nalu[0] >> 1) & 0x3F);
+
+        // check if this is a VCL NALU and the *first* slice of a picture
+        bool is_vcl = (a->codec==H26X_CODEC_H264)
+                    ? (nal_type >= 1 && nal_type <= 5)
+                    : (nal_type >= 0 && nal_type <= 31);
+        bool new_frame = false;
+        if (is_vcl) {
+            if (a->codec==H26X_CODEC_H264) {
+                new_frame = h264_is_first_mb(nalu, n_len);
+            } else {
+                new_frame = h265_is_first_slice(nalu, n_len);
+            }
+        }
+
+        // if we detect a new frame while already in one, emit the previous
+        if (new_frame && a->in_frame) {
+            emit_frame(a, 0);
+            frames++;
+            a->raw_ts     += 1.0 / frame_rate;
+            a->in_frame    = false;
+        }
+
+        // start (or restart) frame state
+        if (new_frame /*|| !a->in_frame*/) {
+            a->in_frame       = true;
+            a->is_complete    = true;
+            a->last_extended_ts = (uint64_t)(90000.0 * a->raw_ts);
+        }
+
+        // accumulate this NALU
+        append_nalu(a, nalu, n_len);
+    }
+
+    // keep leftover bytes
+    int last = start_pos[scn-1];
+    int leftover = buf_len - last;
+    memmove(a->raw_buffer, buf + last, leftover);
+    a->raw_buffer_len = leftover;
+    return frames;
+}
+
 /*
  * Reset assembler to “no frame in progress.”
  */
@@ -386,6 +590,7 @@ void h26x_assembler_reset(h26x_assembler_t *a) {
 void h26x_assembler_destroy(h26x_assembler_t *a) {
     if (a) {
         free(a->frame_buffer);
+        if (a->raw_buffer) free(a->raw_buffer);
         free(a);
     }
 }

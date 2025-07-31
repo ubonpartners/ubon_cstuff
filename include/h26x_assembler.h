@@ -83,6 +83,19 @@ void h26x_assembler_reset(h26x_assembler_t *a);
 void h26x_assembler_process_rtp(h26x_assembler_t       *a,
                                 const rtp_packet_t     *pkt);
 
+// -----------------------------------------------------------------------------
+// Second interface to feed raw annex-B video into the assembler
+// The assembler extracts the raw nalus, bypasses the RTP assembly code and
+// calls append_nalu. Unlike the RTP version it needs to detect end of frame
+// by looking at the nalus to know to call emit_frame
+// The assembler keeps an internal 90Khz timestamp and automatically increments
+// it to set the output timestamp based on the framerate.
+// The return value is the number of frames emitted as a result of this call.
+// -----------------------------------------------------------------------------
+int h26x_assembler_process_raw_video(h26x_assembler_t       *a,
+                                     double framerate,
+                                     const uint8_t *data,
+                                     int data_len);
 
 void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc);
 

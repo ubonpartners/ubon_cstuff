@@ -276,7 +276,7 @@ simple_decoder_t *simple_decoder_create(void *context,
     dec->target_height=0;
     dec->out_width=1280;
     dec->out_height=720;
-    dec->time_increment=3003.0/90000.0; // in seconds
+    dec->time_increment=0;//3003.0/90000.0; // in seconds
     dec->time=0;
     dec->max_time=-1;
     dec->output_format=IMAGE_FORMAT_YUV420_DEVICE;
