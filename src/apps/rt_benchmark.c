@@ -21,8 +21,9 @@
 #include "display.h"
 #include "platform_stuff.h"
 #include "pcap_stuff.h"
+#include "yaml_stuff.h"
 
-#define MAX_STREAMS     8
+#define MAX_STREAMS     200
 
 typedef struct rtp_packet
 {
@@ -39,7 +40,6 @@ typedef struct parsed_pcap
     int num_packets;
     rtp_packet_t *pkt[MAX_PACKETS];
 } parsed_pcap_t;
-
 
 typedef struct stream_state
 {
@@ -107,22 +107,14 @@ static parsed_pcap_t *parse_pcap(const char *pcap)
     return p;
 }
 
-static void rt_benchmark()
+static std::string rt_benchmark(parsed_pcap_t *parsed, int num_streams, double target_runtime)
 {
     const char *config="/mldata/config/track/trackers/uc_reid.yaml";
-
-    //parsed_pcap_t *parsed=parse_pcap("/mldata/video/operahouse.pcap");
-    parsed_pcap_t *parsed=parse_pcap("/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap");
-
     context_t ctx;
     memset(&ctx, 0, sizeof(context_t));
 
-    int num_streams=MAX_STREAMS;
-
-    //printf("SDP %s\n",parsed->sdp);
-
     ctx.tss = track_shared_state_create(config);
-    for(int i=0;i<MAX_STREAMS;i++)
+    for(int i=0;i<num_streams;i++)
     {
         ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result);
         ctx.ss[i].parsed_pcap=parsed;
@@ -137,9 +129,9 @@ static void rt_benchmark()
     for(int i=0;i<num_streams;i++) ctx.ss[i].running=true;
     while(1)
     {
+        if (profile_time()>start_time+target_runtime) break;
         usleep(10*1000);
         double time_now=profile_time();
-        if (time_now>start_time+20.0) break;
         double delta=time_now-last_time;
         last_time+=delta;
 
@@ -173,16 +165,56 @@ static void rt_benchmark()
     double runtime=profile_time()-start_time;
     for(int i=0;i<num_streams;i++) ctx.ss[i].running=false;
 
+    float mean_latency_90=0;
+    float min_fps=1000.0;
+    float max_fps=0;
+    float total_fps=0;
+    for(int i=0;i<num_streams;i++)
+    {
+        const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
+        YAML::Node root=yaml_load(stream_stats);
+        mean_latency_90+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_90"].as<float>();
+        free((void*)stream_stats);
+
+        stream_state_t *ss=&ctx.ss[i];
+        float fps=ss->tracked_frames/runtime;
+        min_fps=std::min(min_fps, fps);
+        max_fps=std::max(max_fps, fps);
+        total_fps+=fps;
+
+    }
+    mean_latency_90/=num_streams;
+    float mean_fps=total_fps/num_streams;
+
+    const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
+    const char *shared_state_stats=track_shared_state_get_stats(ctx.tss);
 
     for(int i=0;i<num_streams;i++) track_stream_destroy(ctx.ss[i].ts);
     track_shared_state_destroy(ctx.tss);
-    
-    for(int i=0;i<num_streams;i++)
-    {
-        stream_state_t *ss=&ctx.ss[i];
-        float fps=ss->tracked_frames/runtime;
-        printf("Stream %2d/%2d : %f fr=%d %f\n",i,num_streams,ss->time,ss->tracked_frames,fps);
+
+    if (0) {
+        const char *platform_stats=platform_get_stats();
+        printf("======== PLATFORM STATS ===========\n");
+        printf("%s\n",platform_stats);
+        free((void*)platform_stats);
+        printf("======== SHARED TRACK STATS ===========\n");
+        printf("%s\n\n",shared_state_stats);
+        free((void*)shared_state_stats);
+        printf("======== STREAM STATS) ===========\n");
+        printf("%s\n\n", stream_stats);
+        free((void*)stream_stats);
     }
+
+    std::ostringstream oss;
+    oss << "Streams " << std::setw(4)  << num_streams
+        << " FPS:"
+        << " " << std::setw(5)  << std::fixed << std::setprecision(1) << min_fps
+        << " - " << std::setw(5)  << std::fixed << std::setprecision(1) << max_fps
+        << " Tot " << std::setw(6)  << std::fixed << std::setprecision(1) << total_fps
+        << " Avg " << std::setw(5)  << std::fixed << std::setprecision(1) << mean_fps
+        << " Lat " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_90;
+
+    return oss.str();
 }
 
 int main(int argc, char *argv[]) {
@@ -193,5 +225,18 @@ int main(int argc, char *argv[]) {
     log_debug("Initial GPU mem %f",get_process_gpu_mem(false, false));
     image_init();
 
-    rt_benchmark();
+    parsed_pcap_t *parsed=parse_pcap("/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap");
+
+    std::ostringstream r;
+
+    int min_str=(platform_is_jetson()) ? 1 : 10;
+    int max_str=(platform_is_jetson()) ? 10 : 100;
+    int step=(platform_is_jetson()) ? 2 : 10;
+    double target_runtime=platform_is_jetson() ? 20 : 10;
+
+    for(int ns=min_str;ns<=max_str;ns+=step)
+    {
+        r << rt_benchmark(parsed, ns, target_runtime) << "\n";
+        std::cout << r.str();
+    }
 }
