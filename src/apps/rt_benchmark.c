@@ -22,7 +22,7 @@
 #include "platform_stuff.h"
 #include "pcap_stuff.h"
 
-#define MAX_STREAMS     64
+#define MAX_STREAMS     8
 
 typedef struct rtp_packet
 {
@@ -139,7 +139,7 @@ static void rt_benchmark()
     {
         usleep(10*1000);
         double time_now=profile_time();
-        if (time_now>start_time+10.0) break;
+        if (time_now>start_time+20.0) break;
         double delta=time_now-last_time;
         last_time+=delta;
 
@@ -174,16 +174,15 @@ static void rt_benchmark()
     for(int i=0;i<num_streams;i++) ctx.ss[i].running=false;
 
 
+    for(int i=0;i<num_streams;i++) track_stream_destroy(ctx.ss[i].ts);
+    track_shared_state_destroy(ctx.tss);
+    
     for(int i=0;i<num_streams;i++)
     {
         stream_state_t *ss=&ctx.ss[i];
         float fps=ss->tracked_frames/runtime;
         printf("Stream %2d/%2d : %f fr=%d %f\n",i,num_streams,ss->time,ss->tracked_frames,fps);
-        track_stream_destroy(ss->ts);
     }
-    track_shared_state_destroy(ctx.tss);
-
-
 }
 
 int main(int argc, char *argv[]) {
