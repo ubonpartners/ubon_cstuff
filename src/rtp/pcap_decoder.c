@@ -16,9 +16,12 @@
 #include "h26x_assembler.h"
 #include "rtp_receiver.h"
 #include "pcap_decoder.h"
+#include "log.h"
 
 #define MAX_SDP_SIZE        512
 #define MAX_DECODED_FRAMES  16
+
+#define debugf if (0) log_error
 
 struct pcap_decoder
 {
@@ -36,12 +39,15 @@ static void decoder_frame_callback(void *context, image_t *img)
 {
     pcap_decoder_t *p=(pcap_decoder_t *)context;
     assert(p->num_decoded_frames<MAX_DECODED_FRAMES);
+    debugf("pcap frame has been decoded TS %f",img->meta.time);
     p->decoded_frames[p->num_decoded_frames++]=image_reference(img);
 }
 
 static void h26x_assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     pcap_decoder_t *p=(pcap_decoder_t *)context;
+    debugf("assembler has output complete frame");
+    //printf("%lx %f\n",desc->extended_rtp_timestamp,desc->extended_rtp_timestamp/90000.0);
     simple_decoder_decode(p->decoder, desc->annexb_data, desc->annexb_length, desc->extended_rtp_timestamp/90000.0);
 }
 
@@ -101,10 +107,9 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
     struct pcap_pkthdr *header;
     const u_char *packet;
     int res;
-
+    debugf("pcap_decoder_get_frame");
     while ((p->num_decoded_frames==0) && (res = pcap_next_ex(p->pcap_handle, &header, &packet)) >= 0) {
         if (res == 0) continue;
-
         const struct ip *ip_hdr = (struct ip *)(packet + 14);
         if (ip_hdr->ip_p != IPPROTO_UDP) continue;
 
@@ -113,12 +118,13 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
 
         size_t udp_payload_len = ntohs(udp_hdr->uh_ulen) - sizeof(struct udphdr);
         const uint8_t *udp_payload = (const uint8_t *)udp_hdr + sizeof(struct udphdr);
-
+        debugf("pcap packet %d ", (int)udp_payload_len);
         if (udp_payload_len >= 12 && ((udp_payload[0] & 0xC0) == 0x80)) {
             //double capture_time = header->ts.tv_sec + header->ts.tv_usec / 1e6;
             rtp_receiver_add_packet(p->rtp_receiver, (uint8_t *)udp_payload, udp_payload_len);
         }
     }
+    debugf("pcap decode done");
 
     image_t *ret=0;
     if (p->num_decoded_frames>0)
@@ -130,5 +136,6 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
             p->decoded_frames[i]=p->decoded_frames[i+1];
         }
     }
+    debugf("returning frame %p",ret);
     return ret;
 }

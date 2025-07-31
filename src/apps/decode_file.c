@@ -6,11 +6,20 @@
 
 static void process_image(void *context, image_t *img)
 {
-    double start_time= *((double *)context);
     if (img)
     {
-        double target_time = img->meta.time;
-        while (profile_time() - start_time < target_time)
+        static double first_frame=true;
+        static double start_profile_time;
+        static double start_frame_time;
+        if (first_frame)
+        {
+            start_profile_time=profile_time();
+            start_frame_time = img->meta.time;
+            first_frame=false;
+        }
+        printf("process image: image time %f\n",img->meta.time);
+        double target_time = img->meta.time-start_frame_time;
+        while (profile_time() - start_profile_time < target_time)
         {
             usleep(1000); // wait until the target time is reached
         }

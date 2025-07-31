@@ -328,7 +328,10 @@ static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer, double
         float delta=time-ctx->last_output_time;
         if ((delta>10.0)||(delta<0))
         {
-            log_error("decoder time constraint unexpected delta %f->%f; restting",ctx->last_output_time,time);
+            if (ctx->stats_num_output_surf>0)
+            {
+                log_error("decoder time constraint unexpected delta %f->%f; restting",ctx->last_output_time,time);
+            }
             ctx->last_output_time=time;
             ctx->stats_output_time_reset++;
         }

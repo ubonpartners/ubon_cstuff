@@ -156,7 +156,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         float delta=time-dec->last_output_time;
         if ((delta>10.0)||(delta<0))
         {
-            log_error("decoder time constraint unexpected delta %f->%f; restting",dec->last_output_time,time);
+            if (dec->stats_frames_decoded>1) log_error("decoder time constraint unexpected delta %f->%f; restting",dec->last_output_time,time);
             dec->last_output_time=time;
             dec->stats_output_time_reset++;
         }

@@ -21,6 +21,8 @@
 #define RTP_HEADER_MIN_SIZE  12
 #define RTP_SSRC_SWITCH_THRESHOLD  4
 
+#define debugf if (0) log_error
+
 /**
  * Each slot holds one RTP packet (raw bytes), plus metadata:
  *   - 'seq' is the 16‐bit sequence number
@@ -62,6 +64,7 @@ struct rtp_receiver {
     int64_t  last_extended_timestamp;
     uint32_t last_timestamp32;       // last RTP timestamp (32‐bit) that we actually output
     bool     first_packet;
+    bool     first_ts;
 
     uint8_t  payload_type;
     bool     payload_type_set;
@@ -117,9 +120,10 @@ static inline int reorder_index(uint16_t seq) {
  *     and we add that delta (signed) to last_extended to get a 64‐bit extended timestamp.
  */
 static uint64_t extend_timestamp(uint32_t ts32, rtp_receiver_t *r) {
-    if (r->first_packet) {
+    if (r->first_ts) {
         r->last_extended_timestamp = ts32;
         r->last_timestamp32 = ts32;
+        r->first_ts=false;
         return (uint64_t)ts32;
     }
     int32_t delta = (int32_t)(ts32 - r->last_timestamp32);
@@ -164,6 +168,7 @@ rtp_receiver_t *rtp_receiver_create(void *context, rtp_packet_callback_fn cb) {
     r->context      = context;
     r->cb           = cb;
     r->first_packet = true;
+    r->first_ts     = true;
 
     // Defaults: no payload_type set, no SSRC, timeouts = 0
     r->rtp_clock_rate       = 90000;
@@ -277,6 +282,9 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
 void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
     if (!r || !data || length < RTP_HEADER_MIN_SIZE) return;
     // 1) If SRTP is enabled, decrypt/authenticate first.
+
+    debugf("receive packet %2.2x %2.2x %2.2x %2.2x %2.2x %2.2x",data[0],data[1],data[2],data[3],data[4],data[5]);
+
     if (r->srtp_enabled) {
         int unprotect_len = length;
         srtp_err_status_t serr = srtp_unprotect(r->srtp_session, data, &unprotect_len);
@@ -317,12 +325,14 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
     }
     if (header_len > length || header_len >= MAX_PACKET_SIZE) {
         r->stats.packets_discarded_corrupt++;
+        debugf("Corrupt");
         return;
     }
 
     // 3) Payload‐type filter, if set
     if (r->payload_type_set && pt != r->payload_type) {
         r->stats.packets_discarded_wrong_pt++;
+        debugf("Wrong PT");
         return;
     }
     // 4) SSRC handling / switching
@@ -338,12 +348,14 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
                 r->candidate_ssrc_count = 0;
             } else {
                 r->stats.packets_discarded_wrong_ssrc++;
+                debugf("Wrong SSRC");
                 return;
             }
         } else {
             r->candidate_ssrc       = ssrc;
             r->candidate_ssrc_count = 1;
             r->stats.packets_discarded_wrong_ssrc++;
+            debugf("Wrong SSRC2");
             return;
         }
     }
@@ -366,6 +378,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         if (diff < 0) {
             // late or duplicate, drop
             r->stats.packets_late++;
+            debugf("LATE");
             return;
         }
     }
@@ -429,7 +442,7 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
 
             // Remember this as “last output” so that future timestamp comparisons can use it
             r->last_sequence = next_seq;
-
+            debugf("output packet!");
             // Invoke user callback
             r->cb(r->context, &pkt);
 

@@ -32,7 +32,7 @@ typedef struct rtp_packet
     uint8_t *data;
 } rtp_packet_t;
 
-#define MAX_PACKETS 16384
+#define MAX_PACKETS 30000
 
 typedef struct parsed_pcap
 {
@@ -223,8 +223,9 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
 
 
 static const char *inputs[]={
-    "/mldata/video/test/uk_off_1280x720_6.25fps_264.pcap",
-    "/mldata/video/test/ind_off_1280x720_7.5fps_264.pcap"
+    "/mldata/video/test/clip1_1280x720_5.00fps_h264.pcap",
+    "/mldata/video/test/clip2_1280x720_5.00fps_h264.pcap",
+    "/mldata/video/test/clip3_1280x720_5.00fps_h264.pcap"
 };
 
 int main(int argc, char *argv[]) {

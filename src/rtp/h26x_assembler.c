@@ -6,6 +6,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "log.h"
+
+#define debugf if (0) log_error
 
 #define MAX_FRAME_SIZE (2 * 1024 * 1024) // 2 MB max per frame
 
@@ -141,6 +144,9 @@ static void append_nalu(h26x_assembler_t *a, const uint8_t *data, int len) {
 void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
     const uint8_t *payload = pkt->data + pkt->payload_offset;
     int            len     = pkt->payload_length;
+
+    debugf("assembler packet seq %d len %d",pkt->sequence_number,pkt->payload_length);
+
     // If this packet carries a new timestamp, close out the previous frame first
     if (!a->in_frame || pkt->timestamp != a->last_timestamp) {
         emit_frame(a, pkt->ssrc);
