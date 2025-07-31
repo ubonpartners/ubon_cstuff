@@ -63,7 +63,8 @@ struct track_aux
     int face_jpeg_max_height;
     int face_jpeg_quality;
 
-    bool clip_embeddings_enabled;
+    bool clip_frame_embeddings_enabled;
+    bool clip_object_embeddings_enabled;
     bool clip_jpegs_enabled;
     float clip_embeddings_min_quality;
     float clip_min_quality_increment;
@@ -117,7 +118,8 @@ track_aux_t *track_aux_create(track_shared_state *tss)
     ta->face_min_quality_increment=yaml_get_float(yaml_base, 0.02, 2, "faces", "min_quality_increment");
     ta->face_min_quality_multiple=yaml_get_float(yaml_base, 1.2, 2, "faces", "min_quality_multiple");
 
-    ta->clip_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "embeddings_enabled");
+    ta->clip_frame_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "frame_embeddings_enabled");
+    ta->clip_object_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "object_embeddings_enabled");
     ta->clip_jpegs_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "jpegs_enabled");
     ta->clip_jpeg_min_width=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_min_width");
     ta->clip_jpeg_min_height=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_min_height");
@@ -190,8 +192,11 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
             ta->main_jpeg_last_time=img->meta.time;
 
-            dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);
-            embedding_set_quality(dets->clip_embedding, 1.0f);
+            if ((ta->clip_infer_thread!=0) && (ta->clip_object_embeddings_enabled))
+            {
+                dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);
+                embedding_set_quality(dets->clip_embedding, 1.0f);
+            }
         }
     }
 
@@ -255,7 +260,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
             }
         }
 
-        if ((ta->clip_infer_thread!=0) && (ta->clip_embeddings_enabled))
+        if ((ta->clip_infer_thread!=0) && (ta->clip_object_embeddings_enabled))
         {
             float q=detection_clip_quality_score(det);
             if (aux->clip_embedding!=0 && embedding_is_ready(aux->clip_embedding)==false)
