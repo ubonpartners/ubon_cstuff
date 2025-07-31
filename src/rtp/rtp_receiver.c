@@ -276,7 +276,6 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
  */
 void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
     if (!r || !data || length < RTP_HEADER_MIN_SIZE) return;
-
     // 1) If SRTP is enabled, decrypt/authenticate first.
     if (r->srtp_enabled) {
         int unprotect_len = length;
@@ -326,7 +325,6 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
         r->stats.packets_discarded_wrong_pt++;
         return;
     }
-
     // 4) SSRC handling / switching
     if (!r->ssrc_valid) {
         r->current_ssrc = ssrc;
@@ -371,7 +369,6 @@ void rtp_receiver_add_packet(rtp_receiver_t *r, uint8_t *data, int length) {
             return;
         }
     }
-
     // 6) Insert into circular reorder buffer
     {
         int idx = reorder_index(seq);
@@ -515,7 +512,6 @@ int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp)
     memset(sdp, 0, sizeof(set_sdp_t));
 
     if (!r || !sdp_str) return -1;
-
     parsed_sdp_t *parsed = parse_sdp(sdp_str);
     if (!parsed) {
         log_error("SDP parse failed");

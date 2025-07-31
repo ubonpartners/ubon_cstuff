@@ -40,7 +40,7 @@ static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
     if (!a->in_frame || a->frame_len == 0) {
         return;
     }
-
+    double t=a->last_extended_ts;
     h26x_frame_descriptor_t desc = {
         .extended_rtp_timestamp = a->last_extended_ts,
         .annexb_data            = a->frame_buffer,
@@ -141,7 +141,6 @@ static void append_nalu(h26x_assembler_t *a, const uint8_t *data, int len) {
 void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
     const uint8_t *payload = pkt->data + pkt->payload_offset;
     int            len     = pkt->payload_length;
-
     // If this packet carries a new timestamp, close out the previous frame first
     if (!a->in_frame || pkt->timestamp != a->last_timestamp) {
         emit_frame(a, pkt->ssrc);

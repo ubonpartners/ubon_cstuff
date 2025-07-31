@@ -26,7 +26,6 @@ struct pcap_decoder
     bool is_h265;
     int num_decoded_frames;
     image_t *decoded_frames[MAX_DECODED_FRAMES];
-    uint64_t frame_timestamp;
     pcap_t *pcap_handle;
     rtp_receiver_t *rtp_receiver;
     h26x_assembler_t *h26x_assembler;
@@ -43,13 +42,14 @@ static void decoder_frame_callback(void *context, image_t *img)
 static void h26x_assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     pcap_decoder_t *p=(pcap_decoder_t *)context;
-    p->frame_timestamp=desc->extended_rtp_timestamp;
-    simple_decoder_decode(p->decoder, desc->annexb_data, desc->annexb_length);
+    simple_decoder_decode(p->decoder, desc->annexb_data, desc->annexb_length, desc->extended_rtp_timestamp/90000.0);
 }
 
 static void rtp_receiver_callback(void *context, const rtp_packet_t *packet)
 {
     pcap_decoder_t *p=(pcap_decoder_t *)context;
+    //for(int i=0;i<12;i++) printf("%2.2x ",packet->data[i]);
+    //printf("\n");
     h26x_assembler_process_rtp(p->h26x_assembler, packet);
 }
 
@@ -124,7 +124,6 @@ image_t *pcap_decoder_get_frame(pcap_decoder_t *p)
     if (p->num_decoded_frames>0)
     {
         ret=p->decoded_frames[0];
-        ret->meta.time=p->frame_timestamp/90000.0;
         p->num_decoded_frames--;
         for(int i=0;i<p->num_decoded_frames;i++)
         {

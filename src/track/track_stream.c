@@ -625,7 +625,8 @@ static void h26x_frame_callback(void *context, const h26x_frame_descriptor_t *de
     job->data_len=desc->annexb_length;
     memcpy(job->data, desc->annexb_data, desc->annexb_length);
     job->time=desc->extended_rtp_timestamp/90000.0;
-    input_debugf("h26x assembled frame t=%f",job->time);
+
+    input_debugf("h26x assembled frame t=%f, length %d",job->time,desc->annexb_length);
     job->is_iframe=desc->nal_stats.idr_count!=0;
     track_stream_queue_job(ts, job);
 }
@@ -744,7 +745,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
             set_sdp_t sdp;
             memset(&sdp, 0, sizeof(set_sdp_t));
-            if (0==rtp_receiver_set_sdp(ts->rtp_receiver, (const char *)job->data, &sdp))
+            if (0==rtp_receiver_set_sdp(ts->rtp_receiver, ((const char *)job->data)+4, &sdp))
             {
                 if (sdp.is_h264 || sdp.is_h265)
                 {
@@ -779,6 +780,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
                     offs+=4;
                     assert(offs+len<=job->data_len);
                     rtp_receiver_add_packet(ts->rtp_receiver, job->data+offs, len);
+                    offs+=len;
                 }
             }
             free(job->data);
