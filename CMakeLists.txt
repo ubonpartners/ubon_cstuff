@@ -79,6 +79,15 @@ file(APPEND "${VERSION_HEADER}" "#endif /* ${GUARD_NAME} */\n")
 
 find_package(yaml-cpp REQUIRED)
 
+if(DEFINED ENV{JETSON_SOC})
+    # VPI include + library paths
+    set(VPI_INCLUDE_DIRS /usr/include/vpi)
+    set(VPI_LIBRARIES -lvpi)
+
+    include_directories(${VPI_INCLUDE_DIRS})
+    list(APPEND COMMON_LIBS ${VPI_LIBRARIES})
+endif()
+
 # CUDA setup
 enable_language(CUDA)
 #find_package(CUDA REQUIRED)
