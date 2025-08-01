@@ -171,9 +171,9 @@ void work_queue_stop(work_queue_t *wq)
         if ((wq->locked==false)&&(wq->executing==false)) break;
         pthread_mutex_unlock(&wq->lock);
         iters++;
-        if (iters>500) log_warn("wq stop: %s %d",wq->name,wq->resume_count);
+        if ((iters%1000)==0) log_warn("wq stop: %s %d",wq->name,wq->resume_count);
         usleep(1000);
-        assert(iters<10000);
+        assert(iters<20000);
     }
     wq->paused=true;
     wq->stopped=true;

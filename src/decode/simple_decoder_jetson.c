@@ -32,7 +32,7 @@ using namespace std;
 #define NR_CAPTURE_BUF                          (10)
 #define MAX_FIRST_RESCHANGE                     (30)
 #define CHUNK_SIZE                              (4 * 1024 * 1024)
-#define NR_OUTPUT_BUF_ENCODED_VIDEO_DATA        (3)
+#define NR_OUTPUT_BUF_ENCODED_VIDEO_DATA        (2)
 
 typedef struct dma_fd_s {
     int fd;
@@ -256,8 +256,9 @@ static void query_and_set_capture(simple_decoder_t *ctx, int from)
     ctx->min_dec_capture_buffers = min_dec_capture_buffers;
     /* Request, Query and export (min + 5) decoder capture plane buffers.
        Refer ioctl VIDIOC_REQBUFS, VIDIOC_QUERYBUF and VIDIOC_EXPBUF */
+    int num_buffers=(ctx->low_latency) ? 4 : (min_dec_capture_buffers + 1);
     ret = dec->capture_plane.setupPlane(V4L2_MEMORY_MMAP,
-                                       min_dec_capture_buffers + 1, false,
+                                       num_buffers, false,
                                        false);
     CHECK_ERROR(ret < 0, "Error in decoder capture plane setup");
     ctx->cfg.cap_plane_nrbuffer = dec->capture_plane.getNumBuffers();
