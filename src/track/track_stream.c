@@ -36,20 +36,20 @@ static block_allocator_t *ts_queued_job_allocator;
 
 typedef enum ts_queued_job_type
 {
-    TRACK_STREAM_JOB_MAIN_PIPELINE=0, // decode image waiting for the main pipeline
-    TRACK_STREAM_JOB_VIDEO_DATA=1,    // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_MAIN_PIPELINE)
-    TRACK_STREAM_JOB_JPEG=2,          // compressed JPEG image waiting to be decoded (makes TRACK_STREAM_JOB_MAIN_PIPELINE)
-    TRACK_STREAM_JOB_ENCODED_FRAME=3, // complete frames of H26x data waiting to be decoded
-    TRACK_STREAM_JOB_SDP=4,           // SDP config
-    TRACK_STREAM_JOB_RTP=5,           // RTP packets waiting to be assembled to H26x frames
+    TRACK_STREAM_JOB_MAIN_PIPELINE=0,   // decode image waiting for the main pipeline
+    TRACK_STREAM_JOB_H26X_DECODE=1,     // complete frames of H26x data waiting to be decoded
+    TRACK_STREAM_JOB_JPEG_DECODE=2,     // compressed JPEG image waiting to be decoded (makes TRACK_STREAM_JOB_MAIN_PIPELINE)
+    TRACK_STREAM_JOB_VIDEO_FILE_DATA=3, // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_MAIN_PIPELINE)
+    TRACK_STREAM_JOB_SDP=4,             // SDP config
+    TRACK_STREAM_JOB_RTP=5,             // RTP packets waiting to be assembled to H26x frames
     TRACK_STREAM_NUM_JOB_TYPES=6
 } ts_queued_job_type_t;
 
 static const char *queued_job_names[]={
     "main_pipeline",
-    "chunk_video_file",
+    "decode_h26x",
     "decode_jpeg",
-    "h26x_assembler",
+    "video_file",
     "process_sdp",
     "process_rtp",
 };
@@ -156,7 +156,6 @@ struct track_stream
     rtp_receiver_t *rtp_receiver;
     h26x_assembler_t *h26x_assembler;
     simple_decoder_t *decoder;
-    int queued_images;
     work_queue_t wq[TRACK_STREAM_NUM_JOB_TYPES];
 
     track_stream_stats_t stats;
@@ -232,6 +231,17 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     {
         work_queue_init(&ts->wq[i], tss->thread_pool, ts, work_queue_process_job, queued_job_names[i]);
     }
+
+    // the below sets how much data can be queued between each state, impacting latency, throughput and mem usage
+    // if a queue gets full it automatically 'pauses' the work queues feeding it until it has emptied a bit
+
+    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], 2);
+    work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], &ts->wq[TRACK_STREAM_JOB_H26X_DECODE]);
+    work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], &ts->wq[TRACK_STREAM_JOB_JPEG_DECODE]);
+
+    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], 2);
+    work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], &ts->wq[TRACK_STREAM_JOB_VIDEO_FILE_DATA]);
+
     return ts;
 }
 
@@ -340,13 +350,8 @@ static void process_results(track_stream_t *ts, track_results_t *r)
 static void end_of_main_pipeline(track_stream_t *ts)
 {
     assert(ts->inference_image==0);
-    if (work_queue_length(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA])<2)
-    {
-        input_debugf("========== RESUME =========");
-        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
-        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
-        work_queue_resume(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
-    }
+    input_debugf("========== RESUME =========");
+    work_queue_resume(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
 }
 
 static void thread_stream_run_process_inference_results(int id, track_stream_t *ts)
@@ -447,7 +452,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     input_debugf("====> running main pipe here");
 
     if ((ts->frame_count==0)||(single_frame)) ts->last_run_time=time-10.0;
-
+    //log_error("thread_stream_run_input_image_job time %f",time);
     if ((time<ts->last_run_time) || (time>ts->last_run_time+10.0))
     {
         log_warn("unexpected time jump %f->%f; resetting time",ts->last_run_time,time);
@@ -537,7 +542,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
 
 std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
 {
-    for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) work_queue_sync(&ts->wq[i]);
+    for(int i=TRACK_STREAM_NUM_JOB_TYPES-1;i>=0;i=i-1) work_queue_sync(&ts->wq[i]);
     //pthread_mutex_lock(&ts->main_job_mutex);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();
@@ -562,23 +567,11 @@ static ts_queued_job_t *ts_queued_job_create()
 static void track_stream_queue_job(track_stream_t *ts, ts_queued_job_t *new_job)
 {
     work_queue_add_job(&ts->wq[(int)new_job->type], (work_queue_item_header_t *)new_job);
-
-    if (new_job->type==TRACK_STREAM_JOB_MAIN_PIPELINE)
-    {
-        input_debugf("WQ %d %d",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]), work_queue_length(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]));
-
-        if (work_queue_length(&ts->wq[new_job->type])>2)
-        {
-            input_debugf("==pausing video data queue===");
-            work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
-            work_queue_pause(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
-        }
-    }
 }
 
 static void track_stream_queue_job_head(track_stream_t *ts, ts_queued_job_t *new_job)
 {
-    work_queue_add_job_head(&ts->wq[(int)new_job->type], (work_queue_item_header_t *)new_job);
+    work_queue_add_job(&ts->wq[(int)new_job->type], (work_queue_item_header_t *)new_job, true);
 }
 
 static void decoder_process_image(void *context, image_t *img)
@@ -598,7 +591,7 @@ static void decoder_process_image(void *context, image_t *img)
 bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length)
 {
     ts_queued_job_t *job=ts_queued_job_create();
-    job->type=TRACK_STREAM_JOB_JPEG;
+    job->type=TRACK_STREAM_JOB_JPEG_DECODE;
     job->data=(uint8_t *)malloc(jpeg_data_length);
     job->data_len=jpeg_data_length;
     memcpy(job->data, jpeg_data, jpeg_data_length);
@@ -620,12 +613,11 @@ static void h26x_frame_callback(void *context, const h26x_frame_descriptor_t *de
     // we queue it for decode
     track_stream_t *ts=(track_stream_t *)context;
     ts_queued_job_t *job=ts_queued_job_create();
-    job->type=TRACK_STREAM_JOB_ENCODED_FRAME;
+    job->type=TRACK_STREAM_JOB_H26X_DECODE;
     job->data=(uint8_t *)malloc(desc->annexb_length);
     job->data_len=desc->annexb_length;
     memcpy(job->data, desc->annexb_data, desc->annexb_length);
     job->time=desc->extended_rtp_timestamp/90000.0;
-
     input_debugf("h26x assembled frame t=%f, length %d",job->time,desc->annexb_length);
     job->is_iframe=desc->nal_stats.idr_count!=0;
     track_stream_queue_job(ts, job);
@@ -652,7 +644,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             tss->thread_pool->push(thread_stream_run_input_image_job, ts, img, time, single_frame);
             break;
         }
-        case TRACK_STREAM_JOB_VIDEO_DATA:
+        case TRACK_STREAM_JOB_VIDEO_FILE_DATA:
         {
             track_shared_state_t *tss=ts->tss;
             input_debugf("running input video data job");
@@ -667,51 +659,43 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
                 ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
                                                          ts, h26x_frame_callback);
             }
-            int ql_main=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
-            int ql_enc=work_queue_length(&ts->wq[TRACK_STREAM_JOB_ENCODED_FRAME]);
-            //printf("here %d\n",work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
 
-            if ((ql_main>2)||(ql_enc>2))
+            for(int i=0;i<32;i++)
             {
-                work_queue_pause(&ts->wq[TRACK_STREAM_JOB_VIDEO_DATA]);
-            }
-            else
-            {
-                for(int i=0;i<32;i++)
-                {
-                    size_t data_len=std::min((size_t)4096, job->data_len-job->data_offset);
-                    //
-                    //input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
-                    //simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
-                    int fr=h26x_assembler_process_raw_video(ts->h26x_assembler, job->fps, job->data+job->data_offset, data_len);
-                    input_debugf("feed %d %d %d",fr,(int)job->data_offset, (int)data_len);
-                    job->data_offset+=data_len;
-                    if (fr!=0 || job->data_len==0) break;
-                }
+                size_t data_len=std::min((size_t)4096, job->data_len-job->data_offset);
+                //
+                //input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
+                //simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
+                int fr=h26x_assembler_process_raw_video(ts->h26x_assembler, job->fps, job->data+job->data_offset, data_len);
+                input_debugf("[video file] feed %d %d/%d %d",fr,(int)job->data_offset, (int)job->data_len, (int)data_len);
+                job->data_offset+=data_len;
+                if (fr!=0 || data_len==0) break;
             }
 
             if (job->data_offset<job->data_len)
             {
                 // requeue remaining video data
+                input_debugf("[video file] requeue remaining %d bytes",(int)(job->data_len-job->data_offset));
                 track_stream_queue_job_head(ts, job);
             }
             else if (job->loop)
             {
                 job->data_offset=0;
+                input_debugf("[video file] loop requeue");
                 log_info("video loop");
                 track_stream_queue_job_head(ts, job);
             }
             else
             {
                 free(job->data);
-                input_debugf("free job1");
+                input_debugf("[video file] *** Job done - free job1");
                 block_free(job);
-                input_debugf("free job2");
+                input_debugf("[video file] free job2");
             }
             //input_debugf("running input video data job done");
             break;
         }
-        case TRACK_STREAM_JOB_JPEG:
+        case TRACK_STREAM_JOB_JPEG_DECODE:
         {
             image_t *img=decode_jpeg(job->data, job->data_len);
             free(job->data);
@@ -728,10 +712,11 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             out_job->time=job->time;
             out_job->single_frame=true;
             block_free(job);
+            input_debugf("queueing jpeg job");
             track_stream_queue_job(ts, out_job);
             break;
         }
-        case TRACK_STREAM_JOB_ENCODED_FRAME:
+        case TRACK_STREAM_JOB_H26X_DECODE:
         {
             input_debugf("Run encoded frame job time %f len %d",job->time,job->data_len);
             if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
@@ -796,7 +781,8 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
 
 static void do_track_stream_run(track_stream_t *ts, image_t *img, double time, bool single_frame)
 {
-    while(ts->queued_images>2)
+    input_debugf("do trackstream run %d", ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE].length);
+    while(work_queue_needs_backpressure(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
     {
         usleep(1000); // backpressure
     }
@@ -882,7 +868,7 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
         return;
     }
     ts_queued_job_t *job=ts_queued_job_create();
-    job->type=TRACK_STREAM_JOB_VIDEO_DATA;
+    job->type=TRACK_STREAM_JOB_VIDEO_FILE_DATA;
     job->data=(uint8_t *)mem;
     job->data_offset=0;
     job->data_len=sz;
