@@ -32,6 +32,7 @@ struct simple_decoder
     bool destroyed;
     bool use_frame_times;
     bool low_latency;
+    bool force_skip;
     //CUstream stream;
     CUvideoctxlock vidlock;
     CUvideodecoder decoder;
@@ -149,7 +150,8 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
 
     double time=pDispInfo->timestamp/90000.0;
 
-    bool skip=false;
+    bool skip=dec->force_skip;
+    dec->force_skip=false;
 
     if (dec->constraint_min_time_delta!=0)
     {
@@ -307,7 +309,7 @@ void simple_decoder_destroy(simple_decoder_t *dec)
     }
 }
 
-void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time)
+void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time, bool force_skip)
 {
     debugf("decode %d bytes; time=%f",data_size,frame_time);
     CUVIDSOURCEDATAPACKET packet = {0};
@@ -324,6 +326,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         dec->use_frame_times=false;
     }
     dec->stats_bytes_decoded+=data_size;
+    if (force_skip) dec->force_skip=true;
     CHECK_CUDA_CALL(cuvidParseVideoData(dec->videoParser, &packet));
 }
 

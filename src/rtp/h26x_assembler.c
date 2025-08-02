@@ -25,6 +25,7 @@ struct h26x_assembler {
     uint64_t                last_extended_ts;
     bool                    in_frame;
     bool                    is_complete;
+    bool                    frame_has_video_data;
 
     h26x_nal_stats_t        nal_stats;
     h26x_nal_stats_t        cum_nal_stats;
@@ -71,6 +72,7 @@ static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
     memset(&a->nal_stats, 0, sizeof(a->nal_stats));
     a->in_frame      = false;
     a->is_complete   = true;
+    a->frame_has_video_data = false;
 }
 
 /*
@@ -80,11 +82,12 @@ static inline void classify_nal(h26x_assembler_t *a, uint8_t nal_unit_header) {
     if (a->codec == H26X_CODEC_H264) {
         uint8_t nal_type = nal_unit_header & 0x1F;
         switch (nal_type) {
-            case 5:  a->nal_stats.idr_count++;     break;
+            case 5:  a->nal_stats.idr_count++; a->frame_has_video_data=true;   break;
             case 6:  a->nal_stats.sei_count++;     break;
             case 7:  a->nal_stats.sps_count++;     break;
             case 8:  a->nal_stats.pps_count++;     break;
             default:
+                a->frame_has_video_data=true; 
                 if (nal_type > 0 && nal_type < 24)
                     a->nal_stats.non_idr_count++;
                 else
@@ -95,13 +98,14 @@ static inline void classify_nal(h26x_assembler_t *a, uint8_t nal_unit_header) {
         uint8_t nal_type = (nal_unit_header >> 1) & 0x3F;
         switch (nal_type) {
             case 19:
-            case 20:  a->nal_stats.idr_count++;   break;
+            case 20:  a->nal_stats.idr_count++; a->frame_has_video_data=true;   break;
             case 32:  a->nal_stats.vps_count++;   break;
             case 33:  a->nal_stats.sps_count++;   break;
             case 34:  a->nal_stats.pps_count++;   break;
             case 39:
             case 40:  a->nal_stats.sei_count++;   break;
             default:
+                a->frame_has_video_data=true; 
                 if (nal_type < 48)
                     a->nal_stats.non_idr_count++;
                 else
@@ -350,7 +354,7 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
     }
 
     // If the RTP marker bit is set, emit assembled frame now
-    if (pkt->marker) {
+    if (pkt->marker && a->frame_has_video_data) {
         emit_frame(a, pkt->ssrc);
     }
 }

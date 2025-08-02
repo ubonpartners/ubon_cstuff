@@ -153,6 +153,9 @@ struct track_stream
     std::vector<track_results_t *> track_results_vec;
 
     //
+    float h26x_ql_iir;
+    uint32_t skip_counter;
+
     rtp_receiver_t *rtp_receiver;
     h26x_assembler_t *h26x_assembler;
     simple_decoder_t *decoder;
@@ -223,9 +226,9 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     ts->taux=track_aux_create(tss, ts->config_yaml);
 
-    fast_histogram_init(&ts->stats.h_pipeline_latency, 0.0f, 1.0f, 1.2f);
-    fast_histogram_init(&ts->stats.h_inference_results_time, 0.0f, 1.0f, 1.2f);
-    fast_histogram_init(&ts->stats.h_input_image_time, 0.0f, 1.0f, 1.2f);
+    fast_histogram_init(&ts->stats.h_pipeline_latency, 0.0f, 2.0f, 1.2f);
+    fast_histogram_init(&ts->stats.h_inference_results_time, 0.0f, 2.0f, 1.2f);
+    fast_histogram_init(&ts->stats.h_input_image_time, 0.0f, 2.0f, 1.2f);
 
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
     {
@@ -235,11 +238,11 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     // the below sets how much data can be queued between each state, impacting latency, throughput and mem usage
     // if a queue gets full it automatically 'pauses' the work queues feeding it until it has emptied a bit
 
-    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], 2);
+    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], 3);
     work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], &ts->wq[TRACK_STREAM_JOB_H26X_DECODE]);
     work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE], &ts->wq[TRACK_STREAM_JOB_JPEG_DECODE]);
 
-    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], 2);
+    work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], 4);
     work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], &ts->wq[TRACK_STREAM_JOB_VIDEO_FILE_DATA]);
 
     return ts;
@@ -663,9 +666,6 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             for(int i=0;i<32;i++)
             {
                 size_t data_len=std::min((size_t)4096, job->data_len-job->data_offset);
-                //
-                //input_debugf("Decode video %d/%d (Q img %d)",(int)job->data_offset,(int)job->data_len, work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]));
-                //simple_decoder_decode(ts->decoder, job->data+job->data_offset, data_len);
                 int fr=h26x_assembler_process_raw_video(ts->h26x_assembler, job->fps, job->data+job->data_offset, data_len);
                 input_debugf("[video file] feed %d %d/%d %d",fr,(int)job->data_offset, (int)job->data_len, (int)data_len);
                 job->data_offset+=data_len;
@@ -718,8 +718,25 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
         }
         case TRACK_STREAM_JOB_H26X_DECODE:
         {
+            int main_queue_length=work_queue_length(&ts->wq[TRACK_STREAM_JOB_MAIN_PIPELINE]);
+            int queue_length=work_queue_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE]);
+            float diff=((queue_length+main_queue_length)-ts->h26x_ql_iir);
+            ts->h26x_ql_iir+=((diff>0) ? 0.3 : 0.1)*diff;
+            float skip_frac=std::min(0.95f, 2*ts->h26x_ql_iir);
+            //printf("%p QL %d %d : %f\n",ts,main_queue_length,queue_length,ts->h26x_ql_iir);
+            ts->skip_counter++;
+            bool force_skip=false;
+            int c=ts->skip_counter % 8;
+            force_skip|=((skip_frac>0.125)&&(c==7));
+            force_skip|=((skip_frac>0.250)&&(c==3));
+            force_skip|=((skip_frac>0.5)&&((c==1)||(c==5)));
+            force_skip|=((skip_frac>0.75)&&((c==2)||(c==6)));
+            force_skip|=((skip_frac>0.875)&&(c==4));
+
+            //printf("%f\n",skip_frac);
+
             input_debugf("Run encoded frame job time %f len %d",job->time,job->data_len);
-            if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time);
+            if (ts->decoder) simple_decoder_decode(ts->decoder, job->data, job->data_len, job->time,force_skip);
             free(job->data);
             block_free(job);
             break;

@@ -43,6 +43,7 @@ typedef struct infer_thread_stats
     float mean_batch_size;
     float mean_roi_area;
     fast_histogram_t queue_latency_histogram;
+    fast_histogram_t total_latency_histogram;
 } infer_thread_stats_t;
 
 typedef struct infer_thread_result_data

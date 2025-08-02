@@ -63,7 +63,7 @@ jpeg_thread_t *jpeg_thread_create(const char *yaml_config)
     assert(jt!=0);
     memset(jt, 0, sizeof(jpeg_thread_t));
     debugf("Jpeg thread create");
-    fast_histogram_init(&jt->fh_latency, 0, 1.0, 1.2);
+    fast_histogram_init(&jt->fh_latency, 0, 2.0, 1.2);
     jt->num_worker_threads=yaml_get_int_value(yaml_base["jpeg_num_worker_threads"], 2);
     debugf("%d jpeg worker threads", jt->num_worker_threads);
     // create worker threads

@@ -147,10 +147,14 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
             stream_state_t *ss=&ctx.ss[i];
             ss->packet_play_time+=delta;
             parsed_pcap_t *pp=ss->parsed_pcap;
+            uint8_t *pkts[32];
+            int lens[32];
+            int n_add=0;
             while(1)
             {
                 if (ss->packet_play_offs>=pp->num_packets)
                 {
+                    printf("RTP loop\n");
                     ss->packet_play_offs=0;
                     ss->packet_play_time=0;
                     break;
@@ -158,11 +162,23 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
                 rtp_packet_t *pkt=pp->pkt[ss->packet_play_offs];
                 if (pkt->capture_time<ss->packet_play_time)
                 {
-                    track_stream_add_rtp_packets(ss->ts, 1, &pkt->data, &pkt->packet_length);
+                    pkts[n_add]=pkt->data;
+                    lens[n_add]=pkt->packet_length;
+                    n_add++;
+                    if (n_add>=32)
+                    {
+                        track_stream_add_rtp_packets(ss->ts, n_add, pkts, lens);
+                        n_add=0;
+                    }
                     ss->packet_play_offs++;
                     continue;
                 }
                 break;
+            }
+            if (n_add>0)
+            {
+                //printf("TS %p add %d\n",ss->ts,n_add);
+                track_stream_add_rtp_packets(ss->ts, n_add, pkts, lens);
             }
         }
     }
@@ -170,6 +186,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     for(int i=0;i<num_streams;i++) ctx.ss[i].running=false;
 
     float mean_latency_90=0;
+    float mean_latency_50=0;
     float min_fps=1000.0;
     float max_fps=0;
     float total_fps=0;
@@ -178,6 +195,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
         const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
         YAML::Node root=yaml_load(stream_stats);
         mean_latency_90+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_90"].as<float>();
+        mean_latency_50+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_50"].as<float>();
         free((void*)stream_stats);
 
         stream_state_t *ss=&ctx.ss[i];
@@ -188,6 +206,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
 
     }
     mean_latency_90/=num_streams;
+    mean_latency_50/=num_streams;
     float mean_fps=total_fps/num_streams;
 
     const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
@@ -196,7 +215,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     for(int i=0;i<num_streams;i++) track_stream_destroy(ctx.ss[i].ts);
     track_shared_state_destroy(ctx.tss);
 
-    if (0) {
+    if (1) {
         const char *platform_stats=platform_get_stats();
         printf("======== PLATFORM STATS ===========\n");
         printf("%s\n",platform_stats);
@@ -216,7 +235,8 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
         << " - " << std::setw(5)  << std::fixed << std::setprecision(1) << max_fps
         << " Tot " << std::setw(6)  << std::fixed << std::setprecision(1) << total_fps
         << " Avg " << std::setw(5)  << std::fixed << std::setprecision(1) << mean_fps
-        << " Lat " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_90;
+        << " Lat50 " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_50
+        << " Lat90 " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_90;
 
     return oss.str();
 }
@@ -243,10 +263,10 @@ int main(int argc, char *argv[]) {
 
     std::ostringstream r;
 
-    int min_str=(platform_is_jetson()) ? 1 : 10;
-    int max_str=(platform_is_jetson()) ? 10 : 100;
-    int step=(platform_is_jetson()) ? 1 : 10;
-    double target_runtime=platform_is_jetson() ? 20 : 10;
+    int min_str=(platform_is_jetson()) ? 4 : 14;
+    int max_str=(platform_is_jetson()) ? 20 : 100;
+    int step=(platform_is_jetson()) ? 2 : 10;
+    double target_runtime=platform_is_jetson() ? 30 : 10;
 
     for(int ns=min_str;ns<=max_str;ns+=step)
     {

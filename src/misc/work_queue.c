@@ -61,10 +61,11 @@ static void work_queue_process_work(int id, work_queue_t *wq)
     assert(job!=0);
     wq->head=job->next;
     assert(true==wq->executing);
+    bool need_resume=(wq->length==wq->backpressure_length);
     wq->length--;
     pthread_mutex_unlock(&wq->lock);
 
-    if (wq->length<wq->backpressure_length)
+    if (need_resume)
     {
         for(int i=0;i<wq->num_wq_backpressure;i++)
         {

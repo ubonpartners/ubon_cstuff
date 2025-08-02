@@ -215,8 +215,15 @@ static void *infer_thread_fn(void *arg)
             }
         }
 
-        double infer_elapse_time=profile_time()-infer_start_time;
+        double end_time=profile_time();
+        double infer_elapse_time=end_time-infer_start_time;
         h->stats.batch_size_histogram_total_time[count]+=infer_elapse_time;
+
+        for(int i=0;i<count;i++)
+        {
+            double total_time=end_time-jobs[i]->enqueue_time;
+            fast_histogram_add_sample(&h->stats.total_latency_histogram, total_time);
+        }
 
         // 5) Signal each job’s result handle, passing back its own detection_list_t*
         for (int i = 0; i < count; ++i) {
@@ -276,6 +283,7 @@ infer_thread_t *infer_thread_start(const char *model_trt, const char *config_yam
     h->job_head = h->job_tail = NULL;
     h->stop = 0;
     fast_histogram_init(&h->stats.queue_latency_histogram, 0.0f, 1.0f, 1.2f);
+    fast_histogram_init(&h->stats.total_latency_histogram, 0.0f, 1.0f, 1.2f);
 
     // Spawn the worker thread
     int ret = pthread_create(&h->thread_handle, NULL, infer_thread_fn, h);
@@ -518,6 +526,7 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
     root["mean_batch_size"] = ss.mean_batch_size;
     root["mean_roi_area"]   = ss.mean_roi_area;
     root["queue_latency_histogram"]=fast_histogram_get_stats(&h->stats.queue_latency_histogram);
+    root["total_latency_histogram"]=fast_histogram_get_stats(&h->stats.total_latency_histogram);
 
     YAML::Node histogram;
     for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {

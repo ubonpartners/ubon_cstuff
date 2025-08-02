@@ -320,9 +320,9 @@ extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,
                               image_t      *img,
                               CUstream      stream );
 
-static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer, double time)
+static void process_nvbuffer(simple_decoder_t *ctx, NvBuffer *dec_buffer, double time, bool force_skip)
 {
-    bool skip=false;
+    bool skip=force_skip;
     debugf("Process nvbuffer time %f",time);
     if (ctx->constraint_min_time_delta!=0)
     {
@@ -462,6 +462,9 @@ static void *dec_capture_loop_fn(void *arg)
             //printf("2tv_sec = %ld, tv_usec = %ld\n",
             //    (long)tv.tv_sec, (long)tv.tv_usec);
 
+            bool force_skip=(v4l2_buf.timestamp.tv_usec&3)!=0;
+            //printf("FS %d %d\n",force_skip,((int)v4l2_buf.timestamp.tv_usec)&3);
+
             double time_in_seconds =(double)v4l2_buf.timestamp.tv_sec +
                                     (double)v4l2_buf.timestamp.tv_usec*0.000001;
 
@@ -469,7 +472,7 @@ static void *dec_capture_loop_fn(void *arg)
                 ret = dec->getMetadata(v4l2_buf.index, d);
                 print_metadata(ctx, &d);
             }
-            process_nvbuffer(ctx, dec_buffer, time_in_seconds);
+            process_nvbuffer(ctx, dec_buffer, time_in_seconds, force_skip);
             /* If not writing to file,
              * Queue the buffer back once it has been used. */
             if (!ctx->got_eos)
@@ -604,7 +607,7 @@ void simple_decoder_destroy(simple_decoder_t *ctx)
     log_info("decoder destroyed cleanly");
 }
 
-void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time)
+void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time, bool force_skip)
 {
     int ret;
     simple_decoder_t *ctx = dec;
@@ -645,6 +648,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
         v4l2_buf.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
         tv.tv_sec  = (time_t)frame_time;
         tv.tv_usec = (suseconds_t)((frame_time - tv.tv_sec) * 1e6);
+        tv.tv_usec = (tv.tv_usec & (~3)) | (force_skip ? 3 : 0);
         v4l2_buf.timestamp = tv;
 
         /* Queue an empty buffer to signal EOS to the decoder
