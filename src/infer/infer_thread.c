@@ -64,6 +64,7 @@ struct infer_thread {
     infer_job_t *job_head;
     infer_job_t *job_tail;
     int stop;
+    int performance_mode;
     infer_thread_stats_t stats;
 };
 
@@ -159,7 +160,7 @@ static void *infer_thread_fn(void *arg)
 
             //display_image("crop", img_cropped[0]);
 
-            infer_batch(h->infer, img_cropped, dets_arr, count);
+            infer_batch(h->infer, img_cropped, dets_arr, count, h->performance_mode);
             for(int i=0;i<count;i++) dets_arr[i]->md=h->md; // attach the model description
 
             for (int i = 0; i < count; ++i)
@@ -451,6 +452,11 @@ infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_
     pthread_mutex_unlock(&h->queue_mutex);
 
     return handle;
+}
+
+void infer_thread_set_performance_mode(infer_thread_t *t, int mode)
+{
+    t->performance_mode=mode;
 }
 
 void infer_thread_wait_result(infer_thread_result_handle_t *handle, infer_thread_result_data_t *d)

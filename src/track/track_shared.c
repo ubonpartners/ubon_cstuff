@@ -28,6 +28,8 @@ static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
     pthread_barrier_wait(barrier);
 }
 
+static void *track_shared_state_thread(void *);
+
 track_shared_state_t *track_shared_state_create(const char *yaml_config)
 {
     YAML::Node yaml_base=yaml_load(yaml_config);
@@ -35,12 +37,14 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     assert(tss!=0);
     memset(tss, 0, sizeof(track_shared_state_t));
     debugf("Track shared state create");
+    pthread_mutex_init(&tss->lock, 0);
     tss->config_yaml=yaml_to_cstring(yaml_base);
     tss->max_width=yaml_get_int_value(yaml_base["max_width"], 1280);
     tss->max_height=yaml_get_int_value(yaml_base["max_height"], 1280);
     tss->num_worker_threads=yaml_get_int_value(yaml_base["num_worker_threads"], 4);
     tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
     tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
+    tss->track_stream_set=new std::unordered_set<track_stream_t *>;
 
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
@@ -118,6 +122,9 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     }
 
     tss->jpeg_thread=jpeg_thread_create(tss->config_yaml);
+
+    int ret = pthread_create(&tss->thread_handle, NULL,  track_shared_state_thread, tss);
+    assert(ret == 0);
     // done
     return tss;
 }
@@ -130,11 +137,16 @@ model_description_t *track_shared_state_get_model_description(track_shared_state
 void track_shared_state_destroy(track_shared_state_t *tss)
 {
     if (!tss) return;
+    assert(0==tss->track_stream_set->size());
+    tss->stop=true;
     tss->thread_pool->stop();
     delete tss->thread_pool;
+    delete tss->track_stream_set;
     for(int i=0;i<INFER_THREAD_NUM_TYPES;i++) if (tss->infer_thread[i]) infer_thread_destroy(tss->infer_thread[i]);
     jpeg_thread_destroy(tss->jpeg_thread);
+    pthread_join(tss->thread_handle, NULL);
     free((void *)tss->config_yaml);
+    pthread_mutex_destroy(&tss->lock);
     free(tss);
 }
 
@@ -155,4 +167,52 @@ const char *track_shared_state_get_stats(track_shared_state_t *tss)
     root["jpeg_threads"]=jpeg_thread_stats(tss->jpeg_thread);
 
     return yaml_to_cstring(root);
+}
+
+void track_shared_state_register_stream(track_shared_state_t *tss, track_stream_t *ts)
+{
+    pthread_mutex_lock(&tss->lock);
+    tss->track_stream_set->insert(ts);
+    pthread_mutex_unlock(&tss->lock);
+}
+
+void track_shared_state_deregister_stream(track_shared_state_t *tss, track_stream_t *ts)
+{
+    pthread_mutex_lock(&tss->lock);
+    tss->track_stream_set->erase(ts);
+    pthread_mutex_unlock(&tss->lock);
+}
+
+static void *track_shared_state_thread(void *context)
+{
+    track_shared_state_t *tss=(track_shared_state_t *)context;
+    while(tss->stop==false)
+    {
+        usleep(500*1000);
+        //printf("* %d\n",(int)tss->track_stream_set->size());
+        pthread_mutex_lock(&tss->lock);
+        int n=0;
+        float mean_h26x_ql=0;
+
+        for (auto* ts : *tss->track_stream_set) {
+            track_stream_perf_data_t pd;
+            track_stream_poll_performance_data(ts, &pd);
+            mean_h26x_ql+=pd.h26x_ql_iir;
+            n++;
+        }
+        pthread_mutex_unlock(&tss->lock);
+
+        if (n>0) mean_h26x_ql/=n;
+        //printf("Mean QL %f\n",mean_h26x_ql);
+        int performance_mode=3;
+        if (mean_h26x_ql<0.25)
+            performance_mode=0;
+        else if (mean_h26x_ql<0.5)
+            performance_mode=1;
+        else
+            performance_mode=2;
+        infer_thread_set_performance_mode(tss->infer_thread[0], performance_mode);
+
+    }
+    return 0;
 }

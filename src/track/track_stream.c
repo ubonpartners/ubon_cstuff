@@ -245,6 +245,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     work_queue_set_backpressure_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], 4);
     work_queue_set_backpressure_queue(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE], &ts->wq[TRACK_STREAM_JOB_VIDEO_FILE_DATA]);
 
+    track_shared_state_register_stream(tss, ts);
     return ts;
 }
 
@@ -297,6 +298,8 @@ void track_stream_destroy(track_stream_t *ts)
     // destroy is a bit fiddly to avoid race conditions
     // first we are safe to destroy all input work
     // as long as under mutex
+
+    track_shared_state_deregister_stream(ts->tss, ts);
 
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++) work_queue_stop(&ts->wq[i]);
 
@@ -931,4 +934,9 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
     job->data_offset=0;
     job->data_len=tlen;
     track_stream_queue_job(ts, job);
+}
+
+void track_stream_poll_performance_data(track_stream_t *ts, track_stream_perf_data_t *pd)
+{
+    pd->h26x_ql_iir=ts->h26x_ql_iir;
 }

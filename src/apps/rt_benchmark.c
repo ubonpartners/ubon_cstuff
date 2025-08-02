@@ -263,10 +263,10 @@ int main(int argc, char *argv[]) {
 
     std::ostringstream r;
 
-    int min_str=(platform_is_jetson()) ? 4 : 14;
-    int max_str=(platform_is_jetson()) ? 20 : 100;
-    int step=(platform_is_jetson()) ? 2 : 10;
-    double target_runtime=platform_is_jetson() ? 30 : 10;
+    int min_str=(platform_is_jetson()) ? 4 : 60;
+    int max_str=(platform_is_jetson()) ? 20 : 160;
+    int step=(platform_is_jetson()) ? 2 : 20;
+    double target_runtime=platform_is_jetson() ? 30 : 20;
 
     for(int ns=min_str;ns<=max_str;ns+=step)
     {

@@ -67,6 +67,6 @@ void infer_configure(infer_t *inf, infer_config_t *config);
 model_description_t *infer_get_model_description(infer_t *inf);
 void infer_print_model_description(model_description_t *md);
 detection_list_t *infer(infer_t *inf, image_t *img);
-void infer_batch(infer_t *inf, image_t **img, detection_list_t **dets, int num);
+void infer_batch(infer_t *inf, image_t **img, detection_list_t **dets, int num, int performance_mode=0);
 
 #endif

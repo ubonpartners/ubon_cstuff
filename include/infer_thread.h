@@ -58,6 +58,7 @@ void infer_thread_destroy(infer_thread_t *t);
 model_description_t *infer_thread_get_model_description(infer_thread_t *h);
 aux_model_description_t *infer_thread_get_aux_model_description(infer_thread_t *h);
 void infer_thread_configure(infer_thread_t *t, infer_config_t *config);
+void infer_thread_set_performance_mode(infer_thread_t *t, int mode);
 
 infer_thread_result_handle_t *infer_thread_infer_async(infer_thread_t *h, image_t *img, roi_t roi);
 void infer_thread_wait_result(infer_thread_result_handle_t *h, infer_thread_result_data_t *d);

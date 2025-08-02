@@ -759,7 +759,7 @@ static void process_detections_cuda_nms(infer_t *inf, int num, int columns, int 
     }
 }
 
-void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int num)
+void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int num, int performance_mode)
 {
     // check
     for(int i=0;i<num;i++)
@@ -796,6 +796,18 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     }
     inf_max_w=std::max(inf->inf_limit_min_width, inf_max_w);
     inf_max_h=std::max(inf->inf_limit_min_height, inf_max_h);
+
+    if (performance_mode==1)
+    {
+        inf_max_w=std::min(inf_max_w, 512);
+        inf_max_h=std::min(inf_max_h, 512);
+    }
+    else if (performance_mode>1)
+    {
+        inf_max_w=std::min(inf_max_w, 416);
+        inf_max_h=std::min(inf_max_h, 416);
+    }
+
     int infer_w=std::max(inf->min_w, std::min(inf_max_w, (max_w+16)&(~31)));
     int infer_h=std::max(inf->min_h, std::min(inf_max_h, (max_h+16)&(~31)));
     FILE_TRACE("INFER SIZE %dx%d (limit %dx%d)",infer_w,infer_h, inf->inf_limit_max_width, inf->inf_limit_max_height);
@@ -824,7 +836,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         image_t *img=(testimage!=0) ? testimage : img_list[i];
         determine_scale_size(img->width, img->height, infer_w, infer_h, image_widths+i,image_heights+i,
                           10, 2, 2, inf->inf_allow_upscale);
-        //printf("%dx%d %dx%d %dx%d %d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0], img->format);
+        //printf("%dx%d %dx%d %dx%d %d ups %d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0], img->format,inf->inf_allow_upscale);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
         //display_image("test",image_scaled);
     //usleep(1000*500);
@@ -976,7 +988,7 @@ detection_list_t *infer(infer_t *inf, image_t *img)
     detection_list_t *ret[1];
     image_t *images[1];
     images[0]=img;
-    infer_batch(inf, images, ret, 1);
+    infer_batch(inf, images, ret, 1, 0);
     return ret[0];
 }
 
