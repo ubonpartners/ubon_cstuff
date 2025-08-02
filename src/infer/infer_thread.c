@@ -155,11 +155,12 @@ static void *infer_thread_fn(void *arg)
             {
                 img_cropped[i]=image_crop_roi(jobs[i]->img, jobs[i]->roi, &inference_roi[i]);
                 assert(img_cropped[i]!=0);
-                h->stats.total_roi_area=roi_area(&inference_roi[i]);
+                h->stats.total_roi_area+=roi_area(&inference_roi[i]);
             }
 
             //display_image("crop", img_cropped[0]);
-
+            assert(h->performance_mode<MAX_PERFORMANCE_MODE);
+            h->stats.performance_mode_count[h->performance_mode]++;
             infer_batch(h->infer, img_cropped, dets_arr, count, h->performance_mode);
             for(int i=0;i<count;i++) dets_arr[i]->md=h->md; // attach the model description
 
@@ -533,6 +534,11 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
     root["mean_roi_area"]   = ss.mean_roi_area;
     root["queue_latency_histogram"]=fast_histogram_get_stats(&h->stats.queue_latency_histogram);
     root["total_latency_histogram"]=fast_histogram_get_stats(&h->stats.total_latency_histogram);
+
+    YAML::Node pc_node;
+    for(int i=0;i<MAX_PERFORMANCE_MODE;i++)
+        if (h->stats.performance_mode_count[i]!=0) pc_node[std::to_string(i)]=h->stats.performance_mode_count[i];
+    root["performance_mode_count"]=pc_node;
 
     YAML::Node histogram;
     for (int i = 1; i < INFER_THREAD_MAX_BATCH; ++i) {

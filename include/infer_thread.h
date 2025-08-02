@@ -32,6 +32,8 @@ typedef struct infer_thread infer_thread_t;
 
 typedef struct infer_thread_result_handle infer_thread_result_handle_t;
 
+#define MAX_PERFORMANCE_MODE 8
+
 typedef struct infer_thread_stats
 {
     uint32_t batch_size_histogram[INFER_THREAD_MAX_BATCH];
@@ -42,6 +44,7 @@ typedef struct infer_thread_stats
     float total_roi_area;
     float mean_batch_size;
     float mean_roi_area;
+    uint32_t performance_mode_count[MAX_PERFORMANCE_MODE];
     fast_histogram_t queue_latency_histogram;
     fast_histogram_t total_latency_histogram;
 } infer_thread_stats_t;

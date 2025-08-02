@@ -190,12 +190,16 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     float min_fps=1000.0;
     float max_fps=0;
     float total_fps=0;
+    int nonskipped_frames=0;
+    int skipped_frames=0;
     for(int i=0;i<num_streams;i++)
     {
         const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
         YAML::Node root=yaml_load(stream_stats);
         mean_latency_90+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_90"].as<float>();
         mean_latency_50+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_50"].as<float>();
+        nonskipped_frames+=root["main_processing"]["stats"]["nonskipped_input_image_count"].as<float>();
+        skipped_frames+=root["main_processing"]["stats"]["skipped_input_image_count"].as<float>();
         free((void*)stream_stats);
 
         stream_state_t *ss=&ctx.ss[i];
@@ -208,10 +212,16 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     mean_latency_90/=num_streams;
     mean_latency_50/=num_streams;
     float mean_fps=total_fps/num_streams;
+    float skipped_percent=skipped_frames/(nonskipped_frames+skipped_frames+1e-7);
 
     const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
     const char *shared_state_stats=track_shared_state_get_stats(ctx.tss);
-
+    YAML::Node root=yaml_load(shared_state_stats);
+    float mean_roi=root["infer_threads"]["main_detection"]["mean_roi_area"].as<float>();
+    float pm0=root["infer_threads"]["main_detection"]["performance_mode_count"]["0"].as<float>();
+    float pm1=root["infer_threads"]["main_detection"]["performance_mode_count"]["1"].as<float>();
+    float pm2=root["infer_threads"]["main_detection"]["performance_mode_count"]["2"].as<float>();
+    float pmt=(pm0+pm1+pm2+1e-7);
     for(int i=0;i<num_streams;i++) track_stream_destroy(ctx.ss[i].ts);
     track_shared_state_destroy(ctx.tss);
 
@@ -223,7 +233,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
         printf("======== SHARED TRACK STATS ===========\n");
         printf("%s\n\n",shared_state_stats);
         free((void*)shared_state_stats);
-        printf("======== STREAM STATS) ===========\n");
+        printf("======== STREAM STATS ===========\n");
         printf("%s\n\n", stream_stats);
         free((void*)stream_stats);
     }
@@ -236,7 +246,12 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
         << " Tot " << std::setw(6)  << std::fixed << std::setprecision(1) << total_fps
         << " Avg " << std::setw(5)  << std::fixed << std::setprecision(1) << mean_fps
         << " Lat50 " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_50
-        << " Lat90 " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_90;
+        << " Lat90 " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_latency_90
+        << " Skp " << std::setw(5)  << std::fixed << std::setprecision(3) << skipped_percent
+        << " ROI " << std::setw(5)  << std::fixed << std::setprecision(3) << mean_roi
+        << " PM0 " << std::setw(5)  << std::fixed << std::setprecision(3) << pm0/pmt
+        << " PM1 " << std::setw(5)  << std::fixed << std::setprecision(3) << pm1/pmt
+        << " PM2 " << std::setw(5)  << std::fixed << std::setprecision(3) << pm2/pmt;
 
     return oss.str();
 }
