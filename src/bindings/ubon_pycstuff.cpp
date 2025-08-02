@@ -970,7 +970,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
 
     py::class_<c_track_shared, std::shared_ptr<c_track_shared>>(m, "c_track_shared_state")
         .def(py::init<const std::string&>())
-        .def("get_model_description", &c_track_shared::get_model_description);
+        .def("get_model_description", &c_track_shared::get_model_description)
+        .def("get_stats", &c_track_shared::get_stats);
 
     py::class_<c_track_stream>(m, "c_track_stream")
         .def(py::init<std::shared_ptr<c_track_shared>>(), py::arg("shared_state"))
@@ -980,6 +981,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_on_video_file", &c_track_stream::run_on_video_file)
         .def("set_sdp", &c_track_stream::set_sdp)
         .def("add_rtp_packets", &c_track_stream::add_rtp_packets)
+        .def("get_stats", &c_track_stream::get_stats)
         .def("get_results", &c_track_stream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
