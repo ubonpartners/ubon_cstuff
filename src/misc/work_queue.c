@@ -32,8 +32,7 @@ static void work_queue_try_start_execution(work_queue_t *wq)
     assert(0!=pthread_mutex_trylock(&wq->lock));
     debugf("[%s] try start execution: length=%d paused=%d", wq->name, wq->length,wq->paused);
     if (wq->length==0) return;
-    if (wq->paused) return;
-    if (wq->destroying) return;
+    if (wq->paused || wq->stopped || wq->destroying) return;
     if (wq->executing==false)
     {
         debugf("[%s] pushed work run",wq->name);
@@ -171,7 +170,7 @@ void work_queue_stop(work_queue_t *wq)
         if ((wq->locked==false)&&(wq->executing==false)) break;
         pthread_mutex_unlock(&wq->lock);
         iters++;
-        if ((iters%1000)==0) log_warn("wq stop: %s %d",wq->name,wq->resume_count);
+        if ((iters%1000)==0) log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->resume_count,wq->length,wq->stats_jobs_run);
         usleep(1000);
         assert(iters<20000);
     }
