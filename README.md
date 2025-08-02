@@ -53,6 +53,7 @@ Runs/tested on **x86+Nvidia GPU** (UBONCSTUFF_PLATFORM=0) and **Jetson Orin Nano
 - Automatic support for fp16/int8 models with fp16/fp32 I/O
 - Automatic batch building
 - Support for object detector models, and "auxillary" models
+- Efficient face alignment / image extraction using GPU texture units
 - Current auxilliary models: Face embedding models, CLIP embedding models, FIQA face quality models, audio event detection
 
 ---
