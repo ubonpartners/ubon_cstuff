@@ -635,6 +635,12 @@ public:
         return  convert_model_description(track_shared_state_get_model_description(state));
     }
 
+    std::string get_stats() const {
+        const char *res = track_shared_state_get_stats(state);
+        return std::string(res ? res : "");  // safe copy
+        if (res) free((void*)res);
+    }
+
     track_shared_state_t* get() const { return state; }
 
 private:
@@ -693,6 +699,12 @@ public:
             storage.push_back(std::move(s)); // keep the bytes alive
         }
         track_stream_add_rtp_packets(stream,static_cast<int>(packets.size()),data_ptrs.data(),lengths.data());
+    }
+
+    std::string get_stats() const {
+        const char *res = track_stream_get_stats(stream);
+        return std::string(res ? res : "");  // safe copy
+        if (res) free((void*)res);
     }
 
     std::vector<py::dict> get_results() {
