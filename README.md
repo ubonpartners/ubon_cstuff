@@ -4,9 +4,15 @@
 
 This repo provides a set of modular, GPU-aware C components for image and video processing — with seamless Python integration via `pybind11`.
 
+Runs/tested on **x86+Nvidia GPU** (UBONCSTUFF_PLATFORM=0) and **Jetson Orin Nano** (UBONCSTUFF_PLATFORM=1).
+
 ---
 
 ## 🔧 Features
+
+### Realtime and Non-realtime
+- Uses thread pools and task queues with automatic backpressure
+- Automatic performance scaling (e.g. changing inference resolution/skipping decoded frames) to maintain latency/FR
 
 ### Surface Abstraction
 - Unified wrapper for working with host and GPU image buffers
@@ -35,14 +41,19 @@ This repo provides a set of modular, GPU-aware C components for image and video 
 - Hardware and software decoder support:
   - OpenH264 (software)
   - NVDEC (NVIDIA GPU-accelerated decode) H264/H265
+  - Jetson Orin Nano hardware decoder
 
 ### Optical Flow
 - Support for:
   - NVIDIA Optical Flow SDK (NVOF); latest v3 support with NV12 or mono
-  - VPI (in progress…) based on https://docs.nvidia.com/vpi/installation.html
+  - VPI on Jetson Orin 
 
 ### Inference
 - TensorRT accelerated inference with support for batched processing and flexible surface input
+- Automatic support for fp16/int8 models with fp16/fp32 I/O
+- Automatic batch building
+- Support for object detector models, and "auxillary" models
+- Current auxilliary models: Face embedding models, CLIP embedding models, FIQA face quality models, audio event detection
 
 ---
 
