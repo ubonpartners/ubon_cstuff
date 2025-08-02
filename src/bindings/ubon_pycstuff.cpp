@@ -674,6 +674,27 @@ public:
         track_stream_run_video_file(stream, file, codec, video_fps, loop_forever);
     }
 
+    void set_sdp(const char *sdp_str) {
+        track_stream_set_sdp(stream, sdp_str);
+    }
+
+    void add_rtp_packets(const std::vector<py::bytes> &packets) {
+        // Hold backing storage so raw pointers remain valid
+        std::vector<std::string> storage;
+        storage.reserve(packets.size());
+        std::vector<uint8_t*> data_ptrs;
+        data_ptrs.reserve(packets.size());
+        std::vector<int> lengths;
+        lengths.reserve(packets.size());
+        for (auto &pkt : packets) {
+            std::string s = pkt; // copy py::bytes → std::string
+            lengths.push_back(static_cast<int>(s.size()));
+            data_ptrs.push_back(reinterpret_cast<uint8_t*>(s.data()));
+            storage.push_back(std::move(s)); // keep the bytes alive
+        }
+        track_stream_add_rtp_packets(stream,static_cast<int>(packets.size()),data_ptrs.data(),lengths.data());
+    }
+
     std::vector<py::dict> get_results() {
         std::vector<py::dict> results_out;
         auto results = track_stream_get_results(stream);
@@ -945,6 +966,8 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
         .def("run_on_video_file", &c_track_stream::run_on_video_file)
+        .def("set_sdp", &c_track_stream::set_sdp)
+        .def("add_rtp_packets", &c_track_stream::add_rtp_packets)
         .def("get_results", &c_track_stream::get_results);
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
