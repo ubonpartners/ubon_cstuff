@@ -725,7 +725,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             int queue_length=work_queue_length(&ts->wq[TRACK_STREAM_JOB_H26X_DECODE]);
             float diff=((queue_length+main_queue_length)-ts->h26x_ql_iir);
             ts->h26x_ql_iir+=((diff>0) ? 0.3 : 0.1)*diff;
-            float skip_frac=std::min(0.95f, 2*ts->h26x_ql_iir);
+            float skip_frac=std::min(0.95f, ts->h26x_ql_iir);
             //printf("%p QL %d %d : %f\n",ts,main_queue_length,queue_length,ts->h26x_ql_iir);
             ts->skip_counter++;
             bool force_skip=false;

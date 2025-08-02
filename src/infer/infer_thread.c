@@ -537,7 +537,7 @@ YAML::Node infer_thread_stats_node(infer_thread_t *h)
 
     YAML::Node pc_node;
     for(int i=0;i<MAX_PERFORMANCE_MODE;i++)
-        if (h->stats.performance_mode_count[i]!=0) pc_node[std::to_string(i)]=h->stats.performance_mode_count[i];
+        pc_node[std::to_string(i)]=h->stats.performance_mode_count[i];
     root["performance_mode_count"]=pc_node;
 
     YAML::Node histogram;

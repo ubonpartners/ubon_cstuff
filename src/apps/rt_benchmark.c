@@ -218,9 +218,9 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     const char *shared_state_stats=track_shared_state_get_stats(ctx.tss);
     YAML::Node root=yaml_load(shared_state_stats);
     float mean_roi=root["infer_threads"]["main_detection"]["mean_roi_area"].as<float>();
-    float pm0=root["infer_threads"]["main_detection"]["performance_mode_count"]["0"].as<float>();
-    float pm1=root["infer_threads"]["main_detection"]["performance_mode_count"]["1"].as<float>();
-    float pm2=root["infer_threads"]["main_detection"]["performance_mode_count"]["2"].as<float>();
+    float pm0=root["infer_threads"]["main_detection"]["performance_mode_count"]["0"].as<int>();
+    float pm1=root["infer_threads"]["main_detection"]["performance_mode_count"]["1"].as<int>();
+    float pm2=root["infer_threads"]["main_detection"]["performance_mode_count"]["2"].as<int>();
     float pmt=(pm0+pm1+pm2+1e-7);
     for(int i=0;i<num_streams;i++) track_stream_destroy(ctx.ss[i].ts);
     track_shared_state_destroy(ctx.tss);

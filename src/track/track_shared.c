@@ -205,9 +205,9 @@ static void *track_shared_state_thread(void *context)
         if (n>0) mean_h26x_ql/=n;
         //printf("Mean QL %f\n",mean_h26x_ql);
         int performance_mode=3;
-        if (mean_h26x_ql<0.25)
+        if (mean_h26x_ql<0.15)
             performance_mode=0;
-        else if (mean_h26x_ql<0.5)
+        else if (mean_h26x_ql<0.3)
             performance_mode=1;
         else
             performance_mode=2;
