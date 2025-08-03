@@ -32,7 +32,7 @@ typedef struct rtp_packet
     uint8_t *data;
 } rtp_packet_t;
 
-#define MAX_PACKETS 30000
+#define MAX_PACKETS 160000
 
 typedef struct parsed_pcap
 {
@@ -190,16 +190,18 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     float min_fps=1000.0;
     float max_fps=0;
     float total_fps=0;
-    int nonskipped_frames=0;
-    int skipped_frames=0;
+    float total_nonskipped_frames=0;
+    float total_skipped_frames=0;
     for(int i=0;i<num_streams;i++)
     {
-        const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
+        const char *stream_stats=track_stream_get_stats(ctx.ss[i].ts);
         YAML::Node root=yaml_load(stream_stats);
         mean_latency_90+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_90"].as<float>();
         mean_latency_50+=root["main_processing"]["stats"]["pipeline_latency_histogram"]["centile_50"].as<float>();
-        nonskipped_frames+=root["main_processing"]["stats"]["nonskipped_input_image_count"].as<float>();
-        skipped_frames+=root["main_processing"]["stats"]["skipped_input_image_count"].as<float>();
+        float nonskipped_frames=root["main_processing"]["stats"]["nonskipped_input_image_count"].as<float>();
+        float skipped_frames=root["main_processing"]["stats"]["skipped_input_image_count"].as<float>();
+        total_nonskipped_frames+=nonskipped_frames;
+        total_skipped_frames+=skipped_frames;
         free((void*)stream_stats);
 
         stream_state_t *ss=&ctx.ss[i];
@@ -212,7 +214,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     mean_latency_90/=num_streams;
     mean_latency_50/=num_streams;
     float mean_fps=total_fps/num_streams;
-    float skipped_percent=skipped_frames/(nonskipped_frames+skipped_frames+1e-7);
+    float skipped_percent=total_skipped_frames/(total_nonskipped_frames+total_skipped_frames+1e-7);
 
     const char *stream_stats=track_stream_get_stats(ctx.ss[num_streams/2].ts);
     const char *shared_state_stats=track_shared_state_get_stats(ctx.tss);
@@ -258,11 +260,14 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
 
 
 static const char *inputs[]={
-    "/mldata/video/test/clip1_1280x720_5.00fps_h265.pcap",
-    "/mldata/video/test/clip2_1280x720_5.00fps_h265.pcap",
-    "/mldata/video/test/clip3_1280x720_5.00fps_h265.pcap",
-    //"/mldata/video/test/UKof_LD_Indoor_Light_OHcam_003_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/clip1_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/clip2_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/clip3_1280x720_5.00fps_h265.pcap",
     //"/mldata/video/test/waiting_area2_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/MOT20-05_1280x832_5.00fps_h265.pcap",
+    //"/mldata/video/test/UKof_LD_Indoor_Light_OHcam_003_1280x720_5.00fps_h265.pcap",
+    
+    "/mldata/video/test/MOT20-05_4096x2672_25.00fps_h265.pcap",
     //"/mldata/video/test/clip1_1280x720_5.00fps_h264.pcap",
     //"/mldata/video/test/clip2_1280x720_5.00fps_h264.pcap",
     //"/mldata/video/test/clip3_1280x720_5.00fps_h264.pcap"
