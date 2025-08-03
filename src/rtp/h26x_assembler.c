@@ -41,6 +41,7 @@ struct h26x_assembler {
  * Emit the assembled frame (if any) via callback, then reset state for next frame.
  */
 static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
+    debugf("Emit frame! %d",(int)a->frame_len);
     if (!a->in_frame || a->frame_len == 0) {
         return;
     }
@@ -87,7 +88,7 @@ static inline void classify_nal(h26x_assembler_t *a, uint8_t nal_unit_header) {
             case 7:  a->nal_stats.sps_count++;     break;
             case 8:  a->nal_stats.pps_count++;     break;
             default:
-                a->frame_has_video_data=true; 
+                a->frame_has_video_data=true;
                 if (nal_type > 0 && nal_type < 24)
                     a->nal_stats.non_idr_count++;
                 else
@@ -105,7 +106,7 @@ static inline void classify_nal(h26x_assembler_t *a, uint8_t nal_unit_header) {
             case 39:
             case 40:  a->nal_stats.sei_count++;   break;
             default:
-                a->frame_has_video_data=true; 
+                a->frame_has_video_data=true;
                 if (nal_type < 48)
                     a->nal_stats.non_idr_count++;
                 else
@@ -295,7 +296,6 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
         bool start = (fu_hdr & 0x80) != 0;
         bool end   = (fu_hdr & 0x40) != 0;  // not used here except for debugging
         uint8_t orig_nal_type = (fu_hdr & 0x3F);
-
         if (start) {
             // Reconstruct the first two bytes of the original NuH:
             //  • Rebuilt NuH[0] = (F<<7) | (orig_nal_type<<1) | (layer_id_msb<<0)

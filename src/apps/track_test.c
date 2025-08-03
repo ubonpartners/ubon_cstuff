@@ -20,10 +20,12 @@ typedef struct state
     double start_time;
 } state_t;
 
+static bool realtime=false;
+
 static void track_result(void *context, track_results_t *r)
 {
     state_t *s=(state_t *)context;
-    printf("track_result: result type %d time %f, %d dtections\n",r->result_type,r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
+    printf("track_result: result type %d time %f, %d detections\n",r->result_type,r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
     if (r->track_dets!=0)
     {
         //detection_list_show(r->track_dets);
@@ -48,6 +50,7 @@ static void track_result(void *context, track_results_t *r)
         if (img!=0)
         {
             image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
+            printf("%f %f\n",s->img->meta.time, r->time);
             if (out_frame_rgb!=0)
             {
                 display_image("video", out_frame_rgb);
@@ -55,11 +58,21 @@ static void track_result(void *context, track_results_t *r)
             }
             image_destroy(img);
         }
-        double target_time=r->time;
-        /*while(profile_time()-s->start_time<target_time)
+        static bool first=true;
+        static double first_result_time;
+        if (first)
         {
-            usleep(1000);
-        }*/
+            first=false;
+            first_result_time=r->time;
+        }
+        double target_time=r->time-first_result_time;
+        if (realtime)
+        {
+            while(profile_time()-s->start_time<target_time)
+            {
+                usleep(1000);
+            }
+        }
     }
     if (r->track_dets && r->track_dets->frame_jpeg)
     {
@@ -119,7 +132,18 @@ int main(int argc, char *argv[])
             image_destroy(i);
         }
     }
+    track_stream_sync(s.ts);
+    printf("Done!\n");
+    usleep(100000);
 
+    const char *stream_stats=track_stream_get_stats(s.ts);
+    const char *shared_state_stats=track_shared_state_get_stats(s.tss);
+    printf("======== SHARED TRACK STATS ===========\n");
+    printf("%s\n\n",shared_state_stats);
+    free((void*)shared_state_stats);
+    printf("======== STREAM STATS ===========\n");
+    printf("%s\n\n", stream_stats);
+    free((void*)stream_stats);
 
     return 0;
 }

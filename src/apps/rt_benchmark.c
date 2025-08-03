@@ -258,9 +258,14 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
 
 
 static const char *inputs[]={
-    "/mldata/video/test/clip1_1280x720_5.00fps_h264.pcap",
-    "/mldata/video/test/clip2_1280x720_5.00fps_h264.pcap",
-    "/mldata/video/test/clip3_1280x720_5.00fps_h264.pcap"
+    "/mldata/video/test/clip1_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/clip2_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/clip3_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/UKof_LD_Indoor_Light_OHcam_003_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/waiting_area2_1280x720_5.00fps_h265.pcap",
+    //"/mldata/video/test/clip1_1280x720_5.00fps_h264.pcap",
+    //"/mldata/video/test/clip2_1280x720_5.00fps_h264.pcap",
+    //"/mldata/video/test/clip3_1280x720_5.00fps_h264.pcap"
 };
 
 int main(int argc, char *argv[]) {

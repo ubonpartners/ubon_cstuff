@@ -482,7 +482,6 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     }
 
     double start_time=profile_time();
-    ts->stats.nonskipped_input_image_count++;
 
     determine_scale_size(img->width, img->height,
                          tss->max_width, tss->max_height, &scale_w, &scale_h,
@@ -523,12 +522,14 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         r->inference_dets=0;
         ts->last_run_time=time;
         ts->last_skip=true;
+        ts->stats.skipped_input_image_count++;
         process_results(ts, r);
         input_debugf("====>main pipe done (skip2) resuming WQ");
         end_of_main_pipeline(ts);
         return;
     }
     ts->last_skip=false;
+    ts->stats.nonskipped_input_image_count++;
     // now we are definitely doing a full run
     ts->last_run_time=time;
     ts->motion_roi=motion_roi;
@@ -546,9 +547,14 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     fast_histogram_add_sample(&ts->stats.h_input_image_time, (float)(profile_time()-start_time));
 }
 
-std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
+void track_stream_sync(track_stream_t *ts)
 {
     for(int i=TRACK_STREAM_NUM_JOB_TYPES-1;i>=0;i=i-1) work_queue_sync(&ts->wq[i]);
+}
+
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
+{
+    track_stream_sync(ts);
     //pthread_mutex_lock(&ts->main_job_mutex);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();

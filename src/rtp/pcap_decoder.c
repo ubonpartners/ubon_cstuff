@@ -46,8 +46,13 @@ static void decoder_frame_callback(void *context, image_t *img)
 static void h26x_assembler_callback(void *context, const h26x_frame_descriptor_t *desc)
 {
     pcap_decoder_t *p=(pcap_decoder_t *)context;
-    debugf("assembler has output complete frame");
+    debugf("assembler has output complete frame length %d time %f",(int)desc->annexb_length,desc->extended_rtp_timestamp/90000.0);
     //printf("%lx %f\n",desc->extended_rtp_timestamp,desc->extended_rtp_timestamp/90000.0);
+    /*static FILE *f;
+    if (f==0) f=fopen("out.265","wb");
+    fwrite(desc->annexb_data,1,desc->annexb_length,f);
+    fflush(f);*/
+
     simple_decoder_decode(p->decoder, desc->annexb_data, desc->annexb_length, desc->extended_rtp_timestamp/90000.0);
 }
 
