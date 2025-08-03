@@ -23,13 +23,14 @@ struct track_shared_state
     std::unordered_set<track_stream_t *> *track_stream_set;
 };
 
-struct track_stream_performance_state
+/*struct track_stream_performance_state
 {
     float dummy;
-};
+};*/
 
 typedef struct track_stream_perf_data
 {
+    bool realtime;
     float h26x_ql_iir;
 } track_stream_perf_data_t;
 

@@ -13,7 +13,7 @@
 #include "yaml_stuff.h"
 #include "profile.h"
 
-#define debugf if (0) log_debug
+#define debugf if (0) log_error
 
 #define MAX_DECODE_W    3840
 #define MAX_DECODE_H    2160
@@ -171,6 +171,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
 
     if (skip)
     {
+        debugf("decoder skip last %f this %f delta %f min %f",dec->last_output_time,time,time-dec->last_output_time,dec->constraint_min_time_delta);
         // early return if the frame not needed, avoid a lot of work
         dec->stats_frames_output_skipped++;
         return 1;
@@ -245,7 +246,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
         dec->scaled_height=out_img->height;
         scaled_out_img=image_reference(out_img);
     }
-
+    debugf("decoder output t=%f\n",scaled_out_img->meta.time);
     dec->frame_callback(dec->context, scaled_out_img);
     if (scaled_out_img) image_destroy(scaled_out_img);
     if (out_img) image_destroy(out_img);

@@ -191,7 +191,6 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
         {
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
             ta->main_jpeg_last_time=img->meta.time;
-
             if ((ta->clip_infer_thread!=0) && (ta->clip_object_embeddings_enabled))
             {
                 dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);

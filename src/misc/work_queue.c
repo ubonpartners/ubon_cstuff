@@ -200,8 +200,9 @@ void work_queue_sync(work_queue_t *wq)
         pthread_mutex_unlock(&wq->lock);
         if (empty) break;
         iter++;
-        if ((iter % 2000)==0) log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d)",
-                                        wq->name, iter/1000.0, wq->length, wq->stopped, wq->destroying);
+        if ((iter % 1000)==0) log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d)",
+                                        wq->name, iter/1000.0, wq->length, wq->stopped, wq->destroying,
+                                        wq->executing, wq->stats_jobs_run);
         usleep(10000);
     }
 }

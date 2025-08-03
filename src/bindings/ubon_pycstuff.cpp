@@ -649,10 +649,15 @@ private:
 
 class c_track_stream {
 public:
-    explicit c_track_stream(std::shared_ptr<c_track_shared> shared_state_py)
+    explicit c_track_stream(std::shared_ptr<c_track_shared> shared_state_py,
+                            std::optional<std::string> config_yaml = std::nullopt,
+                            std::optional<bool> realtime=std::nullopt)
         : shared_state(shared_state_py)
     {
-        stream = track_stream_create(shared_state->get(), nullptr, nullptr);
+        const char* yaml_c = config_yaml ? config_yaml->c_str() : nullptr;
+        bool rt = realtime.value_or(false);
+        stream = track_stream_create(shared_state->get(), nullptr, nullptr, yaml_c, rt);
+
         if (!stream)
             throw std::runtime_error("Failed to create track stream");
     }
@@ -974,7 +979,12 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("get_stats", &c_track_shared::get_stats);
 
     py::class_<c_track_stream>(m, "c_track_stream")
-        .def(py::init<std::shared_ptr<c_track_shared>>(), py::arg("shared_state"))
+        .def(py::init<std::shared_ptr<c_track_shared>,
+              std::optional<std::string>,
+              std::optional<bool>>(),
+             py::arg("shared_state"),
+             py::arg("config_yaml") = std::nullopt,
+             py::arg("realtime") = std::nullopt)
         .def("set_frame_intervals", &c_track_stream::set_frame_intervals)
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)

@@ -197,8 +197,11 @@ static void *track_shared_state_thread(void *context)
         for (auto* ts : *tss->track_stream_set) {
             track_stream_perf_data_t pd;
             track_stream_poll_performance_data(ts, &pd);
-            mean_h26x_ql+=pd.h26x_ql_iir;
-            n++;
+            if (pd.realtime)
+            {
+                mean_h26x_ql+=pd.h26x_ql_iir;
+                n++;
+            }
         }
         pthread_mutex_unlock(&tss->lock);
 

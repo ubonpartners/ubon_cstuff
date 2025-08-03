@@ -116,7 +116,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     ctx.tss = track_shared_state_create(config);
     for(int i=0;i<num_streams;i++)
     {
-        ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result);
+        ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result, 0, true);
         ctx.ss[i].parsed_pcap=parsed[i%n_parsed];
         track_stream_set_sdp(ctx.ss[i].ts, ctx.ss[i].parsed_pcap->sdp);
         track_stream_set_minimum_frame_intervals(ctx.ss[i].ts, 1.0/10.0, 10.0);
@@ -260,14 +260,14 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
 
 
 static const char *inputs[]={
-    //"/mldata/video/test/clip1_1280x720_5.00fps_h265.pcap",
-    //"/mldata/video/test/clip2_1280x720_5.00fps_h265.pcap",
-    //"/mldata/video/test/clip3_1280x720_5.00fps_h265.pcap",
-    //"/mldata/video/test/waiting_area2_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/clip1_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/clip2_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/clip3_1280x720_5.00fps_h265.pcap",
+    "/mldata/video/test/waiting_area2_1280x720_5.00fps_h265.pcap",
     //"/mldata/video/test/MOT20-05_1280x832_5.00fps_h265.pcap",
-    //"/mldata/video/test/UKof_LD_Indoor_Light_OHcam_003_1280x720_5.00fps_h265.pcap",
-    
-    "/mldata/video/test/MOT20-05_4096x2672_25.00fps_h265.pcap",
+    "/mldata/video/test/UKof_LD_Indoor_Light_OHcam_003_1280x720_5.00fps_h265.pcap",
+
+    //"/mldata/video/test/MOT20-05_4096x2672_25.00fps_h265.pcap",
     //"/mldata/video/test/clip1_1280x720_5.00fps_h264.pcap",
     //"/mldata/video/test/clip2_1280x720_5.00fps_h264.pcap",
     //"/mldata/video/test/clip3_1280x720_5.00fps_h264.pcap"

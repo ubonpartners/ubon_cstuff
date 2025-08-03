@@ -130,6 +130,7 @@ struct track_stream
     void (*result_callback)(void *context, track_results_t *results);
     //
     uint32_t frame_count;
+    bool realtime;
     bool single_frame; // treat frame as an individual frame, not a video frame
     bool destroying;
     motion_track_t *mt;
@@ -194,7 +195,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
 
 track_stream_t *track_stream_create(track_shared_state_t *tss,
                                     void *result_callback_context, void (*result_callback)(void *context, track_results_t *results),
-                                    const char *config_yaml)
+                                    const char *config_yaml, bool realtime)
 {
     std::call_once(initFlag, track_stream_init);
 
@@ -206,6 +207,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->config_yaml=yaml_to_cstring(yaml_base);
 
     ts->frame_count=0;
+    ts->realtime=realtime;
     ts->tss=tss;
     ts->result_callback_context=result_callback_context;
     ts->result_callback=result_callback;
@@ -467,7 +469,6 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     time_delta=time-ts->last_run_time+1e-7;
     ts->frame_count++;
     ts->single_frame=single_frame;
-    //printf("time %f delta %f min %f skip %d\n",time,time_delta,ts->min_time_delta_process,(time_delta<ts->min_time_delta_process));
     if ((time_delta<ts->min_time_delta_process) || (img==0))
     {
         if (img!=0) image_destroy(img);
@@ -735,12 +736,15 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             //printf("%p QL %d %d : %f\n",ts,main_queue_length,queue_length,ts->h26x_ql_iir);
             ts->skip_counter++;
             bool force_skip=false;
-            int c=ts->skip_counter % 8;
-            force_skip|=((skip_frac>0.125)&&(c==7));
-            force_skip|=((skip_frac>0.250)&&(c==3));
-            force_skip|=((skip_frac>0.5)&&((c==1)||(c==5)));
-            force_skip|=((skip_frac>0.75)&&((c==2)||(c==6)));
-            force_skip|=((skip_frac>0.875)&&(c==4));
+            if (ts->realtime)
+            {
+                int c=ts->skip_counter % 8;
+                force_skip|=((skip_frac>0.125)&&(c==7));
+                force_skip|=((skip_frac>0.250)&&(c==3));
+                force_skip|=((skip_frac>0.5)&&((c==1)||(c==5)));
+                force_skip|=((skip_frac>0.75)&&((c==2)||(c==6)));
+                force_skip|=((skip_frac>0.875)&&(c==4));
+            }
 
             //printf("%f\n",skip_frac);
 
@@ -944,5 +948,6 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
 
 void track_stream_poll_performance_data(track_stream_t *ts, track_stream_perf_data_t *pd)
 {
+    pd->realtime=ts->realtime;
     pd->h26x_ql_iir=ts->h26x_ql_iir;
 }
