@@ -64,7 +64,7 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
 // embedding to use for search. You are guaranteed to get one result_callback per JPEG
 // note: jpeg decode of arbitrary images is dangerous - suggest transcoding unsafe input
 // in a separate cloud process before passing into this function
-bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length);
+bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length, bool single_image=true, double time=0);
 
 //=================================================================================================
 // stream config - these things are already defaulted in the shared state yaml config
@@ -94,8 +94,8 @@ void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
 void track_stream_run_single_frame(track_stream_t *ts, image_t *img);
 // if you do not provide a result callback then the results are accumulated into a vector
 // (one entry per frame) and can be retrieved with the below
-std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts);
-track_results_t *track_results_create();
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, bool wait=true);
+track_results_t *track_results_create(bool wait);
 void track_results_destroy(track_results_t *tr);
 
 

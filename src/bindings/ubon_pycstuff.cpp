@@ -681,6 +681,14 @@ public:
             track_stream_run_single_frame(stream, img->raw());
     }
 
+    void run_on_jpeg(py::bytes jpeg, bool single_image, double time)
+    {
+        char* buffer;
+        ssize_t length;
+        PyBytes_AsStringAndSize(jpeg.ptr(), &buffer, &length);
+        track_stream_run_on_jpeg(stream, reinterpret_cast<uint8_t*>(buffer), static_cast<int>(length), single_image, time);
+    }
+
     void run_on_video_file(const char *file, simple_decoder_codec_t codec, double video_fps, bool loop_forever) {
         track_stream_run_video_file(stream, file, codec, video_fps, loop_forever);
     }
@@ -712,9 +720,9 @@ public:
         if (res) free((void*)res);
     }
 
-    std::vector<py::dict> get_results() {
+    std::vector<py::dict> get_results(bool wait) {
         std::vector<py::dict> results_out;
-        auto results = track_stream_get_results(stream);
+        auto results = track_stream_get_results(stream, wait);
         for (auto& res : results) {
             py::dict d;
             d["result_type"] = res->result_type;
@@ -989,10 +997,11 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
         .def("run_on_video_file", &c_track_stream::run_on_video_file)
+        .def("run_on_jpeg", &c_track_stream::run_on_jpeg)
         .def("set_sdp", &c_track_stream::set_sdp)
         .def("add_rtp_packets", &c_track_stream::add_rtp_packets)
         .def("get_stats", &c_track_stream::get_stats)
-        .def("get_results", &c_track_stream::get_results);
+        .def("get_results", &c_track_stream::get_results, py::arg("wait"));
 
     py::enum_<simple_decoder_codec_t>(m, "SimpleDecoderCodec")
         .value("SIMPLE_DECODER_CODEC_UNKNOWN", SIMPLE_DECODER_CODEC_UNKNOWN)

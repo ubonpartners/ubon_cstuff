@@ -24,13 +24,14 @@ static void work_queue_process_work(int id, work_queue_t *wq);
 static void work_queue_pause_internal(work_queue_t *wq)
 {
     assert(0!=pthread_mutex_trylock(&wq->lock));
+    if (wq->paused==false) wq->stats_pause_count++;
     wq->paused=true;
 }
 
 static void work_queue_try_start_execution(work_queue_t *wq)
 {
     assert(0!=pthread_mutex_trylock(&wq->lock));
-    debugf("[%s] try start execution: length=%d paused=%d", wq->name, wq->length,wq->paused);
+    debugf("[%s] try start execution: length=%d paused=%d (PC %d RC %d)", wq->name, wq->length,wq->paused,wq->stats_pause_count,wq->stats_resume_count);
     if (wq->length==0) return;
     if (wq->paused || wq->stopped || wq->destroying) return;
     if (wq->executing==false)
@@ -49,8 +50,8 @@ static void work_queue_try_start_execution(work_queue_t *wq)
 static void work_queue_resume_internal(work_queue_t *wq)
 {
     wq->locked=false;
+    if (wq->paused==true) wq->stats_resume_count++;
     wq->paused=false;
-    wq->resume_count++;
     work_queue_try_start_execution(wq);
 }
 
@@ -62,6 +63,7 @@ static void work_queue_process_work(int id, work_queue_t *wq)
     wq->head=job->next;
     assert(true==wq->executing);
     bool need_resume=(wq->length==wq->backpressure_length);
+    debugf("[%s] start execute %p %d %d",wq->name, job,wq->length, wq->backpressure_length);
     wq->length--;
     pthread_mutex_unlock(&wq->lock);
 
@@ -69,15 +71,16 @@ static void work_queue_process_work(int id, work_queue_t *wq)
     {
         for(int i=0;i<wq->num_wq_backpressure;i++)
         {
-            pthread_mutex_lock(&wq->wq_backpressure[i]->lock);
+            work_queue_t *wq_bp=wq->wq_backpressure[i];
+            pthread_mutex_lock(&wq_bp->lock);
             debugf("[%s] WQ resuming %s (with len=%d, paused=%d)",
                 wq->name,
-                wq->wq_backpressure[i]->name,
-                wq->wq_backpressure[i]->length,
-                wq->wq_backpressure[i]->paused);
+                wq_bp->name,
+                wq_bp->length,
+                wq_bp->paused);
 
-            work_queue_resume_internal(wq->wq_backpressure[i]);
-            pthread_mutex_unlock(&wq->wq_backpressure[i]->lock);
+            work_queue_resume_internal(wq_bp);
+            pthread_mutex_unlock(&wq_bp->lock);
         }
     }
 
@@ -93,7 +96,7 @@ static void work_queue_process_work(int id, work_queue_t *wq)
     wq->stats_jobs_run++;
     wq->stats_total_time+=elapsed;
     wq->executing=false;
-    debugf("[%s] end of execute",wq->name);
+    debugf("[%s] end of execute paused=%d",wq->name,wq->paused);
     work_queue_try_start_execution(wq);
     pthread_mutex_unlock(&wq->lock);
 }
@@ -136,10 +139,15 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, 
     {
         for(int i=0;i<wq->num_wq_backpressure;i++)
         {
-            debugf("WQ %s (len %3d) pausing %s",wq->name, wq->length, wq->wq_backpressure[i]->name);
-            pthread_mutex_lock(&wq->wq_backpressure[i]->lock);
-            wq->wq_backpressure[i]->paused=true;
-            pthread_mutex_unlock(&wq->wq_backpressure[i]->lock);
+            work_queue_t *wq_bp=wq->wq_backpressure[i];
+            pthread_mutex_lock(&wq_bp->lock);
+
+            debugf("[%s] (len %3d) pausing %s (existing %dd)",wq->name, wq->length,
+                wq->wq_backpressure[i]->name,
+                wq->wq_backpressure[i]->paused);
+            if (wq_bp->paused==false) wq_bp->stats_pause_count++;
+            wq_bp->paused=true;
+            pthread_mutex_unlock(&wq_bp->lock);
         }
     }
 
@@ -171,7 +179,7 @@ void work_queue_stop(work_queue_t *wq)
         if ((wq->locked==false)&&(wq->executing==false)) break;
         pthread_mutex_unlock(&wq->lock);
         iters++;
-        if ((iters%1000)==0) log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->resume_count,wq->length,wq->stats_jobs_run);
+        if ((iters%1000)==0) log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->stats_resume_count,wq->length,wq->stats_jobs_run);
         usleep(1000);
         assert(iters<20000);
     }
@@ -200,9 +208,9 @@ void work_queue_sync(work_queue_t *wq)
         pthread_mutex_unlock(&wq->lock);
         if (empty) break;
         iter++;
-        if ((iter % 1000)==0) log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d)",
+        if ((iter % 1000)==0) log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d PC %d RC %d)",
                                         wq->name, iter/1000.0, wq->length, wq->stopped, wq->destroying,
-                                        wq->executing, wq->stats_jobs_run);
+                                        wq->executing, wq->stats_jobs_run, wq->stats_pause_count, wq->stats_resume_count);
         usleep(10000);
     }
 }

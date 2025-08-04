@@ -19,7 +19,7 @@
 #include "yaml_stuff.h"
 #include "fiqa.h"
 
-#define debugf if (0) log_info
+#define debugf if (0) log_error
 
 static std::once_flag initFlag;
 static block_allocator_t *aux_data_allocator;
@@ -187,6 +187,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
     if (ta->main_jpeg_enabled && img!=0)
     {
         double time_delta=img->meta.time-ta->main_jpeg_last_time;
+        debugf("jpeg delta %f %f %f",img->meta.time,time_delta,ta->main_jpeg_min_interval_seconds);
         if (time_delta>ta->main_jpeg_min_interval_seconds || single_frame)
         {
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);

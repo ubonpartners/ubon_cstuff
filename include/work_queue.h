@@ -20,7 +20,6 @@ struct work_queue
     pthread_mutex_t lock;
     ctpl::thread_pool *thread_pool;
     uint32_t length;
-    uint32_t resume_count;
     bool locked;
     bool stopped;
     bool destroying;
@@ -32,6 +31,7 @@ struct work_queue
     void (*callback)(void *context, work_queue_item_header_t *item);
     double stats_total_schedule_time;
     double stats_total_time;
+    uint32_t stats_resume_count, stats_pause_count;
     uint32_t stats_length_hwm;
     uint32_t stats_jobs_run;
     // auto backpressure handling

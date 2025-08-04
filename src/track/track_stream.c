@@ -122,6 +122,7 @@ typedef struct track_stream_stats
 
 struct track_stream
 {
+    pthread_mutex_t lock;
     track_shared_state_t *tss;
     track_aux_t *taux;
     const char *config_yaml;
@@ -202,7 +203,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     track_stream_t *ts=(track_stream_t *)malloc(sizeof(track_stream_t));
     assert(ts!=0);
     memset(ts, 0, sizeof(track_stream_t));
-
+    pthread_mutex_init(&ts->lock, 0);
     YAML::Node yaml_base=yaml_merge(tss->config_yaml, config_yaml);
     ts->config_yaml=yaml_to_cstring(yaml_base);
 
@@ -327,6 +328,7 @@ void track_stream_destroy(track_stream_t *ts)
     if (ts->utrack) utrack_destroy(ts->utrack);
     ts->utrack=0;
     track_aux_destroy(ts->taux);
+    pthread_mutex_destroy(&ts->lock);
     free((void*)ts->config_yaml);
     free(ts);
 }
@@ -352,7 +354,11 @@ static void process_results(track_stream_t *ts, track_results_t *r)
         track_results_destroy(r);
     }
     else
+    {
+        pthread_mutex_lock(&ts->lock);
         ts->track_results_vec.push_back(r);
+        pthread_mutex_unlock(&ts->lock);
+    }
 }
 
 static void end_of_main_pipeline(track_stream_t *ts)
@@ -553,12 +559,14 @@ void track_stream_sync(track_stream_t *ts)
     for(int i=TRACK_STREAM_NUM_JOB_TYPES-1;i>=0;i=i-1) work_queue_sync(&ts->wq[i]);
 }
 
-std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts)
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, bool wait)
 {
-    track_stream_sync(ts);
+    if (wait) track_stream_sync(ts);
     //pthread_mutex_lock(&ts->main_job_mutex);
+    pthread_mutex_lock(&ts->lock);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();
+    pthread_mutex_unlock(&ts->lock);
     //pthread_mutex_unlock(&ts->main_job_mutex);
     return ret;
 }
@@ -601,12 +609,14 @@ static void decoder_process_image(void *context, image_t *img)
     track_stream_queue_job(ts, job);
 }
 
-bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length)
+bool track_stream_run_on_jpeg(track_stream_t *ts, uint8_t *jpeg_data, int jpeg_data_length, bool single_image, double time)
 {
     ts_queued_job_t *job=ts_queued_job_create();
     job->type=TRACK_STREAM_JOB_JPEG_DECODE;
     job->data=(uint8_t *)malloc(jpeg_data_length);
     job->data_len=jpeg_data_length;
+    job->time=time;
+    job->single_frame=single_image;
     memcpy(job->data, jpeg_data, jpeg_data_length);
     track_stream_queue_job(ts, job);
     return true;
@@ -715,12 +725,13 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
                 // fixme - we need to always give a results callback for jpeg even if corrupt/missing/...
                 // better to explicitly flag this
             }
+            img->meta.time=job->time;
             // queue decoded image for further processing
             ts_queued_job_t *out_job=ts_queued_job_create();
             out_job->type=TRACK_STREAM_JOB_MAIN_PIPELINE;
             out_job->img=img;
             out_job->time=job->time;
-            out_job->single_frame=true;
+            out_job->single_frame=job->single_frame;
             block_free(job);
             input_debugf("queueing jpeg job");
             track_stream_queue_job(ts, out_job);
