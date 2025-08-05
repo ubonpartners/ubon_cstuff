@@ -57,8 +57,6 @@ struct nvof
 
     /* host buffers returned to caller -------------------------------- */
     flow_vector_t *flowHost = nullptr;
-    uint8_t       *costHost = nullptr;
-
     /* misc */
     uint32_t frameCount = 0;
     bool     use_nv12   = true;
@@ -74,7 +72,6 @@ static void destroyVPI(VPIImage &img)        { if (img) vpiImageDestroy(img), im
 static void destroyBuf(nvof *v)
 {
     if (v->flowHost) cudaFreeHost(v->flowHost), v->flowHost=nullptr;
-    if (v->costHost) cudaFreeHost(v->costHost), v->costHost=nullptr;
 }
 
 /* (re)alloc everything whenever resolution changes ------------------- */
@@ -120,9 +117,7 @@ static void set_size(nvof *v, int w, int h)
 
     /* host pinned result buffers */
     cudaHostAlloc(&v->flowHost, 4*v->outW*v->outH, cudaHostAllocDefault);
-    cudaHostAlloc(&v->costHost,   v->outW*v->outH, cudaHostAllocDefault);
     memset(v->flowHost,0,4*v->outW*v->outH);
-    memset(v->costHost,255,v->outW*v->outH);
 
     v->frameCount   = 0;
     v->nv12WrapInit = false;
@@ -214,9 +209,6 @@ static void export_motion_vectors(nvof *v)
     for(int y=0;y<v->outH;++y)
         memcpy(v->flowHost + y*v->outW, src + y*sp, v->outW*sizeof(flow_vector_t));
     vpiImageUnlock(v->mvPL);
-
-    /* OFA doesn’t provide costs */
-    memset(v->costHost,255,v->outW*v->outH);
 }
 
 /* --------------------------------------------------------------------- */
@@ -261,7 +253,6 @@ nvof_results_t *nvof_execute(nvof *v, image_t *img_in)
         export_motion_vectors(v);
     } else {
         memset(v->flowHost,0,4*v->outW*v->outH);
-        memset(v->costHost,255,v->outW*v->outH);
         CHECK_VPI(vpiStreamSync(v->vpi));
     }
 
@@ -275,7 +266,7 @@ nvof_results_t *nvof_execute(nvof *v, image_t *img_in)
     v->results.grid_w = v->outW;
     v->results.grid_h = v->outH;
     v->results.flow   = v->flowHost;
-    v->results.costs  = v->costHost;
+    v->results.costs  = 0;
 
     image_destroy(img); image_destroy(scaled);
     return &v->results;
@@ -315,6 +306,12 @@ void nvof_set_no_motion(nvof *v)
 {
     if(!v) return;
     memset(v->flowHost,0,4*v->outW*v->outH);
-    memset(v->costHost,0,  v->outW*v->outH);
 }
+
+void nvof_reset(nvof_t *n)
+{
+    if (!n) return;
+    n->frameCount=0;
+}
+
 #endif /* UBONCSTUFF_PLATFORM == 1 */

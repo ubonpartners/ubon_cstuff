@@ -127,16 +127,20 @@ static void motion_track_run_optical_flow(motion_track_t *mt, image_t *image_sca
             mt->of_results.grid_w=r->grid_w;
             mt->of_results.grid_h=r->grid_h;
             mt->of_results.flow=(oflow_vector_t*)r->flow;
-            int total_cost=0;
-            for(int y=0;y<r->grid_w*r->grid_h;y++)
+            if (r->costs!=0)
             {
-                total_cost+=std::max(0, r->costs[y]-5);
-            }
-            float avg_cost=(total_cost*1.0f)/(r->grid_w*r->grid_h);
-            if (mt->scene_change_sensitivity!=0)
-            {
-                mt->scene_change=(avg_cost>16.0*(1.0-mt->scene_change_sensitivity))&&(mt->frames_since_reset>2);
-                if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->meta.time, avg_cost, total_cost, mt->frames_since_reset);
+                int total_cost=0;
+                for(int y=0;y<r->grid_w*r->grid_h;y++)
+                {
+                    total_cost+=std::max(0, r->costs[y]-5);
+                }
+                float avg_cost=(total_cost*1.0f)/(r->grid_w*r->grid_h);
+
+                if (mt->scene_change_sensitivity!=0)
+                {
+                    mt->scene_change=(avg_cost>16.0*(1.0-mt->scene_change_sensitivity))&&(mt->frames_since_reset>2);
+                    if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->meta.time, avg_cost, total_cost, mt->frames_since_reset);
+                }
             }
         }
         else
