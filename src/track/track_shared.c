@@ -45,7 +45,7 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     tss->motiontrack_min_roi_after_skip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_skip"], 0.01);
     tss->motiontrack_min_roi_after_nonskip=yaml_get_float_value(yaml_base["motiontrack_min_roi_after_nonskip"], 0.05);
     tss->track_stream_set=new std::unordered_set<track_stream_t *>;
-
+    log_info("track shared %d worker threads", tss->num_worker_threads);
     // create worker threads
     tss->thread_pool=new ctpl::thread_pool(tss->num_worker_threads);
     pthread_barrier_t barrier;

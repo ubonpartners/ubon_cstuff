@@ -87,7 +87,7 @@ utrack_t *utrack_create(const char *yaml_config)
     std::call_once(initFlag, do_utrack_init);
     utrack_t *ut=(utrack_t *)malloc(sizeof(utrack_t));
     memset(ut, 0, sizeof(utrack_t));
-    YAML::Node yaml_base=yaml_load(yaml_config);
+    YAML::Node yaml_base=yaml_load(yaml_config)["utrack"];
 
     ut->next_track_id=0xbeef0000;
 

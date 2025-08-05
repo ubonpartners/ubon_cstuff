@@ -685,9 +685,9 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
 
             for(int i=0;i<32;i++)
             {
-                size_t data_len=std::min((size_t)4096, job->data_len-job->data_offset);
+                size_t data_len=std::min((size_t)2048, job->data_len-job->data_offset);
                 int fr=h26x_assembler_process_raw_video(ts->h26x_assembler, job->fps, job->data+job->data_offset, data_len);
-                input_debugf("[video file] feed %d %d/%d %d",fr,(int)job->data_offset, (int)job->data_len, (int)data_len);
+                input_debugf("[video file] feed %d) %d %d/%d %d",i,fr,(int)job->data_offset, (int)job->data_len, (int)data_len);
                 job->data_offset+=data_len;
                 if (fr!=0 || data_len==0) break;
             }

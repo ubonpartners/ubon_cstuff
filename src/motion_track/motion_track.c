@@ -18,9 +18,6 @@
 #include "misc.h"
 
 #define NVOF_SUPPORTED 1
-#if (UBONCSTUFF_PLATFORM == 1) // Orin Nano
-#undef NVOF_SUPPORTED
-#endif
 #define debugf if (0) log_debug
 
 struct motion_track
@@ -52,17 +49,17 @@ motion_track_t *motion_track_create(const char *yaml_config)
     motion_track_t *mt=(motion_track_t *)malloc(sizeof(motion_track_t));
     memset(mt, 0, sizeof(motion_track_t));
 
-    YAML::Node yaml_base=yaml_load(yaml_config);
+    YAML::Node yaml_base=yaml_load(yaml_config)["motiontrack"];
 
-    mt->mad_delta=yaml_get_float_value(yaml_base["motiontrack_mad_delta"], 24.0);
-    mt->max_width=yaml_get_int_value(yaml_base["motiontrack_max_width"], 320);    // must be <=64*8 = 512
-    mt->max_height=yaml_get_int_value(yaml_base["motiontrack_max_height"], 320);  // must be <=512
-    mt->alpha=yaml_get_float_value(yaml_base["motiontrack_alpha"], 0.9);
-    mt->beta=yaml_get_float_value(yaml_base["motiontrack_beta"], 0.995);
-    mt->generate_of_results=yaml_get_bool_value(yaml_base["motiontrack_generate_of_results"], true);
+    mt->mad_delta=yaml_get_float_value(yaml_base["mad_delta"], 24.0);
+    mt->max_width=yaml_get_int_value(yaml_base["max_width"], 320);    // must be <=64*8 = 512
+    mt->max_height=yaml_get_int_value(yaml_base["max_height"], 320);  // must be <=512
+    mt->alpha=yaml_get_float_value(yaml_base["alpha"], 0.9);
+    mt->beta=yaml_get_float_value(yaml_base["beta"], 0.995);
+    mt->generate_of_results=yaml_get_bool_value(yaml_base["generate_of_results"], true);
     assert(mt->max_width>=64 && mt->max_width<=512 && ((mt->max_width&7)==0));
     assert(mt->max_height>=64 && mt->max_height<=512 && ((mt->max_height&7)==0));
-    mt->blur=yaml_get_bool_value(yaml_base["motiontrack_blur"], true);
+    mt->blur=yaml_get_bool_value(yaml_base["blur"], true);
     mt->noise_floor_device=(float *)cuda_malloc(64*64*4);
     mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
     mt->row_masks_host=(uint8_t *)cuda_malloc_host(8*64);

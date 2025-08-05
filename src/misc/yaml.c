@@ -10,8 +10,9 @@
 #include <cstdarg>
 #include "yaml_stuff.h"
 #include "log.h"
+#include "platform_stuff.h"
 
-YAML::Node yaml_load(const char* input)
+YAML::Node yaml_load(const char* input, bool set_platform)
 {
     std::string str_input(input);
     YAML::Node ret;
@@ -42,6 +43,22 @@ YAML::Node yaml_load(const char* input)
         log_fatal("YAML parse error: input='%s'; error is '%s'",input,c_error_msg);
         assert(0);
     }
+
+    if (set_platform)
+    {
+        bool is_jetson=platform_is_jetson();
+        if (is_jetson)
+        {
+            filterNode(ret, "(platform:x86)");
+            renameKeys(ret, "(platform:jetson)");
+        }
+        else
+        {
+            filterNode(ret, "(platform:jetson)");
+            renameKeys(ret, "(platform:x86)");
+        }
+    }
+
     return ret;
 }
 
@@ -190,4 +207,111 @@ float yaml_get_float(const YAML::Node& base, float default_value, int count, ...
     float val = yaml_get_value_count(base, count, default_value, args, yaml_node_as_float);
     va_end(args);
     return val;
+}
+
+void filterNode(YAML::Node& node, const std::string& substr) {
+    switch (node.Type()) {
+        case YAML::NodeType::Map: {
+            // First, process children recursively
+            for (auto it = node.begin(); it != node.end(); ++it) {
+                const std::string key = it->first.as<std::string>();
+                if (key.find(substr) == std::string::npos) {
+                    filterNode(it->second, substr);
+                }
+            }
+            // Collect keys to remove
+            std::vector<std::string> to_remove;
+            for (auto it = node.begin(); it != node.end(); ++it) {
+                const std::string key = it->first.as<std::string>();
+                if (key.find(substr) != std::string::npos) {
+                    to_remove.push_back(key);
+                } else {
+                    // Also prune empty child maps/sequences
+                    YAML::Node child = it->second;
+                    if ((child.IsMap()  && child.size() == 0) ||
+                        (child.IsSequence() && child.size() == 0)) {
+                        to_remove.push_back(key);
+                    }
+                }
+            }
+            // Actually remove them
+            for (const auto& k : to_remove) {
+                node.remove(k);
+            }
+            break;
+        }
+        case YAML::NodeType::Sequence: {
+            // Process each element recursively, collect survivors
+            std::vector<YAML::Node> survivors;
+            for (auto elem : node) {
+                filterNode(elem, substr);
+                if (!( (elem.IsMap()      && elem.size() == 0) ||
+                       (elem.IsSequence() && elem.size() == 0) )) {
+                    survivors.push_back(elem);
+                }
+            }
+            // Overwrite sequence with survivors
+            node = YAML::Node(YAML::NodeType::Sequence);
+            for (auto& e : survivors) {
+                node.push_back(e);
+            }
+            break;
+        }
+        default:
+            // Scalars etc. – nothing to do
+            break;
+    }
+}
+
+// Recursively rename keys in-place: any map-key containing 'substr' will
+// have all occurrences of 'substr' removed from its name.
+// If renaming would collide with an existing key whose value is a sequence
+// and the new value is also a sequence, merge the two sequences.
+void renameKeys(YAML::Node& node, const std::string& substr) {
+    if (node.IsMap()) {
+        // 1) Recurse into all child values
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            renameKeys(it->second, substr);
+        }
+
+        // 2) Collect keys to rename
+        struct Op { std::string oldKey, newKey; YAML::Node value; };
+        std::vector<Op> ops;
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            const std::string key = it->first.as<std::string>();
+            if (key.find(substr) != std::string::npos) {
+                // strip all occurrences of substr
+                std::string newKey = key;
+                size_t pos;
+                while ((pos = newKey.find(substr)) != std::string::npos) {
+                    newKey.erase(pos, substr.size());
+                }
+                ops.push_back({ key, newKey, it->second });
+            }
+        }
+
+        // 3) Apply renames (remove oldKey, then merge or overwrite)
+        for (auto& op : ops) {
+            node.remove(op.oldKey);
+            YAML::Node existing = node[op.newKey];
+            if (existing && existing.IsSequence() && op.value.IsSequence()) {
+                // merge sequences
+                for (std::size_t j = 0; j < op.value.size(); ++j) {
+                    existing.push_back(op.value[j]);
+                }
+            } else {
+                node[op.newKey] = op.value;
+            }
+        }
+    }
+    else if (node.IsSequence()) {
+        // Copy each element out (so we get a real YAML::Node for recursion),
+        // recurse on it, then write it back.
+        for (std::size_t i = 0; i < node.size(); ++i) {
+            YAML::Node elem = node[i];         // copy the element
+            renameKeys(elem, substr);          // recurse on the copy
+            node[i] = elem;                    // write it back in place
+        }
+    }
+    // scalars/null: nothing to do
 }
