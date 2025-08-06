@@ -69,7 +69,7 @@ struct simple_decoder {
 
     uint64_t total_bytes;
     uint32_t decode_calls;
-    uint32_t outputs, skips, resets;
+    uint32_t outputs, skips, resets, forced_skips;
 };
 
 extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,image_t *img, CUstream stream);
@@ -151,6 +151,11 @@ static void handle_frame(simple_decoder_t *d, NvBuffer *buf, double t, bool forc
             d->skips++;
             return;
         }
+    }
+    if (force_skip)
+    {
+        d->forced_skips++;
+        return;
     }
 
     NvBufSurface *surf = nullptr;
@@ -320,6 +325,7 @@ YAML::Node simple_decoder_get_stats(simple_decoder_t *d) {
     n["decode_calls"]        = d->decode_calls;
     n["surfaces_output"]     = d->outputs;
     n["frames_skipped"]      = d->skips;
+    n["force_skips"]         = d->forced_skips;
     n["time_resets"]         = d->resets;
     return n;
 }
