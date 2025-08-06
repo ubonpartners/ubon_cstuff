@@ -576,7 +576,7 @@ class c_nvof {
                 image_t* raw = img->raw();
                 nvof_results_t* result = nvof_execute(of, raw);
 
-                if (!result || !result->costs || !result->flow) {
+                if (!result || !result->flow) {
                     throw std::runtime_error("nvof_execute failed or returned null results");
                 }
 
