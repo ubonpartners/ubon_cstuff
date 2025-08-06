@@ -572,12 +572,12 @@ class c_nvof {
                 }
             }
 
-            std::tuple<py::array_t<uint8_t>, py::array_t<float>> run(std::shared_ptr<c_image> img) {
+            std::tuple<py::object, py::array_t<float>> run(std::shared_ptr<c_image> img) {
                 image_t* raw = img->raw();
                 nvof_results_t* result = nvof_execute(of, raw);
 
                 if (!result || !result->flow) {
-                    throw std::runtime_error("nvof_execute failed or returned null results");
+                    return std::make_tuple(py::none(), py::none());
                 }
 
                 int h = result->grid_h;
