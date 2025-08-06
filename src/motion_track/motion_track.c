@@ -35,6 +35,7 @@ struct motion_track
     image_t *ref;
     image_t *in_img;
     roi_t roi;
+    bool erode;
     bool scene_change;
     bool generate_of_results;
     bool destroyed;
@@ -57,6 +58,7 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->alpha=yaml_get_float_value(yaml_base["alpha"], 0.9);
     mt->beta=yaml_get_float_value(yaml_base["beta"], 0.995);
     mt->generate_of_results=yaml_get_bool_value(yaml_base["generate_of_results"], true);
+    mt->erode=yaml_get_bool_value(yaml_base["erode"], true);
     assert(mt->max_width>=64 && mt->max_width<=512 && ((mt->max_width&7)==0));
     assert(mt->max_height>=64 && mt->max_height<=512 && ((mt->max_height&7)==0));
     mt->blur=yaml_get_bool_value(yaml_base["blur"], true);
@@ -279,7 +281,16 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     uint64_t h_mask=0;
     for(int y=0;y<block_h;y++)
     {
-        uint64_t mask=__builtin_bswap64(mp[y])>>(64-block_w);
+        // apply a basic erode style operator to remove
+        // singleton set bits
+        uint64_t this_row=mp[y];
+        uint64_t erode_mask=(this_row>>1)|(this_row<<1);
+        if (y>0) erode_mask|=mp[y-1];
+        if (y+1<block_h) erode_mask|=mp[y+1];
+        uint64_t filtered=this_row;
+        if (mt->erode) filtered&=erode_mask;
+
+        uint64_t mask=__builtin_bswap64(filtered)>>(64-block_w);
         h_mask|=mask;
         v_mask=(v_mask<<1)+((mask==0) ? 0 : 1);
     }
