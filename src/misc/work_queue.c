@@ -63,7 +63,7 @@ static void work_queue_process_work(int id, work_queue_t *wq)
     wq->head=job->next;
     assert(true==wq->executing);
     bool need_resume=(wq->length==wq->backpressure_length);
-    debugf("[%s] start execute %p %d %d",wq->name, job,wq->length, wq->backpressure_length);
+    debugf("[%s] *** start execute %p %d %d",wq->name, job,wq->length, wq->backpressure_length);
     wq->length--;
     pthread_mutex_unlock(&wq->lock);
 
@@ -90,6 +90,7 @@ static void work_queue_process_work(int id, work_queue_t *wq)
 
     debugf("[%s] execute %p",wq->name, job);
     wq->callback(wq->callback_context, job);
+    debugf("[%s] execute callback done%p",wq->name, job);
     double elapsed=profile_time()-start_time;
 
     pthread_mutex_lock(&wq->lock);
@@ -108,10 +109,9 @@ int work_queue_length(work_queue_t *wq)
 
 void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, bool head)
 {
-    debugf("[%s] add job %p l %d hwm %d", wq->name, job_to_add,wq->length,wq->stats_length_hwm);
-
-    assert(wq->destroying==false);
     pthread_mutex_lock(&wq->lock);
+    debugf("[%s] add job %p l %d hwm %d", wq->name, job_to_add,wq->length,wq->stats_length_hwm);
+    assert(wq->destroying==false);
     work_queue_item_header_t *job=wq->head;
 
     if (head==false) {
@@ -133,7 +133,8 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, 
 
     // backpressure
     bool need_backpressure=(wq->length>=wq->backpressure_length);
-    pthread_mutex_unlock(&wq->lock);
+    debugf("[%s] *** (len %3d) Applying backpressure",wq->name,wq->length); 
+    //pthread_mutex_unlock(&wq->lock);
 
     if (need_backpressure)
     {
@@ -142,7 +143,7 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, 
             work_queue_t *wq_bp=wq->wq_backpressure[i];
             pthread_mutex_lock(&wq_bp->lock);
 
-            debugf("[%s] (len %3d) pausing %s (existing %dd)",wq->name, wq->length,
+            debugf("[%s] (len %3d) pausing %s (existing %d)",wq->name, wq->length,
                 wq->wq_backpressure[i]->name,
                 wq->wq_backpressure[i]->paused);
             if (wq_bp->paused==false) wq_bp->stats_pause_count++;
@@ -151,7 +152,7 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, 
         }
     }
 
-    pthread_mutex_lock(&wq->lock);
+    //pthread_mutex_lock(&wq->lock);
     work_queue_try_start_execution(wq);
     pthread_mutex_unlock(&wq->lock);
 }
