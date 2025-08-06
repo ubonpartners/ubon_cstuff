@@ -36,12 +36,10 @@ typedef struct test_clip
 {
     const char *friendly_name;
     const char *filename;
-    float fps;
 } test_clip_t;
 
 typedef struct {
     const char *video_file_filename;
-    float video_file_framerate;
     int thread_id;
     float track_framerate;
     float face_embedding_min_quality;
@@ -116,9 +114,6 @@ static void *run_track_worker(void *arg) {
         return !keep_running;
     };
 
-    // decode_file continues (looping if necessary) until 'stop callback'
-    //decode_file(filename, &s, process_image, args->video_file_framerate, stop_callback);
-
     track_stream_run_video_file(s.ts, args->video_file_filename, SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f, true);
     while(keep_running) usleep(30000);
 
@@ -182,7 +177,6 @@ static void run_one_test(test_config_t *config)
 
     for (int i = 0; i < config->num_threads; ++i) {
         args[i].video_file_filename = config->input_clip->filename;
-        args[i].video_file_framerate= config->input_clip->fps;
         args[i].track_framerate = config->track_framerate;
         args[i].face_embedding_min_quality=config->face_embedding_min_quality;
         args[i].thread_id = i;
@@ -237,23 +231,23 @@ static const char* get_last_path_part(const char* path) {
 }
 
 test_clip_t clips[]={
-    {"Clip1,      720p, 5.0fps,  H265", "/mldata/video/test/clip1_1280x720_5.00fps.hevc", 5.0},
-    {"MOT20-05    720p, 6.25fps, H265", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.265", 6.25},
+    {"Clip3,      720p, 5.0fps,  H265", "/mldata/video/test/clip3_1280x720_5.00fps.hevc"},
+    {"MOT20-05    720p, 6.25fps, H265", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.265"},
 
-    {"Ind office, 720p, 7.5fps,  H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264", 7.5},
-    {"MOT20-05    720p, 6.25fps, H264", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.264", 6.25},
-    {"UK office,  720p, 6.25fps, H264", "/mldata/video/test/uk_off_1280x720_6.25fps.264", 6.25},
-    {"Bcam,       720p, 7.5fps,  H264", "/mldata/video/test/bc1_1280x720_7.5fps.264", 7.5},
+    {"Ind office, 720p, 7.5fps,  H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264"},
+    {"MOT20-05    720p, 6.25fps, H264", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.264"},
+    {"UK office,  720p, 6.25fps, H264", "/mldata/video/test/uk_off_1280x720_6.25fps.264",},
+    {"Bcam,       720p, 7.5fps,  H264", "/mldata/video/test/bc1_1280x720_7.5fps.264"},
 
-    {"Ind office, 1080p, 15fps,  H264","/mldata/video/test/ind_off_1920x1080_15fps.264", 15.0},
-    {"MOT20-05    1080p, 25fps,  H264","/mldata/video/test/MOT20-05_1654x1080_25fps.264", 25},
-    {"UK office, 1512p, 12.5fps, H264","/mldata/video/test/uk_off_2688x1512_12.5fps.264", 12.5},
-    {"Bcam,      1080p,  30fps,  H264","/mldata/video/test/bc1_1920x1080_30fps.264", 29.97},
+    {"Ind office, 1080p, 15fps,  H264","/mldata/video/test/ind_off_1920x1080_15fps.264"},
+    {"MOT20-05    1080p, 25fps,  H264","/mldata/video/test/MOT20-05_1654x1080_25fps.264"},
+    {"UK office, 1512p, 12.5fps, H264","/mldata/video/test/uk_off_2688x1512_12.5fps.264"},
+    {"Bcam,      1080p,  30fps,  H264","/mldata/video/test/bc1_1920x1080_30fps.264"},
 
-    {"Ind office, 1080p, 15fps,  H265", "/mldata/video/test/ind_off_1920x1080_15fps.265", 15.0},
-    {"MOT20-05    1080p, 25fps,  H265", "/mldata/video/test/MOT20-05_1654x1080_25fps.265", 25},
-    {"UK office, 1512p, 12.5fps, H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265", 12.5},
-    {"Bcam,      1080p,  30fps,  H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 29.97},
+    {"Ind office, 1080p, 15fps,  H265", "/mldata/video/test/ind_off_1920x1080_15fps.265"},
+    {"MOT20-05    1080p, 25fps,  H265", "/mldata/video/test/MOT20-05_1654x1080_25fps.265"},
+    {"UK office, 1512p, 12.5fps, H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265"},
+    {"Bcam,      1080p,  30fps,  H265", "/mldata/video/test/bc1_1920x1080_30fps.265"},
 
 };
 
@@ -396,14 +390,6 @@ int main(int argc, char *argv[]) {
 
     for(int t=0;t<nconfig;t++)
     {
-        /*config.yaml_config = (c == 0)
-            ? "/mldata/config/track/trackers/uc_test.yaml"
-            : "/mldata/config/track/trackers/uc_test_fp16.yaml";
-        config.video_file_filename = clips[tf].name;
-        config.video_file_framerate = clips[tf].fps;
-        config.duration_sec = 30;
-        config.track_framerate = 8;
-        config.num_threads = 1 << th;*/
         test_config_t *this_config=&config[t];
         printf("Test starting\n");
         run_one_test(this_config);

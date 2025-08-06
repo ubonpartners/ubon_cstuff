@@ -354,8 +354,7 @@ void cuda_thread_init()
         abort();
     }
 
-    log_debug("CUDA context initialized on thread %lu (context: %p)",
-              (unsigned long)pthread_self(), (void*)ctx);
+    log_trace("CUDA context initialized on thread %lu (context: %p)",(unsigned long)pthread_self(), (void*)ctx);
 }
 
 void *cuda_malloc(size_t size)

@@ -67,6 +67,8 @@ struct track_aux
     bool clip_object_embeddings_enabled;
     bool clip_jpegs_enabled;
     float clip_embeddings_min_quality;
+    float clip_frame_embeddings_min_interval_seconds;
+    double frame_embedding_last_time;
     float clip_min_quality_increment;
     float clip_min_quality_multiple;
     int clip_jpeg_min_width;
@@ -119,6 +121,7 @@ track_aux_t *track_aux_create(track_shared_state *tss, const char *config_yaml)
     ta->face_min_quality_multiple=yaml_get_float(yaml_base, 1.2, 2, "faces", "min_quality_multiple");
 
     ta->clip_frame_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "frame_embeddings_enabled");
+    ta->clip_frame_embeddings_min_interval_seconds=yaml_get_float(yaml_base, 2.0, 2, "clip", "frame_embeddings_min_interval_seconds");
     ta->clip_object_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "object_embeddings_enabled");
     ta->clip_jpegs_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "jpegs_enabled");
     ta->clip_jpeg_min_width=yaml_get_int(yaml_base, 32, 2, "clip", "jpeg_min_width");
@@ -187,16 +190,19 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
     if (ta->main_jpeg_enabled && img!=0)
     {
         double time_delta=img->meta.time-ta->main_jpeg_last_time;
+        double embedding_time_delta=img->meta.time-ta->frame_embedding_last_time;
         debugf("jpeg delta %f %f %f",img->meta.time,time_delta,ta->main_jpeg_min_interval_seconds);
-        if (time_delta>ta->main_jpeg_min_interval_seconds || single_frame)
+        if (time_delta>=ta->main_jpeg_min_interval_seconds || single_frame)
         {
             debugf("generating frame JPEG");
             dets->frame_jpeg=jpeg_thread_encode(tss->jpeg_thread, img, ROI_ONE, ta->main_jpeg_max_width, ta->main_jpeg_max_height);
             ta->main_jpeg_last_time=img->meta.time;
-            if ((ta->clip_infer_thread!=0) && (ta->clip_frame_embeddings_enabled))
+            bool need_frame_embedding=single_frame || (embedding_time_delta >=ta->clip_frame_embeddings_min_interval_seconds);
+            if ((ta->clip_infer_thread!=0) && (ta->clip_frame_embeddings_enabled) && need_frame_embedding)
             {
                 debugf("generating frame CLIP embedding");
                 dets->clip_embedding=infer_thread_infer_embedding(ta->clip_infer_thread, img, 0, 0, ROI_ONE);
+                ta->frame_embedding_last_time=img->meta.time;
                 embedding_set_quality(dets->clip_embedding, 1.0f);
             }
             else

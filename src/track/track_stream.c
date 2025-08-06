@@ -702,7 +702,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             {
                 job->data_offset=0;
                 input_debugf("[video file] loop requeue");
-                log_info("video loop");
+                //log_info("video loop");
                 track_stream_queue_job_head(ts, job);
             }
             else
