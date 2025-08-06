@@ -45,10 +45,10 @@ struct nvof
 
     /* VPI resources --------------------------------------------------- */
     VPIImage  curNv12PL  = nullptr;   // wrapper (updated each frame)
-    VPIImage  y8CurPL    = nullptr;   // pitch-linear Y8  (CUDA)
-    VPIImage  y8PrevPL   = nullptr;
-    VPIImage  y8CurBL    = nullptr;   // block-linear Y8  (VIC/OFA)
-    VPIImage  y8PrevBL   = nullptr;
+    
+    /* NV12 working buffers */
+    VPIImage  nv12CurBL  = nullptr;   // block‑linear NV12  (VIC/OFA)
+    VPIImage  nv12PrevBL = nullptr;
 
     VPIImage  mvBL       = nullptr;   // block-linear 2S16
     VPIImage  mvPL       = nullptr;   // pitch-linear 2S16 (CPU read-back)
@@ -79,8 +79,7 @@ static void set_size(nvof *v, int w, int h)
 {
     if (v->w == w && v->h == h) return;
 
-    destroyVPI(v->y8CurPL);  destroyVPI(v->y8PrevPL);
-    destroyVPI(v->y8CurBL);  destroyVPI(v->y8PrevBL);
+    destroyVPI(v->nv12CurBL); destroyVPI(v->nv12PrevBL);
     destroyVPI(v->mvBL);     destroyVPI(v->mvPL);
     if (v->ofPayload) { vpiPayloadDestroy(v->ofPayload); v->ofPayload=nullptr; }
     destroyBuf(v);
@@ -93,15 +92,10 @@ static void set_size(nvof *v, int w, int h)
     uint64_t vic   = VPI_BACKEND_VIC;
     uint64_t ofa   = VPI_BACKEND_OFA;
 
-    /* pitch-linear Y8 images */
-    uint64_t plFlags = VPI_BACKEND_CUDA | VPI_BACKEND_VIC;
-    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_Y8_ER,plFlags,&v->y8CurPL));
-    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_Y8_ER,plFlags,&v->y8PrevPL));
-
-    /* block-linear Y8 images */
+    /* block‑linear NV12 images (no CUDA backend needed) */
     uint64_t blFlags = VPI_BACKEND_VIC | VPI_BACKEND_OFA;
-    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_Y8_ER_BL,blFlags,&v->y8CurBL));
-    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_Y8_ER_BL,blFlags,&v->y8PrevBL));
+    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_NV12_BL,blFlags,&v->nv12CurBL));
+    CHECK_VPI(vpiImageCreate(w,h,VPI_IMAGE_FORMAT_NV12_BL,blFlags,&v->nv12PrevBL));
 
     /* motion-vector images */
     CHECK_VPI(vpiImageCreate(v->outW,v->outH,VPI_IMAGE_FORMAT_2S16_BL,vic|ofa,&v->mvBL));
@@ -110,10 +104,22 @@ static void set_size(nvof *v, int w, int h)
     /* allocate OFA payload (single level) */
     int32_t g = v->grid;
     CHECK_VPI(vpiCreateOpticalFlowDense(ofa, w, h,
-                                        VPI_IMAGE_FORMAT_Y8_ER_BL,
+                                        VPI_IMAGE_FORMAT_NV12_BL,
                                         &g, 1,
                                         VPI_OPTICAL_FLOW_QUALITY_MEDIUM,
                                         &v->ofPayload));
+
+    VPIOpticalFlowDenseSGMParams sgm{};
+    vpiOpticalFlowDenseGetSGMParams(v->ofPayload, &sgm);
+
+    // e.g., make flow smoother by raising both penalties on level 0:
+    sgm.p1[0]      = 8;    // default is ~4
+    sgm.p2[0]      = 64;   // default is ~32
+    sgm.p2Alpha[0] = 4;    // turn on adaptive P2
+    sgm.numPasses[0]      = 2;
+    sgm.includeDiagonals[0] = 1;
+
+    CHECK_VPI(vpiOpticalFlowDenseSetSGMParams(v->ofPayload, &sgm));
 
     /* host pinned result buffers */
     cudaHostAlloc(&v->flowHost, 4*v->outW*v->outH, cudaHostAllocDefault);
@@ -123,78 +129,36 @@ static void set_size(nvof *v, int w, int h)
     v->nv12WrapInit = false;
 }
 
-/* build (or update) the NV12 wrapper that points to img->device_mem ---- */
-/* ---------------------------------------------------------------------------
-   NV12 wrapper – recreate if layout changed
-   -------------------------------------------------------------------------*/
 static void update_nv12_wrapper(nvof *v, image_t *img)
 {
-    /* Fill VPIImageData describing the current NV12 device buffer */
+    /* Describe current buffer --------------------------------------- */
     VPIImageData d{};
-    d.bufferType = VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR;
-    d.buffer.pitch.format    = VPI_IMAGE_FORMAT_NV12;
-    d.buffer.pitch.numPlanes = 2;
+    d.bufferType               = VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR;
+    d.buffer.pitch.format      = VPI_IMAGE_FORMAT_NV12;
+    d.buffer.pitch.numPlanes   = 2;
 
     d.buffer.pitch.planes[0].width      = img->width;
     d.buffer.pitch.planes[0].height     = img->height;
     d.buffer.pitch.planes[0].pitchBytes = img->stride_y;
-    d.buffer.pitch.planes[0].data       = img->device_mem;
+    d.buffer.pitch.planes[0].data       = img->y;
 
     d.buffer.pitch.planes[1].width      = img->width / 2;
     d.buffer.pitch.planes[1].height     = img->height / 2;
     d.buffer.pitch.planes[1].pitchBytes = img->stride_uv;
-    d.buffer.pitch.planes[1].data       =
-        static_cast<uint8_t *>(img->device_mem) + img->stride_y * img->height;
+    d.buffer.pitch.planes[1].data       = img->u;
 
-    /* Does an existing wrapper match this exact layout? */
-    bool recreate = !v->nv12WrapInit;
+    /* Throw away the old wrapper (if any) ---------------------------- */
+    if (v->curNv12PL)
+        vpiImageDestroy(v->curNv12PL), v->curNv12PL = nullptr;
 
-    if (!recreate)
-    {
-        /* Fetch current container description to compare pitches */
-        VPIImageFormat  fmt;  int32_t w,h;
-        CHECK_VPI(vpiImageGetFormat(v->curNv12PL, &fmt));
-        CHECK_VPI(vpiImageGetSize  (v->curNv12PL, &w, &h));
+    /* Re‑create with the back‑ends that will touch it (CUDA+VIC) ----- */
+    VPIImageWrapperParams p;
+    vpiInitImageWrapperParams(&p);
+    p.colorSpec = VPI_COLOR_SPEC_BT601_ER;      // same as before
 
-        /* pitch-linear info */
-        VPIImageData oldD{};
-        CHECK_VPI(vpiImageLockData(v->curNv12PL, VPI_LOCK_READ,
-                                   VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &oldD));
-
-        bool sameLayout = (fmt == VPI_IMAGE_FORMAT_NV12) &&
-                          (w == img->width) &&
-                          (h == img->height) &&
-                          (oldD.buffer.pitch.planes[0].pitchBytes == img->stride_y) &&
-                          (oldD.buffer.pitch.planes[1].pitchBytes == img->stride_uv);
-
-        CHECK_VPI(vpiImageUnlock(v->curNv12PL));
-
-        recreate = !sameLayout;
-    }
-
-    if (recreate)
-    {
-        /* First destroy the old container (if it exists) */
-        if (v->nv12WrapInit) {
-            vpiImageDestroy(v->curNv12PL);
-            v->curNv12PL   = nullptr;
-            v->nv12WrapInit = false;
-        }
-
-        /* Create a brand-new wrapper */
-        VPIImageWrapperParams p;
-        vpiInitImageWrapperParams(&p);
-        p.colorSpec = VPI_COLOR_SPEC_BT601_ER;
-        CHECK_VPI(vpiImageCreateWrapper(&d, &p,
-                                        VPI_BACKEND_CUDA,   /* backend flags */
-                                        &v->curNv12PL));
-        v->nv12WrapInit = true;
-    }
-    else
-    {
-        /* Layout is identical – just point container to the new buffer */
-        CHECK_VPI(vpiImageSetWrapper(v->curNv12PL, &d));
-    }
+    CHECK_VPI(vpiImageCreateWrapper(&d, &p,
+                                    VPI_BACKEND_CUDA | VPI_BACKEND_VIC,
+                                    &v->curNv12PL));
 }
 
 
@@ -231,19 +195,15 @@ nvof_results_t *nvof_execute(nvof *v, image_t *img_in)
     cuda_stream_add_dependency(v->cu, img->stream);
     update_nv12_wrapper(v,img);
 
-    /* NV12_PL -> Y8_PL (CUDA) --------------------------------------- */
-    CHECK_VPI(vpiSubmitConvertImageFormat(v->vpi, VPI_BACKEND_CUDA,
-                                          v->curNv12PL, v->y8CurPL, nullptr));
-
-    /* Y8_PL  -> Y8_BL (VIC) ----------------------------------------- */
+    /* NV12_PL -> NV12_BL (VIC) -------------------------------------- */
     CHECK_VPI(vpiSubmitConvertImageFormat(v->vpi, VPI_BACKEND_VIC,
-                                          v->y8CurPL, v->y8CurBL, nullptr));
+                                          v->curNv12PL, v->nv12CurBL, nullptr));
 
     if (v->frameCount>0) {
         /* run OFA ---------------------------------------------------- */
         CHECK_VPI(vpiSubmitOpticalFlowDense(v->vpi, 0,
                                             v->ofPayload,
-                                            v->y8PrevBL, v->y8CurBL,
+                                            v->nv12PrevBL, v->nv12CurBL,
                                             v->mvBL));
 
         /* MV BL -> PL (VIC) ----------------------------------------- */
@@ -259,8 +219,7 @@ nvof_results_t *nvof_execute(nvof *v, image_t *img_in)
     ++v->frameCount;
 
     /* swap prev/cur -------------------------------------------------- */
-    std::swap(v->y8CurBL , v->y8PrevBL );
-    std::swap(v->y8CurPL , v->y8PrevPL );
+    std::swap(v->nv12CurBL , v->nv12PrevBL );
 
     /* results -------------------------------------------------------- */
     v->results.grid_w = v->outW;
@@ -293,8 +252,7 @@ void nvof_destroy(nvof *n)
     if(!n) return;
     vpiStreamDestroy(n->vpi);
     destroyVPI(n->curNv12PL);
-    destroyVPI(n->y8CurPL);  destroyVPI(n->y8PrevPL);
-    destroyVPI(n->y8CurBL);  destroyVPI(n->y8PrevBL);
+    destroyVPI(n->nv12CurBL); destroyVPI(n->nv12PrevBL);
     destroyVPI(n->mvBL);     destroyVPI(n->mvPL);
     if (n->ofPayload) vpiPayloadDestroy(n->ofPayload);
     destroyBuf(n);
