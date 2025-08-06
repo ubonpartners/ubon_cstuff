@@ -9,6 +9,8 @@ typedef struct track_stream_performance_state track_stream_performance_state_t;
 struct track_shared_state
 {
     pthread_mutex_t lock;
+    uint32_t ref_count;
+    size_t hash;
     pthread_t thread_handle;
     const char *config_yaml;
     bool stop;

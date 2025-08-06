@@ -21,6 +21,23 @@
 
 #define debugf if (0) log_debug
 
+static std::once_flag initFlag;
+
+typedef struct track_shared_global
+{
+    pthread_mutex_t lock;
+    std::unordered_set<track_shared_state_t *> *track_shared_set;
+} track_shared_global_t;
+
+static track_shared_global_t ts_global;
+
+static void track_shared_init()
+{
+    memset(&ts_global, 0, sizeof(ts_global));
+    pthread_mutex_init(&ts_global.lock, 0);
+    ts_global.track_shared_set=new std::unordered_set<track_shared_state_t *>;
+}
+
 static void ctpl_thread_init(int id, pthread_barrier_t *barrier)
 {
     debugf("starting track_shared ctpl thread %d",id);
@@ -32,10 +49,25 @@ static void *track_shared_state_thread(void *);
 
 track_shared_state_t *track_shared_state_create(const char *yaml_config)
 {
+    std::call_once(initFlag, track_shared_init);
+    pthread_mutex_lock(&ts_global.lock);
+    std::hash<std::string> hasher;
+    size_t h = hasher(std::string(yaml_config));
+    for (auto* existing_tss : *ts_global.track_shared_set) {
+        if (existing_tss->hash==h)
+        {
+            existing_tss->ref_count++;
+            log_warn("Using existing track shared state");
+            pthread_mutex_unlock(&ts_global.lock);
+            return existing_tss;
+        }
+    }
     YAML::Node yaml_base=yaml_load(yaml_config);
     track_shared_state_t *tss=(track_shared_state_t *)malloc(sizeof(track_shared_state_t));
     assert(tss!=0);
     memset(tss, 0, sizeof(track_shared_state_t));
+    tss->ref_count=1;
+    tss->hash=h;
     debugf("Track shared state create");
     pthread_mutex_init(&tss->lock, 0);
     tss->config_yaml=yaml_to_cstring(yaml_base);
@@ -126,6 +158,8 @@ track_shared_state_t *track_shared_state_create(const char *yaml_config)
     int ret = pthread_create(&tss->thread_handle, NULL,  track_shared_state_thread, tss);
     assert(ret == 0);
     // done
+    ts_global.track_shared_set->insert(tss);
+    pthread_mutex_unlock(&ts_global.lock);
     return tss;
 }
 
@@ -137,6 +171,14 @@ model_description_t *track_shared_state_get_model_description(track_shared_state
 void track_shared_state_destroy(track_shared_state_t *tss)
 {
     if (!tss) return;
+    pthread_mutex_lock(&ts_global.lock);
+    assert(tss->ref_count>=1);
+    tss->ref_count--;
+    if (tss->ref_count>0)
+    {
+        pthread_mutex_unlock(&ts_global.lock);
+        return;
+    }
     assert(0==tss->track_stream_set->size());
     tss->stop=true;
     tss->thread_pool->stop();
@@ -148,6 +190,8 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     free((void *)tss->config_yaml);
     pthread_mutex_destroy(&tss->lock);
     free(tss);
+    ts_global.track_shared_set->erase(tss);
+    pthread_mutex_unlock(&ts_global.lock);
 }
 
 const char *track_shared_state_get_stats(track_shared_state_t *tss)
