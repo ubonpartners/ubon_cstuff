@@ -1076,7 +1076,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
           "load jpeg file to c img",
           py::arg("file"));
 
-    m.def("decode_jpeg", &c_load_jpeg,
+    m.def("decode_jpeg", &c_decode_jpeg,
           "decode jpeg file to c img",
           py::arg("bytes"));
 
