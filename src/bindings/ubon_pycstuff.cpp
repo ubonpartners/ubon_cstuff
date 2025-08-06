@@ -193,6 +193,14 @@ std::shared_ptr<c_image> c_load_jpeg(const char *file) {
         return std::make_shared<c_image>(jpg);
     }
 
+std::shared_ptr<c_image> c_decode_jpeg(py::bytes bitstream) {
+    char* buffer;
+    ssize_t length;
+    PyBytes_AsStringAndSize(bitstream.ptr(), &buffer, &length);
+    image_t *jpg=decode_jpeg((uint8_t *)buffer, (int)length);
+    return std::make_shared<c_image>(jpg);
+}
+
 static void pop_float(py::dict& cfg, const char* key, float& dst, bool& flag) {
     if (cfg.contains(key)) {
         dst = cfg[key].cast<float>();
@@ -1067,6 +1075,10 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",
           py::arg("file"));
+
+    m.def("decode_jpeg", &c_load_jpeg,
+          "decode jpeg file to c img",
+          py::arg("bytes"));
 
     m.def("match_box_iou", &match_box_iou_wrapper,
           "Matches boxes using IoU and returns index lists",
