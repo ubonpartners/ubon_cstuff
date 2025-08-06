@@ -20,6 +20,7 @@
 #include "infer_thread.h"
 #include "display.h"
 #include "platform_stuff.h"
+#include "yaml_stuff.h"
 
 typedef struct state {
     track_stream_t *ts;
@@ -102,7 +103,6 @@ static void *run_track_worker(void *arg) {
 
     s.ts = track_stream_create(args->tss, &s, track_result);
     track_stream_set_minimum_frame_intervals(s.ts, 1.0/args->track_framerate, 10.0);
-    track_stream_enable_face_embeddings(s.ts, args->face_embedding_min_quality<1, args->face_embedding_min_quality);
 
     const char *filename = args->video_file_filename;
     FILE *input = fopen(filename, "rb");
@@ -144,6 +144,7 @@ typedef struct test_config
     char name[128];
     test_clip_t *input_clip;
     const char *yaml_config;
+    const char *config_override;
     int duration_sec;
     int num_threads;
     int infer_w, infer_h;
@@ -267,7 +268,6 @@ int main(int argc, char *argv[]) {
     std::ostringstream oss, hdr;
 
     hdr   << std::setw(44)  << "Test Description" << " "
-          << std::setw(20)  << "Cfg" << " "
           << std::setw(4)   << "Str" << " "
           << std::setw(8)   << "Dec" << " "
           << std::setw(5)   << "FPS" << " "
@@ -286,7 +286,7 @@ int main(int argc, char *argv[]) {
     sprintf(dconfig.name, "default");
     dconfig.yaml_config = "/mldata/config/track/trackers/uc_reid.yaml";
     dconfig.input_clip = &clips[0];
-    dconfig.duration_sec = platform_is_jetson() ? 20 : 10;
+    dconfig.duration_sec = platform_is_jetson() ? 20 : 30;
     dconfig.track_framerate = 8;
     dconfig.face_embedding_min_quality=0.01;
     dconfig.num_threads = platform_is_jetson() ? 8 : 16;
@@ -297,10 +297,42 @@ int main(int argc, char *argv[]) {
     for(int i=0;i<64;i++) config[i]=dconfig;
     int nconfig;
 
-    for(int i=1;i<2;i++)
+    for(int i=0;i<2;i++)
+    {
+        const char *basic="main_jpeg:\n"
+                          "    enabled: false\n"
+                          "clip:\n"
+                          "    object_embeddings_enabled: false\n"
+                          "    frame_embeddings_enabled: false\n"
+                          "    jpegs_enabled: false\n"
+                          "faces:\n"
+                          "    embeddings_enabled: false\n"
+                          "fiqa:\n"
+                          "    enabled: false\n" ;
+        config[nconfig].yaml_config=yaml_merge_string(dconfig.yaml_config, basic);
+        if (i==0) config[nconfig].num_threads=1;
+        config[nconfig].testset="Basic tests (Aux embeddings & jpegs disabled)";
+        config[nconfig].input_clip = &clips[0];
+        sprintf(config[nconfig++].name, "%s, %d threads",clips[0].friendly_name, config[nconfig].num_threads);
+    }
+
+    for(int i=0;i<2;i++)
+    {
+        const char *basic="clip:\n"
+                          "    object_embeddings_enabled: false\n"
+                          "    frame_embeddings_enabled: false\n";
+
+        config[nconfig].yaml_config=yaml_merge_string(dconfig.yaml_config, basic);
+        if (i==0) config[nconfig].num_threads=1;
+        config[nconfig].testset="Basic tests (CLIP embeddings disabled)";
+        config[nconfig].input_clip = &clips[0];
+        sprintf(config[nconfig++].name, "%s, %d threads",clips[0].friendly_name, config[nconfig].num_threads);
+    }
+
+    for(int i=0;i<2;i++)
     {
         if (i==0) config[nconfig].num_threads=1;
-        config[nconfig].testset="Basic tests test";
+        config[nconfig].testset="Basic tests (Everything enabled)";
         config[nconfig].input_clip = &clips[0];
         sprintf(config[nconfig++].name, "%s, %d threads",clips[0].friendly_name, config[nconfig].num_threads);
     }
@@ -394,7 +426,6 @@ int main(int argc, char *argv[]) {
             oss << hdr.str();
         }
         oss     << std::setw(44) << this_config->name
-                << " " << std::setw(20) << get_last_path_part(this_config->yaml_config)
                 << " " << std::setw(4)  << this_config->num_threads
                 << " " << std::setw(8)  << ((int)(this_config->mbps/3600.0))
                 << " " << std::setw(5)  << ((int)this_config->fps)

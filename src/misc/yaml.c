@@ -112,6 +112,12 @@ YAML::Node yaml_merge(const char *yaml_or_file_base, const char *yaml_or_file_to
     return baseNode;
 }
 
+const char *yaml_merge_string(const char *yaml_or_file_base, const char *yaml_or_file_to_merge)
+{
+    YAML::Node node=yaml_merge(yaml_or_file_base, yaml_or_file_to_merge);
+    return yaml_to_cstring(node);
+}
+
 const char *yaml_to_cstring(YAML::Node node)
 {
     YAML::Emitter out;
