@@ -583,9 +583,6 @@ class c_nvof {
                 int h = result->grid_h;
                 int w = result->grid_w;
 
-                // Wrap costs as uint8 NumPy array
-                auto costs = py::array_t<uint8_t>({h, w}, result->costs);
-
                 // Wrap flow as (h, w, 2) float NumPy array
                 auto flow = py::array_t<float, py::array::c_style>({h, w, 2});
 
@@ -597,6 +594,12 @@ class c_nvof {
                         flow_buf(y, x, 1) = result->flow[idx].flowy/(4*32.0*h);
                     }
                 }
+                if (result->costs==0)
+                {
+                    return std::make_tuple(py::none(), flow);
+                }
+                // Wrap costs as uint8 NumPy array
+                py::object costs = py::array_t<uint8_t>({h, w}, result->costs);
 
                 return std::make_tuple(costs, flow);
             }
