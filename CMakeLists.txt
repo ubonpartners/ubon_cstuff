@@ -224,6 +224,7 @@ if (BUILD_APPS)
         ${CMAKE_SOURCE_DIR}/src/apps/infer_benchmark.c
         ${CMAKE_SOURCE_DIR}/src/apps/mp4_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
+        ${CMAKE_SOURCE_DIR}/src/apps/nal_play.c
         ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
         ${CMAKE_SOURCE_DIR}/src/apps/of_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/rt_benchmark.c

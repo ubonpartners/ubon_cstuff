@@ -614,7 +614,7 @@ int h26x_assembler_process_nalus(h26x_assembler_t *a,
     while(through<data_len)
     {
         assert(through+4<data_len);
-        int n_len=(data[through+0]<<24)+(data[through+0]<<16)+(data[through+0]<<8)+(data[through+0]<<0);
+        int n_len=(data[through+0]<<24)+(data[through+1]<<16)+(data[through+2]<<8)+(data[through+3]<<0);
         assert(through+n_len+4<=data_len);
         const uint8_t *nalu=data+through+4;
         through+=(n_len+4);
@@ -635,11 +635,11 @@ int h26x_assembler_process_nalus(h26x_assembler_t *a,
                 new_frame = h265_is_first_slice(nalu, n_len);
             }
         }
-
         if (new_frame && a->in_frame) {
             emit_frame(a, 0);
             a->in_frame= false;
         }
+        if (new_frame) a->in_frame=true;
         a->last_extended_ts=90000.0*rtp_time;
         append_nalu(a, nalu, n_len);
     }
