@@ -270,6 +270,7 @@ float detection_face_quality_score(detection_t *det) {
     // overall mean conf
     float conf_overall = (conf_eye + conf_nose + conf_mouth) / 3.0f;
     if (conf_overall<0.1) return 0.0f;
+    conf_overall*=std::max(0.0f, ((det->subbox_conf-0.75f)/0.15f));
 
     // --- 2) Size factor (inter‐ocular distance) ---
     float dx = face_points[1].x - face_points[0].x;
@@ -283,7 +284,7 @@ float detection_face_quality_score(detection_t *det) {
     float roll_score = (roll >= MAX_ROLL)
                      ? 0.1f
                      : 1.0f - (roll / MAX_ROLL);
-    roll_score *= conf_eye;                        // again weight by eye conf
+    //roll_score *= conf_eye;                        // again weight by eye conf
 
     // --- 4) Yaw proxy (nose offset) ---
     float ex = 0.5f * (face_points[0].x + face_points[1].x);
@@ -294,8 +295,8 @@ float detection_face_quality_score(detection_t *det) {
                     ? 0.1f
                     : 1.0f - offset_ratio;
     // weight by the weaker of (eyes, nose)
-    float conf_yaw = fminf(conf_eye, conf_nose);
-    yaw_score *= conf_yaw;
+    //float conf_yaw = fminf(conf_eye, conf_nose);
+    //yaw_score *= conf_yaw;
 
     // --- 5) Combine components and overall conf ---
     float combined = size_score * roll_score * yaw_score;

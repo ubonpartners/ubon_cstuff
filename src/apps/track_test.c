@@ -11,6 +11,7 @@
 #include "misc.h"
 #include "profile.h"
 #include "trackset.h"
+#include "file_decoder.h"
 
 typedef struct state
 {

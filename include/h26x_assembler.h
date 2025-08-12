@@ -38,6 +38,7 @@ typedef struct {
     int                 annexb_length;           // Number of bytes in annexb_data
     uint32_t            ssrc;                    // SSRC of the RTP stream
     bool                is_complete;             // “true” if we believe no packet loss occurred
+    bool                is_h265;                 // true if h265
     h26x_nal_stats_t    nal_stats;               // Per‐frame NAL statistics
 } h26x_frame_descriptor_t;
 
@@ -62,7 +63,8 @@ typedef struct h26x_assembler h26x_assembler_t;
 // -----------------------------------------------------------------------------
 h26x_assembler_t *h26x_assembler_create(h26x_codec_t            codec,
                                         void                   *context,
-                                        h26x_frame_callback_fn  cb);
+                                        h26x_frame_callback_fn  cb,
+                                        bool length_prefixed=false);
 
 // -----------------------------------------------------------------------------
 // Free all memory held by ’a’.  After this call, ’a’ is invalid.

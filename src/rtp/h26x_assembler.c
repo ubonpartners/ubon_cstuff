@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <assert.h>
 #include "log.h"
 
 #define debugf if (0) log_error
@@ -19,6 +20,7 @@ struct h26x_assembler {
 
     uint8_t                *frame_buffer;
     int                     frame_len;
+    int                     last_start_code_pos;
 
     uint16_t                last_sequence_number;
     uint32_t                last_timestamp;
@@ -26,6 +28,7 @@ struct h26x_assembler {
     bool                    in_frame;
     bool                    is_complete;
     bool                    frame_has_video_data;
+    bool                    length_prefixed;
 
     h26x_nal_stats_t        nal_stats;
     h26x_nal_stats_t        cum_nal_stats;
@@ -37,11 +40,27 @@ struct h26x_assembler {
     double raw_ts;
 };
 
+
+static void fixup_start_code(h26x_assembler_t *a)
+{
+    if (a->length_prefixed==false) return;
+    if (a->last_start_code_pos<0) return;
+    if (a->frame_len==0) return;
+    int nalu_len=a->frame_len-a->last_start_code_pos-4;
+    assert(nalu_len>0);
+    a->frame_buffer[a->last_start_code_pos+0]=nalu_len>>24;
+    a->frame_buffer[a->last_start_code_pos+1]=(nalu_len>>16)&0xff;
+    a->frame_buffer[a->last_start_code_pos+2]=(nalu_len>> 8)&0xff;
+    a->frame_buffer[a->last_start_code_pos+3]=(nalu_len>> 0)&0xff;
+    a->last_start_code_pos=-1;
+}
+
 /*
  * Emit the assembled frame (if any) via callback, then reset state for next frame.
  */
 static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
     debugf("Emit frame! %d",(int)a->frame_len);
+    fixup_start_code(a);
     if (!a->in_frame || a->frame_len == 0) {
         return;
     }
@@ -52,6 +71,7 @@ static void emit_frame(h26x_assembler_t *a, uint32_t ssrc) {
         .annexb_length          = a->frame_len,
         .ssrc                   = ssrc,
         .is_complete            = a->is_complete,
+        .is_h265                = (a->codec == H26X_CODEC_H265),
         .nal_stats              = a->nal_stats
     };
 
@@ -120,6 +140,8 @@ static inline void classify_nal(h26x_assembler_t *a, uint8_t nal_unit_header) {
  */
 static void append_start_code(h26x_assembler_t *a) {
     static const uint8_t start_code[4] = { 0x00, 0x00, 0x00, 0x01 };
+    fixup_start_code(a);
+    a->last_start_code_pos=a->frame_len;
     memcpy(a->frame_buffer + a->frame_len, start_code, 4);
     a->frame_len += 4;
 }
@@ -362,16 +384,17 @@ void h26x_assembler_process_rtp(h26x_assembler_t *a, const rtp_packet_t *pkt) {
 /*
  * Create a new assembler instance.
  */
-h26x_assembler_t *h26x_assembler_create(h26x_codec_t codec, void *context, h26x_frame_callback_fn cb) {
+h26x_assembler_t *h26x_assembler_create(h26x_codec_t codec, void *context, h26x_frame_callback_fn cb, bool length_prefixed) {
     h26x_assembler_t *a = (h26x_assembler_t *)calloc(1, sizeof(h26x_assembler_t));
     if (!a) {
         return NULL;
     }
 
-    a->codec         = codec;
-    a->context       = context;
-    a->cb            = cb;
-    a->frame_buffer  = (uint8_t *)malloc(MAX_FRAME_SIZE);
+    a->codec            = codec;
+    a->context          = context;
+    a->cb               = cb;
+    a->length_prefixed  = length_prefixed;
+    a->frame_buffer     = (uint8_t *)malloc(MAX_FRAME_SIZE);
     if (!a->frame_buffer) {
         free(a);
         return NULL;

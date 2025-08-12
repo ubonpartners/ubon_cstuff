@@ -11,6 +11,7 @@
 #include "memory_stuff.h"
 #include "cuda_stuff.h"
 #include "misc.h"
+#include "file_decoder.h"
 
 // Helper: combine frame hashes into a running total
 static uint64_t combine_hash(uint64_t total, uint32_t frame_hash) {

@@ -3,6 +3,7 @@
 #include "display.h"
 #include "profile.h"
 #include "cuda_stuff.h"
+#include "file_decoder.h"
 
 static void process_image(void *context, image_t *img)
 {

@@ -14,6 +14,7 @@
 #include "trackset.h"
 #include "nvof.h"
 #include "image_draw.h"
+#include "file_decoder.h"
 
 static nvof_t *nvof=0;
 
