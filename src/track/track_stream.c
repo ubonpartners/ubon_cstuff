@@ -42,7 +42,8 @@ typedef enum ts_queued_job_type
     TRACK_STREAM_JOB_VIDEO_FILE_DATA=3, // compressed video data waiting to be decoded (makes possibly multiple TRACK_STREAM_JOB_MAIN_PIPELINE)
     TRACK_STREAM_JOB_SDP=4,             // SDP config
     TRACK_STREAM_JOB_RTP=5,             // RTP packets waiting to be assembled to H26x frames
-    TRACK_STREAM_NUM_JOB_TYPES=6
+    TRACK_STREAM_JOB_NALUS=6,           // complete NALUs waiting to be assembled to H26x frames
+    TRACK_STREAM_NUM_JOB_TYPES=7
 } ts_queued_job_type_t;
 
 static const char *queued_job_names[]={
@@ -52,6 +53,7 @@ static const char *queued_job_names[]={
     "video_file",
     "process_sdp",
     "process_rtp",
+    "process_nalus",
 };
 
 //
@@ -813,6 +815,27 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             block_free(job);
             break;
         }
+        case TRACK_STREAM_JOB_NALUS:
+        {
+            track_shared_state_t *tss=ts->tss;
+            input_debugf("running inpu NALUs job");
+            assert(ts->destroying==false);
+            if (ts->decoder==0)
+            {
+                ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
+                simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
+            }
+            if (ts->h26x_assembler==0)
+            {
+                ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
+                                                         ts, h26x_frame_callback);
+            }
+
+            h26x_assembler_process_nalus(ts->h26x_assembler, job->data, job->data_len, job->time);
+            free(job->data);
+            block_free(job);
+            break;
+        }
         default:
         {
             break;
@@ -954,6 +977,21 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
     job->data=(uint8_t *)mem;
     job->data_offset=0;
     job->data_len=tlen;
+    track_stream_queue_job(ts, job);
+}
+
+void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265)
+{
+    ts_queued_job_t *job=ts_queued_job_create();
+    uint8_t *mem=(uint8_t *)malloc(length);
+    if (mem==0) return;
+    memcpy(mem, data, length);
+    job->type=TRACK_STREAM_JOB_NALUS;
+    job->data=(uint8_t *)mem;
+    job->data_offset=0;
+    job->data_len=length;
+    job->time=rtp_extended_timestamp/90000.0;
+    job->codec=(is_h265) ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264;
     track_stream_queue_job(ts, job);
 }
 

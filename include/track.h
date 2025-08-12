@@ -59,6 +59,12 @@ void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str);
 void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t **data, int *length);
 
 //=================================================================================================
+// NALU interface: data should be 4-byte length, AVCC/HVCC 'length prefixed' format
+// use 'set sdp' as with RTP interface
+
+void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265);
+
+//=================================================================================================
 // jpeg interface. You can create an extra 'stream' and just use it for jpegs
 // for example, you might want to process a user uploaded image in order to get the face rec
 // embedding to use for search. You are guaranteed to get one result_callback per JPEG

@@ -605,6 +605,47 @@ int h26x_assembler_process_raw_video(h26x_assembler_t *a,
     return frames;
 }
 
+int h26x_assembler_process_nalus(h26x_assembler_t *a,
+                                 const uint8_t *data,
+                                 int data_len,
+                                 double rtp_time)
+{
+    int through=0;
+    while(through<data_len)
+    {
+        assert(through+4<data_len);
+        int n_len=(data[through+0]<<24)+(data[through+0]<<16)+(data[through+0]<<8)+(data[through+0]<<0);
+        assert(through+n_len+4<=data_len);
+        const uint8_t *nalu=data+through+4;
+        through+=(n_len+4);
+
+        int nal_type = (a->codec==H26X_CODEC_H264)
+                     ? (nalu[0] & 0x1F)
+                     : ((nalu[0] >> 1) & 0x3F);
+
+        // check if this is a VCL NALU and the *first* slice of a picture
+        bool is_vcl = (a->codec==H26X_CODEC_H264)
+                    ? (nal_type >= 1 && nal_type <= 5)
+                    : (nal_type >= 0 && nal_type <= 31);
+        bool new_frame = false;
+        if (is_vcl) {
+            if (a->codec==H26X_CODEC_H264) {
+                new_frame = h264_is_first_mb(nalu, n_len);
+            } else {
+                new_frame = h265_is_first_slice(nalu, n_len);
+            }
+        }
+
+        if (new_frame && a->in_frame) {
+            emit_frame(a, 0);
+            a->in_frame= false;
+        }
+        a->last_extended_ts=90000.0*rtp_time;
+        append_nalu(a, nalu, n_len);
+    }
+    return 0;
+}
+
 /*
  * Reset assembler to “no frame in progress.”
  */

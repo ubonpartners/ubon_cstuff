@@ -60,6 +60,8 @@ typedef struct h26x_assembler h26x_assembler_t;
 // ’context’ is user‐defined and will be passed verbatim to every callback.
 // ’cb’ is invoked once per reassembled frame (when RTP‐marker is seen).
 // Returns NULL on failure.
+// length_prefixed sets whether output is annex-B style (00 00 00 01 start code
+// prefixed, or 4-byte length, AVCC/HVCC 'length prefixed' format)
 // -----------------------------------------------------------------------------
 h26x_assembler_t *h26x_assembler_create(h26x_codec_t            codec,
                                         void                   *context,
@@ -98,6 +100,11 @@ int h26x_assembler_process_raw_video(h26x_assembler_t       *a,
                                      double framerate,
                                      const uint8_t *data,
                                      int data_len);
+
+int h26x_assembler_process_nalus(h26x_assembler_t       *a,
+                                 const uint8_t *data,
+                                 int data_len,
+                                 double rtp_time);
 
 void h26x_print_frame_summary(const h26x_frame_descriptor_t *desc);
 
