@@ -26,6 +26,7 @@ struct motion_track
     int block_w, block_h;
     int frames_since_reset;
     float *noise_floor;
+    float motion_score;
     float mad_delta;
     float alpha, beta; // alpha and beta for noise floor update
     float scene_change_sensitivity;
@@ -279,6 +280,7 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
     uint64_t *mp=(uint64_t *)mt->row_masks_host;
     uint64_t v_mask=0;
     uint64_t h_mask=0;
+    int blocks_with_motion=0;
     for(int y=0;y<block_h;y++)
     {
         // apply a basic erode style operator to remove
@@ -289,11 +291,12 @@ void motion_track_add_frame(motion_track_t *mt, image_t *img)
         if (y+1<block_h) erode_mask|=mp[y+1];
         uint64_t filtered=this_row;
         if (mt->erode) filtered&=erode_mask;
-
+        blocks_with_motion+=(int)__builtin_popcountll(filtered);
         uint64_t mask=__builtin_bswap64(filtered)>>(64-block_w);
         h_mask|=mask;
         v_mask=(v_mask<<1)+((mask==0) ? 0 : 1);
     }
+    mt->motion_score=blocks_with_motion/(block_w*block_h+1e-7);
 
     roi_t roi={0};
     if (h_mask!=0 && v_mask!=0)
@@ -445,4 +448,9 @@ void motion_track_predict_box_inplace(motion_track_t *mt, float *box)
     box[1]=std::max(0.0f, std::min(1.0f, y0-dy));
     box[2]=std::max(0.0f, std::min(1.0f, x1-dx));
     box[3]=std::max(0.0f, std::min(1.0f, y1-dy));
+}
+
+float motion_track_get_motion_score(motion_track_t *mt)
+{
+    return mt->motion_score;
 }

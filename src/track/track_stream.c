@@ -147,6 +147,7 @@ struct track_stream
     double min_time_delta_process;
     double min_time_delta_full_roi;
     bool last_skip;
+    float motion_score;
     roi_t motion_roi;
     roi_t inference_roi;
     roi_t tracked_object_roi;
@@ -396,6 +397,7 @@ static void thread_stream_run_process_inference_results(int id, track_stream_t *
     }
     r->inference_dets=ts->inference_detections;
     r->motion_roi=ts->motion_roi;
+    r->motion_score=ts->motion_score;
     r->inference_roi=ts->inference_roi;
 
     if (r->track_dets->num_detections!=0)
@@ -514,6 +516,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     }
 
     roi_t motion_roi=motion_track_get_roi(ts->mt);
+    ts->motion_score=motion_track_get_motion_score(ts->mt);
     float skip_roi_thr=(ts->last_skip) ? tss->motiontrack_min_roi_after_skip : tss->motiontrack_min_roi_after_nonskip;
     if (roi_area(&motion_roi)<skip_roi_thr)
     {
@@ -526,6 +529,7 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
         r->result_type=TRACK_FRAME_SKIP_NO_MOTION;
         r->time=time;
         r->motion_roi=motion_roi;
+        r->motion_score=ts->motion_score;
         r->inference_roi=ROI_ZERO;
         r->track_dets=0;
         r->inference_dets=0;

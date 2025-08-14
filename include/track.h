@@ -25,6 +25,7 @@ struct track_results
 {
     result_type_t result_type;
     double time;
+    float motion_score;              // 0-1 representing 'the amount of motion'
     roi_t motion_roi;                // ROI that was detected as containing motion. Note that if this is
                                      // less than skip_thr then inference/tracking will be skipped. In this
                                      // case inference_roi will be (0,0,0,0) and track_dets/inference_dets 0

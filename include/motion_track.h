@@ -24,6 +24,7 @@ void motion_track_destroy(motion_track_t *mt);
 void motion_track_add_frame(motion_track_t *mt, image_t *img);
 roi_t motion_track_get_roi(motion_track_t *mt);
 void motion_track_set_roi(motion_track_t *mt, roi_t roi);
+float motion_track_get_motion_score(motion_track_t *mt);
 bool motion_track_scene_change(motion_track_t *mt);
 of_results_t *motion_track_get_of_results(motion_track_t *mt);
 
