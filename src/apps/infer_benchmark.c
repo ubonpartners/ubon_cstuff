@@ -199,7 +199,7 @@ static benchmark_config_t test_config = {
     .use_cuda_nms=false,
     .run_time_seconds = 5.0,
     .trt_model = "/mldata/weights/trt/yolo11l-dpar-250525-fp16.trt",
-    .trt_model_config = "/mldata/config/train/train_yolo_dpa_l.yaml"
+    .trt_model_config = "/mldata/config/train/train_yolo_v6_l.yaml"
 };
 
 int main(int argc, char *argv[])
@@ -239,12 +239,17 @@ int main(int argc, char *argv[])
                 test_config.width=640;
                 test_config.height=640;
             }
-            for(int threads=1;threads<=32;threads*=2)
+            int max_threads=32;
+            for(int threads=1;threads<=max_threads;threads*=2)
             {
                 for(int cuda_nms=0;cuda_nms<=1;cuda_nms++)
                 {
                     for(int model=0;model<2;model++)
                     {
+                        if (threads!=max_threads)
+                        {
+                            if ((model!=0)||(cuda_nms!=1)) continue;
+                        }
                         if (model==0)
                             test_config.trt_model="/mldata/weights/trt/yolo11l-dpar-250525-int8.trt";
                         else

@@ -54,6 +54,7 @@ struct track_aux
 
     bool face_embeddings_enabled;
     bool face_jpegs_enabled;
+    bool use_fiqa;
     float face_embeddings_min_quality;
     float face_min_quality_increment;
     float face_min_quality_multiple;
@@ -119,6 +120,7 @@ track_aux_t *track_aux_create(track_shared_state *tss, const char *config_yaml)
     ta->face_embeddings_min_quality=yaml_get_float(yaml_base, 0.01, 2, "faces", "min_quality");
     ta->face_min_quality_increment=yaml_get_float(yaml_base, 0.02, 2, "faces", "min_quality_increment");
     ta->face_min_quality_multiple=yaml_get_float(yaml_base, 1.2, 2, "faces", "min_quality_multiple");
+    ta->use_fiqa=yaml_get_bool(yaml_base, 1.2, 2, "faces", "use_fiqa");
 
     ta->clip_frame_embeddings_enabled=yaml_get_bool(yaml_base, false, 2, "clip", "frame_embeddings_enabled");
     ta->clip_frame_embeddings_min_interval_seconds=yaml_get_float(yaml_base, 2.0, 2, "clip", "frame_embeddings_min_interval_seconds");
@@ -237,7 +239,7 @@ void track_aux_run(track_aux_t *ta, image_t *img, detection_list_t *dets, bool s
         if ((ta->face_infer_thread!=0) && (ta->face_embeddings_enabled) && (det->num_face_points>0))
         {
             assert(det->num_face_points==5);
-            float q=detection_face_quality_score(det);
+            float q=(ta->use_fiqa) ? det->fiqa_score : detection_face_quality_score(det);
             if (aux->face_embedding!=0 && embedding_is_ready(aux->face_embedding)==false)
                 ; // wait for existing embedding
             else

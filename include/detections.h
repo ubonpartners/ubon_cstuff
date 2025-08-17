@@ -111,7 +111,7 @@ detection_list_t *detection_list_join(detection_list_t *dets1, detection_list_t 
 image_t *detection_list_draw(detection_list_t *dets, image_t *img);
 void detection_list_show(detection_list_t *dets, bool log_only=false);
 void detection_list_generate_overlap_masks(detection_list_t *dets);
-void detection_list_fuse_face_person(detection_list_t *dets);
+void detection_list_fuse_face_person(detection_list_t *dets, bool delete_face_detections=true);
 const char *detection_list_get_classname(detection_list_t *dets, int cl);
 
 float detection_face_quality_score(detection_t *det);

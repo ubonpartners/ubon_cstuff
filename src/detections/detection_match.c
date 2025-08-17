@@ -218,7 +218,7 @@ int match_box_iou(
     return ret;
 }
 
-void detection_list_fuse_face_person(detection_list_t *dets)
+void detection_list_fuse_face_person(detection_list_t *dets, bool delete_face_detections)
 {
     int num=0;
     uint16_t person_idx[dets->num_person_detections];
@@ -252,14 +252,17 @@ void detection_list_fuse_face_person(detection_list_t *dets)
     int fc=dets->md->face_class_index;
 
     // delete face detections from list (including unmatched ones)
-    for (int i=0;i<old_num;i++)
+    if (delete_face_detections)
     {
-        if (dets->det[i]->cl==fc)
-            detection_destroy(dets->det[i]);
-        else
-            dets->det[new_num++]=dets->det[i];
+        for (int i=0;i<old_num;i++)
+        {
+            if (dets->det[i]->cl==fc)
+                detection_destroy(dets->det[i]);
+            else
+                dets->det[new_num++]=dets->det[i];
+        }
+        dets->num_detections=new_num;
+        dets->face_dets=0;
+        dets->num_face_detections=0;
     }
-    dets->num_detections=new_num;
-    dets->face_dets=0;
-    dets->num_face_detections=0;
 }

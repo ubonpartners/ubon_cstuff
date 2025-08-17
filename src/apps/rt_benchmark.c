@@ -22,6 +22,7 @@
 #include "platform_stuff.h"
 #include "pcap_stuff.h"
 #include "yaml_stuff.h"
+#include "default_setup.h"
 
 #define MAX_STREAMS     200
 
@@ -109,7 +110,7 @@ static parsed_pcap_t *parse_pcap(const char *pcap)
 
 static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_streams, double target_runtime)
 {
-    const char *config="/mldata/config/track/trackers/uc_reid.yaml";
+    const char *config=DEFAULT_TRACKER_YAML;
     context_t ctx;
     memset(&ctx, 0, sizeof(context_t));
 

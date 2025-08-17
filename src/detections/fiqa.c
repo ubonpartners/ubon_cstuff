@@ -133,7 +133,7 @@ void fiqa_embedding_show(embedding_t *e)
 }
 
 float cevo_bestface_score(detection_t *det) {
-    const float LANDMARK_CONF_THRESH=0.8f;
+    const float LANDMARK_CONF_THRESH=0.7f;
     const int NUM_LANDMARKS = 5;
     const float CONFIDENCE_WEIGHT = 0.3f;
     const float FRONTALITY_WEIGHT = 0.4f;
@@ -141,7 +141,7 @@ float cevo_bestface_score(detection_t *det) {
 
     // 1. VALIDATE INPUT
     if (det->num_face_points!=NUM_LANDMARKS) {
-        return 0.0f;
+        return 0.00f;
     }
 
     // 2. CHECK LANDMARK CONFIDENCE (with averaging)
@@ -149,7 +149,7 @@ float cevo_bestface_score(detection_t *det) {
     for(int i = 0; i < NUM_LANDMARKS; i++) {
         float conf=det->face_points[i].conf;
         if (conf < LANDMARK_CONF_THRESH) {
-            return 0.0f; // Hard threshold for minimum quality
+            return 0.00f; // Hard threshold for minimum quality
         }
         avg_confidence += conf;
     }

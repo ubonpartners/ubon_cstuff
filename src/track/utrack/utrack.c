@@ -549,7 +549,7 @@ detection_list_t *utrack_run(utrack_t *ut, detection_list_t *dets_in, double rtp
 
             float ema=0.5;
             for(int i=0;i<REID_VECTOR_LEN;i++) new_obj->det.reid[i]=ema*new_obj->det.reid[i]+(1.0-ema)*old_obj->det.reid[i];
-
+            new_obj->det.fiqa_score=0.5*new_obj->det.fiqa_score+0.5*old_obj->det.fiqa_score;
             if ((pass==0)||(pass==1))
                 new_obj->track_state=TRACKSTATE_TRACKED;
             else if (old_obj->track_state==TRACKSTATE_LOST)

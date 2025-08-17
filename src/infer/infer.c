@@ -26,12 +26,12 @@
 #include "yaml_stuff.h"
 #include "trt_stuff.h"
 
-#define debugf if (0) printf
+#define debugf if (0) log_error
 
 using namespace nvinfer1;
 using namespace nvonnxparser;
 
-static const char *default_config="/mldata/config/train/train_yolo_dpa_l.yaml";
+static const char *default_config="/mldata/config/train/train_yolo_v6_l.yaml";
 
 struct infer
 {
@@ -316,7 +316,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     md.num_classes=md.class_names.size();
     md.num_person_attributes=md.person_attribute_names.size();
     md.num_keypoints=kpt_shape[0];
-
+    debugf("face_index=%d person_class=%d",md.face_class_index,md.person_class_index);
     inf->md=md;
     //infer_build("/mldata/weights/onnx/yolo11l-dpa-131224.onnx", "/mldata/weights/trt/yolo11l-dpa-131224.trt");
     log_debug("Loading TRT model %s",model);
@@ -410,6 +410,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         inf->md.num_face_keypoints=5;
         inf->md.person_keypoint_offset=inf->md.face_keypoint_offset+5*3;
         inf->md.num_person_keypoints=17;
+        debugf("5 facepoints, 17 person kepoints");
     }
     else if (inf->md.num_keypoints==19)
     {
@@ -417,6 +418,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         inf->md.num_face_keypoints=0;
         inf->md.person_keypoint_offset=4+inf->md.num_classes+inf->md.num_person_attributes;
         inf->md.num_person_keypoints=19;
+        debugf("19 face+pose keypoints");
     }
     else
     {
@@ -885,7 +887,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     int rows=outputDims.d[2];   // eg 4620
     int numBoxes=rows;
 
-    debugf("output dims %d %d %d\n",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2]);
+    debugf("output dims %d %d %d",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2]);
 
     cuda_stream_add_dependency(inf->stream, inf_image->stream);
     assert(true==inf->ec->enqueueV3(inf->stream));
@@ -974,7 +976,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
     for(int i=0;i<num;i++)
     {
         detection_list_generate_overlap_masks(dets[i]);
-        if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i]);
+        if (inf->do_fuse_face_person) detection_list_fuse_face_person(dets[i], true);
     }
     if (file_trace_enabled)
     {
