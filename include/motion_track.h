@@ -30,5 +30,5 @@ of_results_t *motion_track_get_of_results(motion_track_t *mt);
 
 void motion_track_predict_point_inplace(motion_track_t *mt, float *pt);
 void motion_track_predict_box_inplace(motion_track_t *mt, float *box);
-
+void motion_track_set_name(motion_track_t *mt, const char *name);
 #endif

@@ -95,11 +95,13 @@ static void *run_track_worker(void *arg) {
 
     s.ts = track_stream_create(args->tss, &s, track_result);
     track_stream_set_minimum_frame_intervals(s.ts, 1.0/args->track_framerate, 10.0);
-
+    char name[128];
     while(keep_running)
     {
         int num_clips=sizeof(clips)/sizeof(const char *);
         int clip=(rand()&511) % num_clips;
+        snprintf(name, sizeof(name), "%s", clips[clip]);
+        track_stream_set_name(s.ts, name);
         track_stream_run_video_file(s.ts, clips[clip], SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f, false);
         std::vector<track_results_t *> results=track_stream_get_results(s.ts, true);
         for (auto& res : results) {

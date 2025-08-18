@@ -25,7 +25,6 @@ struct work_queue
     bool destroying;
     bool executing;
     bool paused;
-    const char *name;
     double schedule_time;
     void *callback_context;
     void (*callback)(void *context, work_queue_item_header_t *item);
@@ -38,11 +37,13 @@ struct work_queue
     int backpressure_length;
     int num_wq_backpressure;
     work_queue_t *wq_backpressure[MAX_WQ_BACKPRESSURE];
+    const char *name;
+    const char *name2;
 };
 
 void work_queue_init(work_queue_t *wq, ctpl::thread_pool *thread_pool,
     void *context, void (*process_item)(void *context, work_queue_item_header_t *item),
-    const char *name);
+    const char *name, const char *name2);
 void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job, bool head=false);
 void work_queue_pause(work_queue_t *wq, bool lock=false);
 void work_queue_stop(work_queue_t *wq);

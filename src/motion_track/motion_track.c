@@ -41,6 +41,7 @@ struct motion_track
     bool generate_of_results;
     bool destroyed;
     of_results_t of_results;
+    const char *name;
     #ifdef NVOF_SUPPORTED
     nvof_t *nvof;
     #endif
@@ -67,6 +68,7 @@ motion_track_t *motion_track_create(const char *yaml_config)
     mt->row_masks_device=(uint8_t *)cuda_malloc(8*64);
     mt->row_masks_host=(uint8_t *)cuda_malloc_host(8*64);
     mt->scene_change_sensitivity=0.5f;
+    mt->name="unnamed";
     #ifdef NVOF_SUPPORTED
     if (mt->generate_of_results) mt->nvof=nvof_create(mt, mt->max_width, mt->max_height);;
     #endif
@@ -142,7 +144,7 @@ static void motion_track_run_optical_flow(motion_track_t *mt, image_t *image_sca
                 if (mt->scene_change_sensitivity!=0)
                 {
                     mt->scene_change=(avg_cost>16.0*(1.0-mt->scene_change_sensitivity))&&(mt->frames_since_reset>2);
-                    if (mt->scene_change) log_info("Scene change (t=%f %f %d %d)",image_scaled->meta.time, avg_cost, total_cost, mt->frames_since_reset);
+                    if (mt->scene_change) log_info("[%s] Scene change (t=%f %f %d %d)",mt->name,image_scaled->meta.time, avg_cost, total_cost, mt->frames_since_reset);
                 }
             }
         }
@@ -453,4 +455,9 @@ void motion_track_predict_box_inplace(motion_track_t *mt, float *box)
 float motion_track_get_motion_score(motion_track_t *mt)
 {
     return mt->motion_score;
+}
+
+void motion_track_set_name(motion_track_t *mt, const char *name)
+{
+    mt->name=name;
 }

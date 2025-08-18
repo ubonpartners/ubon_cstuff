@@ -9,13 +9,14 @@
 
 void work_queue_init(work_queue_t *wq, ctpl::thread_pool *thread_pool,
     void *context, void (*process_item)(void *context, work_queue_item_header_t *item),
-    const char *name) {
+    const char *name, const char *name2) {
     memset(wq, 0, sizeof(work_queue_t));
     pthread_mutex_init(&wq->lock, 0);
     wq->thread_pool=thread_pool;
     wq->callback_context=context;
     wq->callback=process_item;
     wq->name=name;
+    wq->name2=name2;
     wq->backpressure_length=100;
 }
 
@@ -31,7 +32,7 @@ static void work_queue_pause_internal(work_queue_t *wq)
 static void work_queue_try_start_execution(work_queue_t *wq)
 {
     assert(0!=pthread_mutex_trylock(&wq->lock));
-    debugf("[%s] try start execution: length=%d paused=%d (PC %d RC %d)", wq->name, wq->length,wq->paused,wq->stats_pause_count,wq->stats_resume_count);
+    debugf("[%s:%s] try start execution: length=%d paused=%d (PC %d RC %d)", wq->name,wq->name2, wq->length,wq->paused,wq->stats_pause_count,wq->stats_resume_count);
     if (wq->length==0) return;
     if (wq->paused || wq->stopped || wq->destroying) return;
     if (wq->executing==false)
@@ -182,7 +183,7 @@ void work_queue_stop(work_queue_t *wq)
         iters++;
         if ((iters%1000)==0)
         {
-            log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->stats_resume_count,wq->length,wq->stats_jobs_run);
+            log_warn("wq stop: %s:%s %d l %d jr %d",wq->name,wq->name2,wq->stats_resume_count,wq->length,wq->stats_jobs_run);
         }
         usleep(1000);
         assert(iters<20000);
@@ -229,8 +230,8 @@ void work_queue_sync(work_queue_t *wq)
             }
             else
             {
-                log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d PC %d RC %d)",
-                                            wq->name, (time-sync_start_time), wq->length, wq->stopped, wq->destroying,
+                log_warn("work_queue_sync Wait %s:%s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d PC %d RC %d)",
+                                            wq->name,wq->name2, (time-sync_start_time), wq->length, wq->stopped, wq->destroying,
                                             wq->executing, wq->stats_jobs_run, wq->stats_pause_count, wq->stats_resume_count);
                 pthread_mutex_lock(&wq->lock);
                 work_queue_try_start_execution(wq);

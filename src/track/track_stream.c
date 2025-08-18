@@ -167,6 +167,7 @@ struct track_stream
     work_queue_t wq[TRACK_STREAM_NUM_JOB_TYPES];
 
     track_stream_stats_t stats;
+    char name[128];
 };
 
 static void track_stream_try_process_jobs(track_stream_t *ts);
@@ -216,6 +217,7 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->result_callback_context=result_callback_context;
     ts->result_callback=result_callback;
     ts->mt=motion_track_create(ts->config_yaml);
+    motion_track_set_name(ts->mt, ts->name);
 
     std::string tracker_type=yaml_base["tracker_type"].as<std::string>();
     bool use_bytetracker=(strcmp(tracker_type.c_str(), "upyc-bytetrack")==0);
@@ -232,13 +234,15 @@ track_stream_t *track_stream_create(track_shared_state_t *tss,
     ts->stream_image_format=IMAGE_FORMAT_YUV420_DEVICE;
     ts->taux=track_aux_create(tss, ts->config_yaml);
 
+    snprintf(ts->name, sizeof(ts->name), "Unnamed %p",ts);
+
     fast_histogram_init(&ts->stats.h_pipeline_latency, 0.0f, 2.0f, 1.2f);
     fast_histogram_init(&ts->stats.h_inference_results_time, 0.0f, 2.0f, 1.2f);
     fast_histogram_init(&ts->stats.h_input_image_time, 0.0f, 2.0f, 1.2f);
 
     for(int i=0;i<TRACK_STREAM_NUM_JOB_TYPES;i++)
     {
-        work_queue_init(&ts->wq[i], tss->thread_pool, ts, work_queue_process_job, queued_job_names[i]);
+        work_queue_init(&ts->wq[i], tss->thread_pool, ts, work_queue_process_job, ts->name, queued_job_names[i]);
     }
 
     // the below sets how much data can be queued between each state, impacting latency, throughput and mem usage
@@ -1003,4 +1007,9 @@ void track_stream_poll_performance_data(track_stream_t *ts, track_stream_perf_da
 {
     pd->realtime=ts->realtime;
     pd->h26x_ql_iir=ts->h26x_ql_iir;
+}
+
+void track_stream_set_name(track_stream_t *ts, const char *name)
+{
+    snprintf(ts->name, sizeof(ts->name), "%s", name);
 }
