@@ -171,6 +171,7 @@ model_description_t *track_shared_state_get_model_description(track_shared_state
 void track_shared_state_destroy(track_shared_state_t *tss)
 {
     if (!tss) return;
+
     pthread_mutex_lock(&ts_global.lock);
     assert(tss->ref_count>=1);
     tss->ref_count--;
@@ -192,6 +193,11 @@ void track_shared_state_destroy(track_shared_state_t *tss)
     free(tss);
     ts_global.track_shared_set->erase(tss);
     pthread_mutex_unlock(&ts_global.lock);
+
+    (void)allocation_tracker_check_no_outstanding_allocations();
+    /*char *s=allocation_tracker_stats();
+    printf("%s\n",s);
+    free(s);*/
 }
 
 const char *track_shared_state_get_stats(track_shared_state_t *tss)
@@ -209,7 +215,7 @@ const char *track_shared_state_get_stats(track_shared_state_t *tss)
     }
     root["infer_threads"]=infer_threads;
     root["jpeg_threads"]=jpeg_thread_stats(tss->jpeg_thread);
-
+    root["track_streams"]=tss->track_stream_set->size();
     return yaml_to_cstring(root);
 }
 

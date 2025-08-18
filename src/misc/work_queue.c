@@ -200,7 +200,7 @@ void work_queue_resume(work_queue_t *wq)
     pthread_mutex_unlock(&wq->lock);
 }
 
-void work_queue_sync(work_queue_t *wq)
+bool work_queue_sync(work_queue_t *wq, double wait_time_seconds)
 {
     // fixme : ugh - implement without sleep - need to pass dummy job with sem into queue
     int iter=0;
@@ -218,6 +218,11 @@ void work_queue_sync(work_queue_t *wq)
         if (empty) break;
         iter++;
         double time=profile_time();
+        if (time-sync_start_time>wait_time_seconds)
+        {
+            log_error("work queue %s:%s : sync timeout", wq->name,wq->name2);
+            return false;
+        }
         if (time-last_sync_check_time>1.0)
         {
             last_sync_check_time=time;
@@ -240,6 +245,7 @@ void work_queue_sync(work_queue_t *wq)
         }
         usleep(10000);
     }
+    return true;
 }
 
 void work_queue_destroy(work_queue_t *wq, void *context, void (*process_remaining_item)(void *context, work_queue_item_header_t *item))

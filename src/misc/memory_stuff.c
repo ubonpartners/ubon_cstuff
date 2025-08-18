@@ -180,6 +180,34 @@ double allocation_tracker_get_mem_outstanding(const char *tracker_name)
     assert(0);
 }
 
+bool allocation_tracker_check_no_outstanding_allocations()
+{
+    bool ok=true;
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    for (auto &e : registry) {
+        if (e.tracker!=0)
+        {
+            if (e.tracker->num_allocs != e.tracker->num_frees)
+            {
+                log_error("Memory leak %30s : %d blocks", e.name.c_str(), (int)(e.tracker->num_allocs-e.tracker->num_frees));
+                ok=false;
+            }
+        }
+    }
+    for (auto &e : registry) {
+        if (e.block_allocator!=0)
+        {
+            if (e.block_allocator->allocated_blocks!=0)
+            {
+                log_error("Memory leak %30s : %d blocks", e.name.c_str(), (int)e.block_allocator->allocated_blocks);
+                ok=false;
+            }
+        }
+    }
+    if (ok) log_info("No memory allocation leaks detected");
+    return ok;
+}
+
 char *allocation_tracker_stats(void)
 {
     std::lock_guard<std::mutex> lock(registry_mutex);

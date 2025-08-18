@@ -26,6 +26,8 @@ using namespace pybind11::literals;  // <-- this line enables "_a" syntax
 #include "fiqa.h"
 #include "mota_metrics.h"
 #include "ubon_pyc_util.h"
+#include "memory_stuff.h"
+#include "yaml_stuff.h"
 
 // to build: python setup.py build_ext --inplace
 
@@ -192,6 +194,14 @@ std::shared_ptr<c_image> c_load_jpeg(const char *file) {
         image_t *jpg=load_jpeg(file);
         return std::make_shared<c_image>(jpg);
     }
+
+std::string c_platform_stats() {
+    YAML::Node node=allocation_tracker_stats_node();
+    const char *res = yaml_to_cstring(node);
+    std::string ret=std::string(res ? res : "");  // safe copy
+    free((void*)res);
+    return ret;
+}
 
 std::shared_ptr<c_image> c_decode_jpeg(py::bytes bitstream) {
     char* buffer;
@@ -648,8 +658,9 @@ public:
 
     std::string get_stats() const {
         const char *res = track_shared_state_get_stats(state);
-        return std::string(res ? res : "");  // safe copy
+        std::string ret=std::string(res ? res : "");  // safe copy
         if (res) free((void*)res);
+        return ret;
     }
 
     track_shared_state_t* get() const { return state; }
@@ -680,6 +691,10 @@ public:
 
     void set_frame_intervals(double min_process, double min_full_roi) {
         track_stream_set_minimum_frame_intervals(stream, min_process, min_full_roi);
+    }
+
+    void set_name(std::string name) {
+        track_stream_set_name(stream, name.c_str());
     }
 
     void run_on_images(const std::vector<std::shared_ptr<c_image>>& images) {
@@ -731,9 +746,9 @@ public:
         if (res) free((void*)res);
     }
 
-    std::vector<py::dict> get_results(bool wait) {
+    std::vector<py::dict> get_results(double wait_time_seconds) {
         std::vector<py::dict> results_out;
-        auto results = track_stream_get_results(stream, wait);
+        auto results = track_stream_get_results(stream, wait_time_seconds);
         for (auto& res : results) {
             py::dict d;
             d["result_type"] = res->result_type;
@@ -1005,6 +1020,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
              py::arg("config_yaml") = std::nullopt,
              py::arg("realtime") = std::nullopt)
         .def("set_frame_intervals", &c_track_stream::set_frame_intervals)
+        .def("set_name", &c_track_stream::set_name)
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
         .def("run_on_video_file", &c_track_stream::run_on_video_file)
@@ -1074,6 +1090,9 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
              "Add a frame of detections and ground truths.")
         .def("get_results", &c_mota_metrics::get_results,
              "Get tracking metric results as a dict.");
+
+    m.def("c_platform_stats", &c_platform_stats,
+          "get platform stats");
 
     m.def("load_jpeg", &c_load_jpeg,
           "load jpeg file to c img",

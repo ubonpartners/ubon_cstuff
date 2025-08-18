@@ -48,7 +48,7 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job, bool he
 void work_queue_pause(work_queue_t *wq, bool lock=false);
 void work_queue_stop(work_queue_t *wq);
 void work_queue_resume(work_queue_t *wq);
-void work_queue_sync(work_queue_t *wq);
+bool work_queue_sync(work_queue_t *wq, double wait_time_seconds);
 int work_queue_length(work_queue_t *wq);
 void work_queue_destroy(work_queue_t *wq, void *context, void (*process_remaining_item)(void *context, work_queue_item_header_t *item));
 YAML::Node work_queue_get_stats(work_queue_t *wq);

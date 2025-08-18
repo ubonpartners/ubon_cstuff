@@ -61,6 +61,7 @@ YAML::Node allocation_tracker_stats_node();
 void allocation_tracker_reset();
 double allocation_tracker_get_mem_HWM(const char *tracker_name);
 double allocation_tracker_get_mem_outstanding(const char *tracker_name);
+bool allocation_tracker_check_no_outstanding_allocations();
 
 typedef struct block_allocator block_allocator_t;
 

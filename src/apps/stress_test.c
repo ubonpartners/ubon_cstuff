@@ -103,7 +103,7 @@ static void *run_track_worker(void *arg) {
         snprintf(name, sizeof(name), "%s", clips[clip]);
         track_stream_set_name(s.ts, name);
         track_stream_run_video_file(s.ts, clips[clip], SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f, false);
-        std::vector<track_results_t *> results=track_stream_get_results(s.ts, true);
+        std::vector<track_results_t *> results=track_stream_get_results(s.ts, 300);
         for (auto& res : results) {
             track_results_destroy(res);
         }

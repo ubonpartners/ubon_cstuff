@@ -325,6 +325,10 @@ void track_stream_destroy(track_stream_t *ts)
     }
 
     // nothing should be running now
+
+    auto results = ts->track_results_vec;
+    for (auto& res : results) track_results_destroy(res);
+
     if (ts->rtp_receiver) rtp_receiver_destroy(ts->rtp_receiver);
     if (ts->h26x_assembler) h26x_assembler_destroy(ts->h26x_assembler);
     if (ts->decoder) simple_decoder_destroy(ts->decoder);
@@ -564,14 +568,20 @@ static void thread_stream_run_input_image_job(int id, track_stream_t *ts, image_
     fast_histogram_add_sample(&ts->stats.h_input_image_time, (float)(profile_time()-start_time));
 }
 
-void track_stream_sync(track_stream_t *ts)
+bool track_stream_sync(track_stream_t *ts, double wait_time_seconds)
 {
-    for(int i=TRACK_STREAM_NUM_JOB_TYPES-1;i>=0;i=i-1) work_queue_sync(&ts->wq[i]);
+    bool ok=true;
+    for(int i=TRACK_STREAM_NUM_JOB_TYPES-1;i>=0;i=i-1) ok&=work_queue_sync(&ts->wq[i], wait_time_seconds);
+    return ok;
 }
 
-std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, bool wait)
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, double wait_time_seconds)
 {
-    if (wait) track_stream_sync(ts);
+    if (wait_time_seconds!=0)
+    {
+        bool ok=track_stream_sync(ts, wait_time_seconds);
+        if (!ok) log_error("track stream sync failed %s",ts->name);
+    }
     //pthread_mutex_lock(&ts->main_job_mutex);
     pthread_mutex_lock(&ts->lock);
     std::vector<track_results_t *> ret=ts->track_results_vec;

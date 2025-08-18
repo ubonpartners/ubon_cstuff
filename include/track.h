@@ -45,7 +45,7 @@ void track_shared_state_destroy(track_shared_state_t *tss);
 track_stream_t *track_stream_create(track_shared_state_t *tss, void *result_context, void (*result_callback)(void *context, track_results_t *results),
                                     const char *config_yaml=0, bool realtime=false);
 // sync - waits for all outstanding work to be finished
-void track_stream_sync(track_stream_t *ts);
+bool track_stream_sync(track_stream_t *ts, double wait_time_seconds=300.0);
 void track_stream_destroy(track_stream_t *ts);
 
 const char *track_shared_state_get_stats(track_shared_state_t *tss);
@@ -104,7 +104,7 @@ void track_stream_run_frame_time(track_stream_t *ts, image_t *img);
 void track_stream_run_single_frame(track_stream_t *ts, image_t *img);
 // if you do not provide a result callback then the results are accumulated into a vector
 // (one entry per frame) and can be retrieved with the below
-std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, bool wait=true);
+std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, double wait_time_seconds=600.0);
 track_results_t *track_results_create(bool wait);
 void track_results_destroy(track_results_t *tr);
 
