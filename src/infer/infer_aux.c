@@ -89,7 +89,7 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
                 inf->md.input_ch   = 1;//dims.d[0];
                 inf->md.input_h    = dims.d[1];
                 inf->md.input_w    = dims.d[2];
-                log_info("Dim3 input %s: %dx%dx%d",model_trt,inf->md.input_ch, inf->md.input_h, inf->md.input_w);
+                log_debug("Dim3 input %s: %dx%dx%d",model_trt,inf->md.input_ch, inf->md.input_h, inf->md.input_w);
             }
             else
             {
@@ -106,9 +106,9 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
             DataType dt = inf->engine->getTensorDataType(name);
             for(int i=0;i<dims.nbDims;i++)
             {
-                log_info("output %s dim %d : %d",name,i,(int)dims.d[i]);
+                log_debug("output %s dim %d : %d",name,i,(int)dims.d[i]);
             }
-            log_info("output %s is_fp16 %d",name,(dt == DataType::kHALF));
+            log_debug("output %s is_fp16 %d",name,(dt == DataType::kHALF));
             if (noutput==0)
             {
 
@@ -123,7 +123,7 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
             noutput++;
         }
     }
-    log_info("output embedding size %d max batch %d",inf->md.embedding_size,inf->md.max_batch);
+    log_debug("output embedding size %d max batch %d",inf->md.embedding_size,inf->md.max_batch);
     inf->output_size[0]=inf->md.embedding_size;
     inf->output_size[1]=inf->md.embedding_size_2nd_output;
     inf->output_fp16[0]=inf->md.output_fp16;
@@ -133,7 +133,7 @@ infer_aux_t* infer_aux_create(const char* model_trt, const char *config_yaml) {
         if (inf->output_size[i])
         {
             int output_mem_size=inf->md.max_batch*inf->output_size[i]*(inf->output_fp16[i] ? 2 : 4);
-            log_info("Allocating %d bytes of output memory",output_mem_size);
+            log_debug("Allocating %d bytes of output memory",output_mem_size);
             output_mem_size=(output_mem_size+127)&(~127);
             inf->output_mem_device[i]=cuda_malloc(output_mem_size);
             inf->output_mem_host[i]=cuda_malloc_host(output_mem_size);
@@ -187,7 +187,7 @@ static void do_inference(infer_aux_t* inf, void *src, embedding_t **ret_emb, int
                 inf->ctx->setInputShape(name, Dims4{n, inf->md.input_ch, h, w});
             else
             {
-                log_info("Set shape %dx%dx%d",n,h,w);
+                log_debug("Set shape %dx%dx%d",n,h,w);
                 inf->ctx->setInputShape(name, Dims3{n, h, w});
             }
             inf->ctx->setTensorAddress(name, src);

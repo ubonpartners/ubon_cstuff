@@ -229,6 +229,7 @@ if (BUILD_APPS)
         ${CMAKE_SOURCE_DIR}/src/apps/of_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/rt_benchmark.c
         ${CMAKE_SOURCE_DIR}/src/apps/run_tests.c
+        ${CMAKE_SOURCE_DIR}/src/apps/stress_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/track_benchmark.c
         ${CMAKE_SOURCE_DIR}/src/apps/track_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/warp_test.c

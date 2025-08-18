@@ -133,7 +133,7 @@ void work_queue_add_job(work_queue_t *wq, work_queue_item_header_t *job_to_add, 
 
     // backpressure
     bool need_backpressure=(wq->length>=wq->backpressure_length);
-    debugf("[%s] *** (len %3d) Applying backpressure",wq->name,wq->length); 
+    debugf("[%s] *** (len %3d) Applying backpressure",wq->name,wq->length);
     //pthread_mutex_unlock(&wq->lock);
 
     if (need_backpressure)
@@ -180,7 +180,10 @@ void work_queue_stop(work_queue_t *wq)
         if ((wq->locked==false)&&(wq->executing==false)) break;
         pthread_mutex_unlock(&wq->lock);
         iters++;
-        if ((iters%1000)==0) log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->stats_resume_count,wq->length,wq->stats_jobs_run);
+        if ((iters%1000)==0)
+        {
+            log_warn("wq stop: %s %d l %d jr %d",wq->name,wq->stats_resume_count,wq->length,wq->stats_jobs_run);
+        }
         usleep(1000);
         assert(iters<20000);
     }
@@ -200,18 +203,40 @@ void work_queue_sync(work_queue_t *wq)
 {
     // fixme : ugh - implement without sleep - need to pass dummy job with sem into queue
     int iter=0;
+    double sync_start_time=profile_time();
+    double last_sync_check_time=sync_start_time;
+    uint32_t last_job_run=0;
     while(1)
     {
         pthread_mutex_lock(&wq->lock);
         assert(wq->destroying==false);
         assert(wq->stopped==false);
         bool empty=wq->length==0 && wq->executing==false;
+        uint32_t jobs_run=wq->stats_jobs_run;
         pthread_mutex_unlock(&wq->lock);
         if (empty) break;
         iter++;
-        if ((iter % 1000)==0) log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d PC %d RC %d)",
-                                        wq->name, iter/1000.0, wq->length, wq->stopped, wq->destroying,
-                                        wq->executing, wq->stats_jobs_run, wq->stats_pause_count, wq->stats_resume_count);
+        double time=profile_time();
+        if (time-last_sync_check_time>1.0)
+        {
+            last_sync_check_time=time;
+            int jobs_run_delta=jobs_run-last_job_run;
+            last_job_run=jobs_run;
+            if (jobs_run_delta!=0)
+            {
+                //log_warn("work_queue_sync Wait %s : Still running",wq->name);
+                ;
+            }
+            else
+            {
+                log_warn("work_queue_sync Wait %s : %5.1fs (%d entries, stopped %d destroying %d ex %d JR %d PC %d RC %d)",
+                                            wq->name, (time-sync_start_time), wq->length, wq->stopped, wq->destroying,
+                                            wq->executing, wq->stats_jobs_run, wq->stats_pause_count, wq->stats_resume_count);
+                pthread_mutex_lock(&wq->lock);
+                work_queue_try_start_execution(wq);
+                pthread_mutex_unlock(&wq->lock);
+            }
+        }
         usleep(10000);
     }
 }

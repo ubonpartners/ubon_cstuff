@@ -79,20 +79,6 @@ static void track_result(void *context, track_results_t *r) {
     }
 }
 
-static void process_image(void *context, image_t *img) {
-    state_t *s = (state_t *)context;
-    if (keep_running)
-    {
-        s->decoded_macroblocks+=(img->width * img->height) / (16 * 16);
-        s->decoded_frames++;
-        track_stream_run_frame_time(s->ts, img);
-    }
-    if (1)
-    {
-        //display_image("Test", img);
-    }
-}
-
 static void *run_track_worker(void *arg) {
     cuda_thread_init();
     thread_args_t *args = (thread_args_t *)arg;
@@ -101,18 +87,6 @@ static void *run_track_worker(void *arg) {
 
     s.ts = track_stream_create(args->tss, &s, track_result);
     track_stream_set_minimum_frame_intervals(s.ts, 1.0/args->track_framerate, 10.0);
-
-    const char *filename = args->video_file_filename;
-    FILE *input = fopen(filename, "rb");
-    if (!input) {
-        log_fatal("Failed to open input file %s", args->video_file_filename);
-        return NULL;
-    }
-
-
-    auto stop_callback=[](void *context) {
-        return !keep_running;
-    };
 
     track_stream_run_video_file(s.ts, args->video_file_filename, SIMPLE_DECODER_CODEC_UNKNOWN, 0.0f, true);
     while(keep_running) usleep(30000);
@@ -124,8 +98,6 @@ static void *run_track_worker(void *arg) {
     *args->total_face_embeddings += s.face_embeddings;
     *args->total_time+=s.time;
     pthread_mutex_unlock(args->lock);
-
-    fclose(input);
 
     printf("%s\n",track_stream_get_stats(s.ts));
 
