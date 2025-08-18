@@ -582,12 +582,10 @@ std::vector<track_results_t *> track_stream_get_results(track_stream_t *ts, doub
         bool ok=track_stream_sync(ts, wait_time_seconds);
         if (!ok) log_error("track stream sync failed %s",ts->name);
     }
-    //pthread_mutex_lock(&ts->main_job_mutex);
     pthread_mutex_lock(&ts->lock);
     std::vector<track_results_t *> ret=ts->track_results_vec;
     ts->track_results_vec.clear();
     pthread_mutex_unlock(&ts->lock);
-    //pthread_mutex_unlock(&ts->main_job_mutex);
     return ret;
 }
 
@@ -701,6 +699,13 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             {
                 ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
                                                          ts, h26x_frame_callback);
+            }
+
+            if (item->cancelled)
+            {
+                free(job->data);
+                block_free(job);
+                break;
             }
 
             for(int i=0;i<32;i++)
@@ -1022,4 +1027,9 @@ void track_stream_poll_performance_data(track_stream_t *ts, track_stream_perf_da
 void track_stream_set_name(track_stream_t *ts, const char *name)
 {
     snprintf(ts->name, sizeof(ts->name), "%s", name);
+}
+
+void track_stream_cancel_all_work(track_stream_t *ts)
+{
+    work_queue_cancel_all(&ts->wq[TRACK_STREAM_JOB_VIDEO_FILE_DATA]);
 }

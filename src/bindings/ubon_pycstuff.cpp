@@ -697,6 +697,10 @@ public:
         track_stream_set_name(stream, name.c_str());
     }
 
+    void cancel_all_work() {
+        track_stream_cancel_all_work(stream);
+    }
+
     void run_on_images(const std::vector<std::shared_ptr<c_image>>& images) {
         for (const auto& img : images)
             track_stream_run_frame_time(stream, img->raw());
@@ -1021,6 +1025,7 @@ PYBIND11_MODULE(ubon_pycstuff, m) {
              py::arg("realtime") = std::nullopt)
         .def("set_frame_intervals", &c_track_stream::set_frame_intervals)
         .def("set_name", &c_track_stream::set_name)
+        .def("cancel_all_work", &c_track_stream::cancel_all_work)
         .def("run_on_images", &c_track_stream::run_on_images)
         .def("run_on_individual_images", &c_track_stream::run_on_individual_images)
         .def("run_on_video_file", &c_track_stream::run_on_video_file)

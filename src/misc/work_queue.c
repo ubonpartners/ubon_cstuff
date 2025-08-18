@@ -56,6 +56,18 @@ static void work_queue_resume_internal(work_queue_t *wq)
     work_queue_try_start_execution(wq);
 }
 
+void work_queue_cancel_all(work_queue_t *wq)
+{
+    pthread_mutex_lock(&wq->lock);
+    work_queue_item_header_t *job=wq->head;
+    while(job!=0)
+    {
+        job->cancelled=true;
+        job=job->next;
+    }
+    pthread_mutex_unlock(&wq->lock);
+}
+
 static void work_queue_process_work(int id, work_queue_t *wq)
 {
     pthread_mutex_lock(&wq->lock);
