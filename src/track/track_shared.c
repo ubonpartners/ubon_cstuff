@@ -181,13 +181,15 @@ void track_shared_state_destroy(track_shared_state_t *tss)
         return;
     }
     assert(0==tss->track_stream_set->size());
+    pthread_mutex_lock(&tss->lock);
     tss->stop=true;
+    pthread_mutex_unlock(&tss->lock);
+    pthread_join(tss->thread_handle, NULL);
     tss->thread_pool->stop();
     delete tss->thread_pool;
     delete tss->track_stream_set;
     for(int i=0;i<INFER_THREAD_NUM_TYPES;i++) if (tss->infer_thread[i]) infer_thread_destroy(tss->infer_thread[i]);
     jpeg_thread_destroy(tss->jpeg_thread);
-    pthread_join(tss->thread_handle, NULL);
     free((void *)tss->config_yaml);
     pthread_mutex_destroy(&tss->lock);
     free(tss);
@@ -236,11 +238,16 @@ void track_shared_state_deregister_stream(track_shared_state_t *tss, track_strea
 static void *track_shared_state_thread(void *context)
 {
     track_shared_state_t *tss=(track_shared_state_t *)context;
-    while(tss->stop==false)
+    while(1)
     {
-        usleep(500*1000);
+        usleep(100*1000);
         //printf("* %d\n",(int)tss->track_stream_set->size());
         pthread_mutex_lock(&tss->lock);
+        if (tss->stop)
+        {
+            pthread_mutex_unlock(&tss->lock);
+            break;
+        }
         int n=0;
         float mean_h26x_ql=0;
 
@@ -257,7 +264,7 @@ static void *track_shared_state_thread(void *context)
 
         if (n>0) mean_h26x_ql/=n;
         //printf("Mean QL %f\n",mean_h26x_ql);
-        int performance_mode=3;
+        int performance_mode=2;
         if (mean_h26x_ql<0.15)
             performance_mode=0;
         else if (mean_h26x_ql<0.3)
