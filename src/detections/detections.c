@@ -261,11 +261,6 @@ detection_list_t *detection_list_join(detection_list_t *dets1, detection_list_t 
 }
 
 float detection_face_quality_score(detection_t *det) {
-    if (det->fiqa_score!=0)
-    {
-        printf("using fiqa\n");
-        return det->fiqa_score;
-    }
     kp_t *face_points=det->face_points;
     if (det->num_face_points!=5) return -1;
     // --- 1) Confidence aggregates ---

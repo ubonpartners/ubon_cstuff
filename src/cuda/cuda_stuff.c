@@ -221,6 +221,8 @@ static void do_cuda_init()
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);
+    log_debug("CUDA bound to GPU %d: %s (CC %d.%d)", device, prop.name, prop.major, prop.minor);
+
 
     memset(&nppStreamCtx, 0, sizeof(nppStreamCtx));
     nppStreamCtx.hStream = 0; // Using default stream; consider cudaStreamCreate() if needed.
@@ -230,6 +232,8 @@ static void do_cuda_init()
     nppStreamCtx.nSharedMemPerBlock = prop.sharedMemPerBlock;
     nppStreamCtx.nCudaDevAttrComputeCapabilityMajor = prop.major;
     nppStreamCtx.nCudaDevAttrComputeCapabilityMinor = prop.minor;
+
+
 
     // --------------------------------------------------
     // Initialize your event pool and mutex (unchanged)
@@ -353,6 +357,7 @@ void cuda_thread_init()
         log_fatal("cuda_thread_init: cuCtxGetCurrent failed: %d\n", res);
         abort();
     }
+
 
     log_debug("CUDA context initialized on thread %lu (context: %p)",(unsigned long)pthread_self(), (void*)ctx);
 }

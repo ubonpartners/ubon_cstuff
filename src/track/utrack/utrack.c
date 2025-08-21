@@ -216,7 +216,6 @@ static float match_cost(const detection_t *det_new, const detection_t *det_exist
         kf_weight*=(1-f);
     }
     float score=(of_score*of_weight+kf_score*kf_weight)/(of_weight+kf_weight);
-
     score+=sim;
     if (score<mc->match_thr) return 0;
 
