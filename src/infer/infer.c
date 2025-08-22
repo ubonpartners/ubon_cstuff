@@ -426,9 +426,9 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         // can parse from yaml if can be bothered
         assert(0);
     }
-    if (expected_size+64==inf->detection_attribute_size)
+    if (expected_size+80==inf->detection_attribute_size)
     {
-        inf->md.reid_vector_len=64;
+        inf->md.reid_vector_len=80;
         inf->md.reid_offset=expected_size;
         log_debug("found REID vector length of %d",inf->md.reid_vector_len);
     }
@@ -841,7 +841,7 @@ void infer_batch(infer_t *inf, image_t **img_list, detection_list_t **dets, int 
         //printf("%dx%d %dx%d %dx%d %d ups %d\n",infer_w,infer_h,img->width,img->height,image_widths[0],image_heights[0], img->format,inf->inf_allow_upscale);
         image_t *image_scaled=image_scale(img, image_widths[i], image_heights[i]);
         //display_image("test",image_scaled);
-    //usleep(1000*500);
+        //usleep(1000*1500);
         image_format_t fmt=image_scaled->format;
         if (  (fmt==IMAGE_FORMAT_RGB24_DEVICE)
             ||(fmt==IMAGE_FORMAT_RGB24_HOST)

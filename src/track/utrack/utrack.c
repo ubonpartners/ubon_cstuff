@@ -14,7 +14,7 @@
 #include "detections.h"
 
 
-#define REID_VECTOR_LEN 64
+#define REID_VECTOR_LEN 80
 #define MAX_TRACKED     350
 #define debugf if (0) log_warn
 

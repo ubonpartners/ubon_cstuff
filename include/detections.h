@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define DETECTION_MAX_ATTR  64
-#define REID_MAX_VECTOR_LEN 64
+#define REID_MAX_VECTOR_LEN 80
 #define MAX_DETS            65535 // per class
 
 typedef struct model_description model_description_t;

@@ -23,6 +23,7 @@ TRTAllocator trt_allocator(&trt_alloc_tracker);
 static void do_trt_init()
 {
     log_debug("TRT init");
+    check_cuda_inited();
     allocation_tracker_register(&trt_alloc_tracker, "trt alloc", true);
 }
 
