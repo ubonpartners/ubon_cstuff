@@ -15,6 +15,8 @@
 #include <set>
 #include <thread>
 
+#include <readerwriterqueue/readerwriterqueue.h>
+
 #define MAX_EVENTS 30
 #define PORT 8080
 #define STREAM_MANAGER_PORT 8081
@@ -23,6 +25,8 @@
 #define MSG_TYPE_SDP 0x01
 #define MSG_TYPE_NAL 0x02
 #define MSG_TYPE_JSON 0x03
+
+#define POISON_PILL 0xFF
 
 #define ACTION_SUBSCRIBE "SUBSCRIBE"
 
@@ -68,208 +72,10 @@ std::map<int, RemoteServer> servers;
 std::map<int, std::vector<char>> client_buffers;
 std::map<int, std::vector<char>> server_buffers;
 std::map<int, std::queue<std::vector<char>>> server_send_queues;
-std::map<std::string, std::set<std::pair<int, uint8_t>>> client_subscriptions; //map< camera_id, set< client_fd, stream_type > >
+std::map<int, std::queue<std::vector<char>>> client_send_queues;
+std::map<std::string, std::set<std::pair<int, uint8_t>>> camera_subscribers; //map< camera_id, set< client_fd, stream_type > >
 std::map<std::string, std::thread> camera_threads;
-
-
-// ====================== APPLICATION LOGIC ======================
-void camera_worker(std::string& camera_id) {
-    // This is where you would use the connection to a stream_manager
-    std::cout << "Camera worker thread started for camera_id: " << camera_id << std::endl;
-    // make a connection to stream_manager
-    return;
-}
-
-// void start_camera_thread(const std::string& camera_id) {
-//     if (camera_threads.find(camera_id) == camera_threads.end()) {
-//         camera_threads[camera_id] = std::thread(camera_worker, std::ref(camera_id));
-//     }
-// }
-
-// void stop_camera_thread(const std::string& camera_id) {
-//     auto it = camera_threads.find(camera_id);
-//     if (it != camera_threads.end()) {
-//         // Proper thread joining requires a mechanism to signal the thread to stop.
-//         // For this example, we'll just detach. In a real app, use promises, futures, or condition variables.
-//         it->second.detach(); 
-//         camera_threads.erase(it);
-//         std::cout << "Stopped camera thread for " << camera_id << std::endl;
-//     }
-// }
-
-void subscribe_to_camera(int client_fd, const std::string& camera_id, uint8_t stream_type) {
-    std::cout << "Client " << client_fd << " subscribed to camera " << camera_id
-    << " with stream type " << (int)stream_type << std::endl;
-
-    if (client_subscriptions[camera_id].empty()) {
-        // start_camera_thread(camera_id);
-    }
-
-    // subscribe to STREAM_MANAGER for NAL units for camera_id
-    subscribe_to_camera_nal_stream(camera_id);
-
-    client_subscriptions[camera_id].insert({client_fd, stream_type});
-}
-
-void subscribe_to_camera_nal_stream(const std::string& camera_id) {
-    // (0-0: type) (1-4: payload_length) (5-...: payload)
-    Json::Value json_payload;
-    json_payload["action"] = ACTION_SUBSCRIBE;
-    json_payload["body"] = Json::Value();
-    json_payload["body"]["camera_id"] = camera_id;
-    json_payload["body"]["stream_type"] = "nal";
-
-    Json::StreamWriterBuilder builder;
-    std::string response_str = Json::writeString(builder, json_payload);
-    uint32_t payload_length = htonl(response_str.length());
-
-    std::vector<char> message;
-    message.reserve(5 + response_str.length());
-
-    message.push_back(MSG_TYPE_JSON);
-    message.insert(message.end(), &payload_length, &payload_length + 4);
-    message.insert(message.end(), response_str.begin(), response_str.end());
-
-    send_message_to_server({STREAM_MANAGER_IP, STREAM_MANAGER_PORT, camera_id}, message);
-}
-
-void handle_json_message(int client_fd, const std::string& json_payload) {
-    Json::Value root;
-    Json::Reader reader;
-
-    if (!reader.parse(json_payload, root)) {
-        std::cerr << "Failed to parse JSON: " << reader.getFormattedErrorMessages() << std::endl;
-        return;
-    }
-
-    if (root.isMember("action") && root["action"].asString() == ACTION_SUBSCRIBE) {
-        std::string camera_id = root["body"]["camera_id"].asString();
-        uint8_t stream_type = root["body"]["stream_type"].asUInt();
-        subscribe_to_camera(client_fd, camera_id, stream_type);
-    } else {
-        std::cerr << "Invalid JSON payload: missing or unknown 'action' field." << std::endl;
-    }
-    
-    // Example: Send JSON response
-    Json::Value response;
-    response["status"] = "success";
-    response["message"] = "JSON received";
-    Json::StreamWriterBuilder builder;
-    std::string response_str = Json::writeString(builder, response);
-
-    uint8_t type_byte = MSG_TYPE_JSON;
-    uint32_t length = htonl(response_str.length());
-
-    write(client_fd, &type_byte, 1);
-    write(client_fd, &length, 4);
-    write(client_fd, response_str.c_str(), response_str.length());
-}
-
-void handle_client_disconnection(int client_fd) {
-    std::cout << "Cleaning up subscriptions for disconnected client " << client_fd << std::endl;
-    for (auto it = client_subscriptions.begin(); it != client_subscriptions.end(); ) {
-        auto& subscribers = it->second;
-        for (auto sub_it = subscribers.begin(); sub_it != subscribers.end(); ) {
-            if (sub_it->first == client_fd) {
-                sub_it = subscribers.erase(sub_it);
-            } else {
-                ++sub_it;
-            }
-        }
-
-        if (subscribers.empty()) {
-            // stop_camera_thread(it->first);
-            it = client_subscriptions.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
-void handle_incoming_message(int conn_fd, std::vector<char>& conn_buffer) {
-    if (conn_buffer.empty()){
-        return; // No data to process
-    }
-
-    int message_processed = 1;
-    while (message_processed){
-        message_processed = 0;
-        
-        uint8_t type_byte = conn_buffer[0];
-        switch (type_byte) {
-            case MSG_TYPE_JSON:
-            // (0-0: type) (1-4: payload_length) (5-...: payload)
-            {
-                if (conn_buffer.size() < 5) {
-                    break; // Not enough data for the full message
-                } else {
-                    uint32_t payload_length;
-                    std::memcpy(&payload_length, &conn_buffer[1], 4);
-                    payload_length = ntohl(payload_length);
-                    
-                    if (conn_buffer.size() < 5 + payload_length) {
-                        break; // Not enough data for the full message
-                    }
-
-                    std::string json_payload(conn_buffer.begin() + 5, conn_buffer.begin() + 5 + payload_length);
-                    handle_json_message(conn_fd, json_payload);
-                    conn_buffer.erase(conn_buffer.begin(), conn_buffer.begin() + 5 + payload_length);
-                    message_processed = 1;
-                    std::cout << "Processed JSON message of length " << payload_length << std::endl;
-                }
-                break;
-            }
-            case MSG_TYPE_NAL:
-            // (0-0: type) (1-8: wall clock time) (9-16: rtp time) (17-20: nau unit length) (21-...: payload)
-                if (conn_buffer.size() < 21) {
-                    break; // Not enough data for the full message
-                } else {
-                    uint64_t wall_clock_time, rtp_time;
-                    uint32_t nal_unit_length;
-                    std::memcpy(&wall_clock_time, &conn_buffer[1], 8);
-                    std::memcpy(&rtp_time, &conn_buffer[9], 8);
-                    std::memcpy(&nal_unit_length, &conn_buffer[17], 4);
-                    wall_clock_time = ntohll(wall_clock_time);
-                    rtp_time = ntohll(rtp_time);
-                    nal_unit_length = ntohl(nal_unit_length);
-
-                    if (conn_buffer.size() < 21 + nal_unit_length) {
-                        break; // Not enough data for the full message
-                    }
-                    
-                    std::vector<char> nal_data(conn_buffer.begin() + 21, conn_buffer.begin() + 21 + nal_unit_length);
-                    conn_buffer.erase(conn_buffer.begin(), conn_buffer.begin() + 21 + nal_unit_length);
-                    message_processed = 1;
-                    std::cout << "Processed NAL message of length " << nal_unit_length << std::endl;
-                }
-                break;
-            case MSG_TYPE_SDP:
-            // (0-0: type) (1-4: payload_length) (5-...: payload)
-                if (conn_buffer.size() < 5) {
-                    break; // Not enough data for the full message
-                } else {
-                    uint32_t payload_length;
-                    std::memcpy(&payload_length, &conn_buffer[1], 4);
-                    payload_length = ntohl(payload_length);
-                    
-                    if (conn_buffer.size() < 5 + payload_length) {
-                        break; // Not enough data for the full message
-                    }
-
-                    std::vector<char> sdp_payload(conn_buffer.begin() + 5, conn_buffer.begin() + 5 + payload_length);
-                    conn_buffer.erase(conn_buffer.begin(), conn_buffer.begin() + 5 + payload_length);
-                    message_processed = 1;
-                    std::cout << "Processed SDP message of length " << payload_length << std::endl;
-                }
-                break;
-            default:
-                std::cerr << "Unknown message type" << std::endl;
-                break;
-        }
-    }
-}
-
-
+std::map<std::string, moodycamel::BlockingReaderWriterQueue<std::vector<char>>> camera_queues; // map< camera_id, queue of NAL units >
 
 // ====================== HELPER FUNCTIONS ======================
 bool set_non_blocking(int fd) {
@@ -290,6 +96,7 @@ void cleanup_incoming_socket(int fd) {
     close(fd);
     clients.erase(fd);
     client_buffers.erase(fd);
+    client_send_queues.erase(fd);
 }
 
 void cleanup_outgoing_socket(int fd) {
@@ -329,20 +136,6 @@ bool send_complete_message(int fd, std::vector<char>& message) {
     return message.empty();
 }
 
-void send_message_to_server(const RemoteServer& server, const std::vector<char>& message) {
-    int server_fd = connect_to_server(server);
-    if (server_fd == -1) {
-        std::cerr << "Failed to connect to server " << server.ip << ":" << server.port << " (Camera ID: " << server.camera_id << ")" << std::endl;
-        return;
-    }
-    server_send_queues[server_fd].push(message);
-    // Modify epoll to monitor EPOLLOUT when send queue is not empty
-    struct epoll_event event;
-    event.data.fd = server_fd;
-    event.events = EPOLLIN | EPOLLOUT | EPOLLET;
-    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, server_fd, &event);
-}
-
 int connect_to_server(const RemoteServer& server) {
     // check if we are already connected
     for (const auto& [fd, serverInfo] : servers) {
@@ -369,14 +162,14 @@ int connect_to_server(const RemoteServer& server) {
     if (inet_pton(AF_INET, server.ip.c_str(), &remote_addr.sin_addr) <= 0) {
         perror("inet_pton");
         close(server_fd);
-        return;
+        return -1;
     }
 
     int ret = connect(server_fd, (struct sockaddr*)&remote_addr, sizeof(remote_addr));
     if (ret < 0 && errno != EINPROGRESS) {
         perror("connect");
         close(server_fd);
-        return;
+        return -1;
     }
 
     struct epoll_event event;
@@ -385,7 +178,7 @@ int connect_to_server(const RemoteServer& server) {
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
         perror("epoll_ctl (add outgoing)");
         close(server_fd);
-        return;
+        return -1;
     }
 
     servers[server_fd] = server;
@@ -395,7 +188,292 @@ int connect_to_server(const RemoteServer& server) {
     return server_fd;
 }
 
-// TODO: Add a thread which periodically checks if we are connected to all cameras that are needed, if not connected, attempt to reconnect
+int send_message_to_fd(int fd, std::queue<std::vector<char>>& fd_send_buffer_queue, const std::vector<char>& message){
+    if (fd < 0) {
+        std::cerr << "Invalid file descriptor" << std::endl;
+        return -1;
+    }
+
+    fd_send_buffer_queue.push(message);
+    // Modify epoll to monitor EPOLLOUT when send buffer is not empty
+    struct epoll_event event;
+    event.data.fd = fd;
+    event.events = EPOLLIN | EPOLLOUT | EPOLLET;
+    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &event);
+    return 0;
+}
+
+// ====================== APPLICATION LOGIC ======================
+void camera_worker(std::string camera_id) {
+    std::cout << "Camera worker thread started for camera_id: " << camera_id << std::endl;
+    while (true){
+        // [8 bytes rtp timestamp][4 bytes nal unit length][nal unit]
+        std::vector<char> nal_unit;
+        camera_queues[camera_id].wait_dequeue(nal_unit);
+
+        if (nal_unit.size() < 12){
+            // if nal_unit is too short, assume its poison pill
+            std::cout << "Camera worker thread for camera_id: " << camera_id << " received poison pill. Exiting." << std::endl;
+            break;
+        }
+        // Process the NAL unit (call track_stream_add_nalus method in track.h)
+    }
+    return;
+}
+
+void start_camera_thread(const std::string& camera_id) {
+    if (camera_threads.find(camera_id) == camera_threads.end()) {
+        camera_threads[camera_id] = std::thread(camera_worker, camera_id);
+    }
+}
+
+void stop_camera_thread(const std::string& camera_id) {
+    auto it = camera_threads.find(camera_id);
+    if (it != camera_threads.end()) {
+        // Send poison pill to the camera queue to signal the thread to exit
+        camera_queues[camera_id].enqueue(std::vector<char>(1, POISON_PILL));
+        it->second.join();
+        camera_threads.erase(it);
+        std::cout << "Stopped camera thread for " << camera_id << std::endl;
+    }
+}
+
+void unsubscribe_to_camera(const std::string camera_id){
+    std::cout << "Camera " << camera_id << " unavailable. Disconnecting " 
+              << camera_subscribers[camera_id].size() << " clients." << std::endl;
+    
+    stop_camera_thread(camera_id);
+    std::vector<int> servers_to_cleanup;
+    std::vector<int> clients_to_cleanup;
+
+
+    for (const auto&[client_fd, stream_type] : camera_subscribers[camera_id]) {
+        clients_to_cleanup.push_back(client_fd);
+    }
+    for (auto &[server_fd, server_info] : servers) {
+        if (server_info.camera_id == camera_id) {
+            servers_to_cleanup.push_back(server_fd);
+        }
+    }
+    
+    for (int fd : clients_to_cleanup) {
+        cleanup_incoming_socket(fd);
+    }
+    for (int fd : servers_to_cleanup) {
+        cleanup_outgoing_socket(fd);
+    }
+    camera_subscribers.erase(camera_id);
+}
+
+void handle_client_disconnection(int client_fd) {
+    std::vector<std::string> cameras_to_unsubscribe;
+    for (auto &[camera_id, subscribers] : camera_subscribers) {
+        for (auto sub_it = subscribers.begin(); sub_it != subscribers.end(); ) {
+            if (sub_it->first == client_fd) {
+                sub_it = subscribers.erase(sub_it);
+            } else {
+                ++sub_it;
+            }
+        }
+        if (subscribers.empty()) {
+            cameras_to_unsubscribe.push_back(camera_id);
+        }
+    }
+
+    for (const auto& camera_id : cameras_to_unsubscribe) {
+        unsubscribe_to_camera(camera_id);
+    }
+    cleanup_incoming_socket(client_fd);
+}
+
+void handle_server_disconnection(int server_fd){
+    if (servers.count(server_fd)) {
+        std::string camera_id = servers[server_fd].camera_id;
+        unsubscribe_to_camera(camera_id);
+        cleanup_outgoing_socket(server_fd);
+    }
+}
+
+void subscribe_to_camera(int client_fd, const std::string& camera_id, uint8_t stream_type) {
+    if (camera_subscribers[camera_id].empty()) {    
+        start_camera_thread(camera_id);
+        
+        // Json Message Scheme: [1 byte type][4 bytes payload_length][payload]
+        Json::Value json_payload;
+        json_payload["action"] = ACTION_SUBSCRIBE;
+        json_payload["body"] = Json::Value();
+        json_payload["body"]["camera_id"] = camera_id;
+        json_payload["body"]["stream_type"] = "nal";
+        
+        Json::StreamWriterBuilder builder;
+        std::string response_str = Json::writeString(builder, json_payload);
+        uint32_t payload_length = htonl(response_str.length());
+        
+        std::vector<char> message;
+        message.reserve(5 + response_str.length());
+        message.push_back(MSG_TYPE_JSON);
+        message.insert(message.end(), &payload_length, &payload_length + 4);
+        message.insert(message.end(), response_str.begin(), response_str.end());
+        
+        int server_fd = connect_to_server({STREAM_MANAGER_IP, STREAM_MANAGER_PORT});
+        if (server_fd == -1) {
+            std::cerr << "Connection to STREAM_MANAGER failed" << std::endl;
+            handle_client_disconnection(client_fd);
+        } else if(send_message_to_fd(server_fd, server_send_queues[server_fd], message) == -1) {
+            std::cerr << "Failed to schedule message to STREAM_MANAGER for camera " << camera_id << std::endl;
+        }
+    }
+    camera_subscribers[camera_id].insert({client_fd, stream_type});
+    std::cout << "Client " << client_fd << " subscribed to camera " << camera_id
+    << " with stream type " << (int)stream_type << std::endl;
+}
+
+void handle_json_message(int client_fd, const std::string& json_payload) {
+    Json::Value root;
+    Json::Reader reader;
+
+    if (!reader.parse(json_payload, root)) {
+        std::cerr << "Failed to parse JSON: " << reader.getFormattedErrorMessages() << std::endl;
+        return;
+    }
+
+    if (root.isMember("action") && root["action"].asString() == ACTION_SUBSCRIBE) {
+        std::string camera_id = root["body"]["camera_id"].asString();
+        uint8_t stream_type = root["body"]["stream_type"].asUInt();
+        subscribe_to_camera(client_fd, camera_id, stream_type);
+    } else {
+        std::cerr << "Invalid JSON payload: missing or unknown 'action' field." << std::endl;
+    }
+    
+    // Example: Send JSON response
+    Json::Value response;
+    response["status"] = "success";
+    response["message"] = "JSON received";
+    Json::StreamWriterBuilder builder;
+    std::string response_str = Json::writeString(builder, response);
+
+    uint8_t type_byte = MSG_TYPE_JSON;
+    uint32_t length = htonl(response_str.length());
+
+    write(client_fd, &type_byte, 1);
+    write(client_fd, &length, 4);
+    write(client_fd, response_str.c_str(), response_str.length());
+}
+
+void handle_incoming_message(int fd, std::vector<char>& rcv_buffer, void handle_disconnect(int)) {
+    char buffer[4096];
+    ssize_t bytes_read;
+    while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+    rcv_buffer.insert(rcv_buffer.end(), buffer, buffer + bytes_read);
+    }
+
+    if (bytes_read == 0) {
+    std::cout << "Connection closed on fd " << fd << " disconnected." << std::endl;
+    handle_disconnect(fd);
+    } else if (bytes_read == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+    perror("read error");
+    handle_disconnect(fd);
+    }
+
+    if (rcv_buffer.empty()){
+        return; // No data to process
+    }
+
+    int message_processed = 1;
+    while (message_processed){
+        message_processed = 0;
+        
+        uint8_t type_byte = rcv_buffer[0];
+        switch (type_byte) {
+            case MSG_TYPE_JSON:
+            // Json Message Scheme: [1 byte type][4 bytes payload_length][payload]
+            {
+                if (rcv_buffer.size() < 5) {
+                    break; // Not enough data for the full message
+                } else {
+                    uint32_t payload_length;
+                    std::memcpy(&payload_length, &rcv_buffer[1], 4);
+                    payload_length = ntohl(payload_length);
+                    
+                    if (rcv_buffer.size() < 5 + payload_length) {
+                        break; // Not enough data for the full message
+                    }
+
+                    std::string json_payload(rcv_buffer.begin() + 5, rcv_buffer.begin() + 5 + payload_length);
+                    handle_json_message(fd, json_payload);
+                    rcv_buffer.erase(rcv_buffer.begin(), rcv_buffer.begin() + 5 + payload_length);
+                    message_processed = 1;
+                    std::cout << "Processed JSON message of length " << payload_length << std::endl;
+                }
+                break;
+            }
+            case MSG_TYPE_NAL:
+            // Nal Message Scheme: [1 byte type][8 bytes wall clock time][8 bytes rtp time][4 bytes nal unit length][nal unit]
+                if (rcv_buffer.size() < 21) {
+                    break; // Not enough data for the full message
+                } else {
+                    uint64_t wall_clock_time, rtp_time;
+                    uint32_t nal_unit_length;
+                    std::memcpy(&wall_clock_time, &rcv_buffer[1], 8);
+                    std::memcpy(&rtp_time, &rcv_buffer[9], 8);
+                    std::memcpy(&nal_unit_length, &rcv_buffer[17], 4);
+                    wall_clock_time = ntohll(wall_clock_time);
+                    rtp_time = ntohll(rtp_time);
+                    nal_unit_length = ntohl(nal_unit_length);
+
+                    if (rcv_buffer.size() < 21 + nal_unit_length) {
+                        break; // Not enough data for the full message
+                    }
+                    
+                    std::vector<char> nal_data(rcv_buffer.begin() + 21, rcv_buffer.begin() + 21 + nal_unit_length);
+                    rcv_buffer.erase(rcv_buffer.begin(), rcv_buffer.begin() + 21 + nal_unit_length);
+                    message_processed = 1;
+                    std::cout << "Processed NAL message of length " << nal_unit_length << std::endl;
+                }
+                break;
+            case MSG_TYPE_SDP:
+            // SDP Message Scheme: [1 byte type][4 bytes payload_length][payload]
+                if (rcv_buffer.size() < 5) {
+                    break; // Not enough data for the full message
+                } else {
+                    uint32_t payload_length;
+                    std::memcpy(&payload_length, &rcv_buffer[1], 4);
+                    payload_length = ntohl(payload_length);
+                    
+                    if (rcv_buffer.size() < 5 + payload_length) {
+                        break; // Not enough data for the full message
+                    }
+
+                    std::vector<char> sdp_payload(rcv_buffer.begin() + 5, rcv_buffer.begin() + 5 + payload_length);
+                    rcv_buffer.erase(rcv_buffer.begin(), rcv_buffer.begin() + 5 + payload_length);
+                    message_processed = 1;
+                    std::cout << "Processed SDP message of length " << payload_length << std::endl;
+                }
+                break;
+            default:
+                std::cerr << "Unknown message type" << std::endl;
+                break;
+        }
+    }
+}
+
+void handle_outgoing_message(int fd, std::queue<std::vector<char>>& send_queue) {
+    while (!send_queue.empty()) {
+        auto& message = send_queue.front();
+        if (send_complete_message(fd, message)) {
+            send_queue.pop();
+        } else {
+            break; // Partial send, try again later
+        }
+    }
+    // If send queue is empty, stop monitoring EPOLLOUT
+    if (send_queue.empty()) {
+        struct epoll_event event;
+        event.data.fd = fd;
+        event.events = EPOLLIN | EPOLLET;
+        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &event);
+    }
+}
 
 int main() {
     // ====================== SERVER SETUP ======================
@@ -453,15 +531,14 @@ int main() {
                 std::cerr << "Epoll error on fd " << current_fd << std::endl;
                 if (clients.count(current_fd)) {
                     handle_client_disconnection(current_fd);
-                    cleanup_incoming_socket(current_fd);
                 } else if (servers.count(current_fd)) {
-                    cleanup_outgoing_socket(current_fd);
+                    handle_server_disconnection(current_fd);
                 }
                 continue;
             }
 
             if (current_fd == server_fd) {
-                // =========== 1. HANDLE NEW INCOMING CONNECTIONS ===========
+                // =========== 1. HANDLE NEW INCOMING CLIENT CONNECTIONS ===========
                 while(true) {
                     struct sockaddr_in client_addr;
                     socklen_t client_addr_len = sizeof(client_addr);
@@ -493,65 +570,25 @@ int main() {
                     if (getsockopt(current_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
                         if(error != 0) errno = error;
                         perror("Connection to remote server failed");
-                        cleanup_outgoing_socket(current_fd);
+                        handle_server_disconnection(current_fd);
                     } else {
-                        while (!server_send_queues[current_fd].empty()) {
-                            auto& message = server_send_queues[current_fd].front();
-                            if (send_complete_message(current_fd, message)) {
-                                server_send_queues[current_fd].pop();
-                            } else {
-                                break; // Partial send, try again later
-                            }
-                        }
-                        // If send queue is empty, stop monitoring EPOLLOUT
-                        if (server_send_queues[current_fd].empty()) {
-                            struct epoll_event event;
-                            event.data.fd = current_fd;
-                            event.events = EPOLLIN | EPOLLET;
-                            if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, current_fd, &event) == -1) {
-                                cleanup_outgoing_socket(current_fd);
-                            }
-                        }
+                        handle_outgoing_message(current_fd, server_send_queues[current_fd]);
                     }
                 }
                 // =========== 3. HANDLE SERVER READ EVENTS ===========
                 if (events[i].events & EPOLLIN) {
-                    char buffer[4096];
-                    ssize_t bytes_read;
-                    while ((bytes_read = read(current_fd, buffer, sizeof(buffer))) > 0) {
-                        server_buffers[current_fd].insert(server_buffers[current_fd].end(), buffer, buffer + bytes_read);
-                    }
-
-                    if (bytes_read == 0) {
-                        std::cout << "Remote server on fd " << current_fd << " disconnected." << std::endl;
-                        cleanup_outgoing_socket(current_fd);
-                    } else if (bytes_read == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        perror("read from remote server");
-                        cleanup_outgoing_socket(current_fd);
-                    }
-                    handle_incoming_message(current_fd, server_buffers[current_fd]);
+                    handle_incoming_message(current_fd, server_buffers[current_fd], handle_server_disconnection);
                 }
-            } else {
-                // =========== 4. HANDLE CLIENT READ EVENTS ===========
-                char buffer[4096];
-                ssize_t bytes_read;
-                while ((bytes_read = read(current_fd, buffer, sizeof(buffer))) > 0) {
-                    client_buffers[current_fd].insert(client_buffers[current_fd].end(), buffer, buffer + bytes_read);
+            } else if (clients.count(current_fd)) {
+                // =========== 4. HANDLE CLIENT WRITE EVENTS ===========
+                if (events[i].events & EPOLLOUT) {
+                    handle_outgoing_message(current_fd, client_send_queues[current_fd]);
                 }
 
-                if (bytes_read == 0) {
-                    char client_ip[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &clients[current_fd].addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-                    std::cout << "Client " << client_ip << " on fd " << current_fd << " disconnected." << std::endl;
-                    handle_client_disconnection(current_fd);
-                    cleanup_incoming_socket(current_fd);
-                } else if (bytes_read == -1 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
-                    perror("read from client");
-                    handle_client_disconnection(current_fd);
-                    cleanup_incoming_socket(current_fd);
+                // =========== 5. HANDLE CLIENT READ EVENTS ===========
+                if (events[i].events & EPOLLIN) {
+                    handle_incoming_message(current_fd, client_buffers[current_fd], handle_client_disconnection);
                 }
-                
-                handle_incoming_message(current_fd, client_buffers[current_fd]);
             }
         }
     }
@@ -563,7 +600,3 @@ int main() {
 
 // COMPILE SERVER
 // g++ ml_wrapper.cpp -I/usr/include/jsoncpp -ljsoncpp -o server
-
-// TEST CLIENT SENDS JSON
-// JSON='{"name": "gemini", "message": "hello from python"}'
-// python3 -c 'import sys, struct; msg = sys.argv[1].encode(); sys.stdout.buffer.write(b"\x03" + struct.pack("!I", len(msg)) + msg)' "$JSON" | netcat localhost 8080
