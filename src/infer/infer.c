@@ -426,11 +426,12 @@ infer_t *infer_create(const char *model, const char *yaml_config)
         // can parse from yaml if can be bothered
         assert(0);
     }
-    if (expected_size+80==inf->detection_attribute_size)
+    int left=inf->detection_attribute_size-expected_size;
+    if ((left==64)||(left==80)) // supported REID sizes
     {
-        inf->md.reid_vector_len=80;
+        inf->md.reid_vector_len=left;
         inf->md.reid_offset=expected_size;
-        log_debug("found REID vector length of %d",inf->md.reid_vector_len);
+        log_debug("found REID vector length of %d; offset %d",inf->md.reid_vector_len, expected_size);
     }
     else if (expected_size!=inf->detection_attribute_size)
     {
