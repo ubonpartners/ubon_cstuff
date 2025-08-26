@@ -16,6 +16,14 @@
 #include <thread>
 
 #include <readerwriterqueue/readerwriterqueue.h>
+#include <track.h>
+#include "display.h"
+#include "jpeg.h"
+#include <misc.h>
+#include <cuda_stuff.h>
+#include <yaml_stuff.h>
+#include <profile.h>
+#include <functional>
 
 #define MAX_EVENTS 30
 #define PORT 8080
@@ -76,6 +84,7 @@ std::map<int, std::queue<std::vector<char>>> client_send_queues;
 std::map<std::string, std::set<std::pair<int, uint8_t>>> camera_subscribers; //map< camera_id, set< client_fd, stream_type > >
 std::map<std::string, std::thread> camera_threads;
 std::map<std::string, moodycamel::BlockingReaderWriterQueue<std::vector<char>>> camera_queues; // map< camera_id, queue of NAL units >
+std::map<std::string, std::map<uint64_t, uint64_t>> camera_timestamp_map; // map< camera_id, map< rtp timestamp, wallclock timestamp > >
 
 // ====================== HELPER FUNCTIONS ======================
 bool set_non_blocking(int fd) {
@@ -92,6 +101,7 @@ bool set_non_blocking(int fd) {
 }
 
 void cleanup_incoming_socket(int fd) {
+    std::cout << "Cleaning up incoming socket fd " << fd << std::endl;
     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
     close(fd);
     clients.erase(fd);
@@ -100,6 +110,7 @@ void cleanup_incoming_socket(int fd) {
 }
 
 void cleanup_outgoing_socket(int fd) {
+    std::cout << "Cleaning up outgoing socket fd " << fd << std::endl;
     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
     close(fd);
     servers.erase(fd);
@@ -107,7 +118,7 @@ void cleanup_outgoing_socket(int fd) {
     server_send_queues.erase(fd);
 }
 
-bool send_complete_message(int fd, std::vector<char>& message) {
+int send_complete_message(int fd, std::vector<char>& message) {
     size_t total_sent = 0;
     const char* data = message.data();
     size_t remaining = message.size();
@@ -117,22 +128,19 @@ bool send_complete_message(int fd, std::vector<char>& message) {
         
         if (bytes_sent == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Socket buffer full - would need to wait for EPOLLOUT
+                // Socket buffer full
                 std::cout << "Socket buffer full, sent " << total_sent << "/" << message.size() << " bytes" << std::endl;
-                break; // Partial send - handle in epoll loop
+                break; // Partial send
             }
             perror("send failed");
-            break;
+            return -1;
         }
-        
+
+        message.erase(message.begin(), message.begin() + bytes_sent);
         total_sent += bytes_sent;
         remaining -= bytes_sent;
     }
-
-    if (total_sent > 0) {
-        message.erase(message.begin(), message.begin() + total_sent);
-    }
-    
+    std::cout << "Sent " << total_sent << " bytes on fd " << fd << std::endl;
     return message.empty();
 }
 
@@ -165,6 +173,7 @@ int connect_to_server(const RemoteServer& server) {
         return -1;
     }
 
+    std::cout << "Attempting connection to " << server.ip << ":" << server.port << " on fd " << server_fd << std::endl;
     int ret = connect(server_fd, (struct sockaddr*)&remote_addr, sizeof(remote_addr));
     if (ret < 0 && errno != EINPROGRESS) {
         perror("connect");
@@ -182,9 +191,6 @@ int connect_to_server(const RemoteServer& server) {
     }
 
     servers[server_fd] = server;
-    server_buffers[server_fd];
-    server_send_queues[server_fd];
-    std::cout << "Attempting connection to " << server.ip << ":" << server.port << " on fd " << server_fd << std::endl;
     return server_fd;
 }
 
@@ -200,24 +206,148 @@ int send_message_to_fd(int fd, std::queue<std::vector<char>>& fd_send_buffer_que
     event.data.fd = fd;
     event.events = EPOLLIN | EPOLLOUT | EPOLLET;
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &event);
+    std::cout << "Scheduled message of length " << message.size() << " to fd " << fd << std::endl;
     return 0;
 }
 
 // ====================== APPLICATION LOGIC ======================
+typedef struct state
+{
+    track_shared_state_t *tss;
+    track_stream_t *ts;
+    image_t *img;
+    double start_time;
+    std::string camera_id;
+    bool stopped;
+} state_t;
+
+static void track_result(void *context, track_results_t *r)
+{
+    state_t *s=(state_t *)context;
+    if (s->stopped)
+    {
+        return;
+    }
+
+    printf("camera %s track_result: result type %d time %f, %d detections\n", s->camera_id.c_str(), r->result_type, r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
+
+    if (camera_timestamp_map[s->camera_id].find(r->time) == camera_timestamp_map[s->camera_id].end())
+    {
+        std::cout << " ======================== No wallclock timestamp found for rtp timestamp " << r->time << " for camera " << s->camera_id << std::endl;
+    }
+
+    if (r->track_dets!=0)
+    {
+        //detection_list_show(r->track_dets);
+        // decode and display "frame jpeg"
+        image_t *img=0;
+        if (r->track_dets->frame_jpeg!=0)
+        {
+            size_t jpeg_data_length;
+            uint8_t *jpeg_data=jpeg_get_data(r->track_dets->frame_jpeg, &jpeg_data_length);
+            img=decode_jpeg(jpeg_data, (int)jpeg_data_length);
+        }
+        if (img!=0)
+        {
+            image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
+            if (out_frame_rgb!=0)
+            {
+                display_image("video", out_frame_rgb);
+                image_destroy(out_frame_rgb);
+            }
+            image_destroy(img);
+        }
+    }
+}
+
 void camera_worker(std::string camera_id) {
     std::cout << "Camera worker thread started for camera_id: " << camera_id << std::endl;
-    while (true){
-        // [8 bytes rtp timestamp][4 bytes nal unit length][nal unit]
-        std::vector<char> nal_unit;
-        camera_queues[camera_id].wait_dequeue(nal_unit);
 
-        if (nal_unit.size() < 12){
-            // if nal_unit is too short, assume its poison pill
+    // ============================== CODE COPED FROM nal_play.c ==============================
+    printf("ubon_cstuff version = %s\n", ubon_cstuff_get_version());
+
+    state_t s;
+    memset(&s, 0, sizeof(state_t));
+
+    // modify default config so we get 720p30 'frame jpegs'
+    // just so we can display these
+
+    const char *basic="main_jpeg:\n"
+                       "    enabled: true\n"
+                       "    max_width: 1280\n"
+                       "    max_height: 720\n"
+                       "    min_interval_seconds: 0.03\n";
+
+    const char *config=yaml_merge_string("/mldata/config/track/trackers/uc_reid.yaml", basic);
+
+    s.tss=track_shared_state_create(config);
+    s.ts=track_stream_create(s.tss, &s, track_result);
+    s.start_time=profile_time();
+    s.camera_id = camera_id;
+    track_stream_set_minimum_frame_intervals(s.ts, 0.01, 10.0);
+
+    int nalu_buf_size=1024*1024;
+    uint8_t *nalu_buf=(uint8_t *)malloc(nalu_buf_size);
+    uint64_t first_timestamp=0;
+    bool first_nalu=true;
+    double actual_start_time=profile_time();
+
+    while (true){
+        std::vector<char> nal_packet;
+        camera_queues[camera_id].wait_dequeue(nal_packet);
+
+        // Process the NAL packet (call track_stream_add_nalus method in track.h)
+        std::cout << "Camera worker thread for camera_id: " << camera_id 
+                  << " processing NAL packet of size " << nal_packet.size() << std::endl;
+
+        if (nal_packet.size() < 12){
+            // if nal_packet is too short, assume its poison pill
             std::cout << "Camera worker thread for camera_id: " << camera_id << " received poison pill. Exiting." << std::endl;
+            s.stopped = true;
             break;
         }
-        // Process the NAL unit (call track_stream_add_nalus method in track.h)
+
+        // NAL packet scheme: [8 bytes wallclock timestamp][8 bytes rtp timestamp][4 bytes nal unit length][nal unit]
+        uint64_t wallclock_timestamp = ntohll(*reinterpret_cast<uint64_t*>(nal_packet.data()));
+        uint64_t rtp_extended_timestamp = ntohll(*reinterpret_cast<uint64_t*>(nal_packet.data() + 8));
+        uint32_t nal_unit_length = ntohl(*reinterpret_cast<uint32_t*>(nal_packet.data() + 16));
+        assert(nal_unit_length < 1024 * 1024);
+
+        if (first_nalu)
+        {
+            first_nalu=false;
+            first_timestamp=rtp_extended_timestamp;
+        }
+        double time=(rtp_extended_timestamp-first_timestamp)/90000.0;
+
+        while(profile_time()-actual_start_time<time) usleep(1000); // try to play in roughly realtime
+
+        nalu_buf[0]=(nal_unit_length>>24)&0xff;
+        nalu_buf[1]=(nal_unit_length>>16)&0xff;
+        nalu_buf[2]=(nal_unit_length>>8)&0xff;
+        nalu_buf[3]=(nal_unit_length>>0)&0xff;
+
+        // add nal_unit into nalu_buf
+        std::memcpy(&nalu_buf[4], nal_packet.data() + 20, nal_unit_length);
+
+        // Add the NAL unit to the track stream
+        // TODO: READ THE CODEC FROM THE SDP
+        // Precision shouldnt be problem unless frames have very similar timestamps
+        double rtp_timestamp = rtp_extended_timestamp / 90000.0;
+        camera_timestamp_map[camera_id][rtp_timestamp] = wallclock_timestamp;
+        track_stream_add_nalus(s.ts, rtp_timestamp, nalu_buf, nal_unit_length + 4, false);
     }
+    camera_queues.erase(camera_id);
+
+    track_stream_sync(s.ts);
+    const char *stream_stats=track_stream_get_stats(s.ts);
+    const char *shared_state_stats=track_shared_state_get_stats(s.tss);
+    printf("======== SHARED TRACK STATS ===========\n");
+    printf("%s\n\n",shared_state_stats);
+    free((void*)shared_state_stats);
+    printf("======== STREAM STATS ===========\n");
+    printf("%s\n\n", stream_stats);
+    free((void*)stream_stats);
     return;
 }
 
@@ -239,9 +369,7 @@ void stop_camera_thread(const std::string& camera_id) {
 }
 
 void unsubscribe_to_camera(const std::string camera_id){
-    std::cout << "Camera " << camera_id << " unavailable. Disconnecting " 
-              << camera_subscribers[camera_id].size() << " clients." << std::endl;
-    
+    std::cout << "Camera " << camera_id << " unavailable. Disconnecting" << std::endl;
     stop_camera_thread(camera_id);
     std::vector<int> servers_to_cleanup;
     std::vector<int> clients_to_cleanup;
@@ -296,8 +424,6 @@ void handle_server_disconnection(int server_fd){
 
 void subscribe_to_camera(int client_fd, const std::string& camera_id, uint8_t stream_type) {
     if (camera_subscribers[camera_id].empty()) {    
-        start_camera_thread(camera_id);
-        
         // Json Message Scheme: [1 byte type][4 bytes payload_length][payload]
         Json::Value json_payload;
         json_payload["action"] = ACTION_SUBSCRIBE;
@@ -308,20 +434,24 @@ void subscribe_to_camera(int client_fd, const std::string& camera_id, uint8_t st
         Json::StreamWriterBuilder builder;
         std::string response_str = Json::writeString(builder, json_payload);
         uint32_t payload_length = htonl(response_str.length());
+        char* length_bytes = reinterpret_cast<char*>(&payload_length);
         
         std::vector<char> message;
         message.reserve(5 + response_str.length());
         message.push_back(MSG_TYPE_JSON);
-        message.insert(message.end(), &payload_length, &payload_length + 4);
+        message.insert(message.end(), length_bytes, length_bytes + 4);
         message.insert(message.end(), response_str.begin(), response_str.end());
-        
-        int server_fd = connect_to_server({STREAM_MANAGER_IP, STREAM_MANAGER_PORT});
+
+        int server_fd = connect_to_server({STREAM_MANAGER_IP, STREAM_MANAGER_PORT, camera_id});
         if (server_fd == -1) {
             std::cerr << "Connection to STREAM_MANAGER failed" << std::endl;
-            handle_client_disconnection(client_fd);
+            handle_server_disconnection(server_fd);
+            return;
         } else if(send_message_to_fd(server_fd, server_send_queues[server_fd], message) == -1) {
             std::cerr << "Failed to schedule message to STREAM_MANAGER for camera " << camera_id << std::endl;
+            return;
         }
+        start_camera_thread(camera_id);
     }
     camera_subscribers[camera_id].insert({client_fd, stream_type});
     std::cout << "Client " << client_fd << " subscribed to camera " << camera_id
@@ -412,23 +542,21 @@ void handle_incoming_message(int fd, std::vector<char>& rcv_buffer, void handle_
                 if (rcv_buffer.size() < 21) {
                     break; // Not enough data for the full message
                 } else {
-                    uint64_t wall_clock_time, rtp_time;
                     uint32_t nal_unit_length;
-                    std::memcpy(&wall_clock_time, &rcv_buffer[1], 8);
-                    std::memcpy(&rtp_time, &rcv_buffer[9], 8);
                     std::memcpy(&nal_unit_length, &rcv_buffer[17], 4);
-                    wall_clock_time = ntohll(wall_clock_time);
-                    rtp_time = ntohll(rtp_time);
                     nal_unit_length = ntohl(nal_unit_length);
 
                     if (rcv_buffer.size() < 21 + nal_unit_length) {
                         break; // Not enough data for the full message
                     }
-                    
-                    std::vector<char> nal_data(rcv_buffer.begin() + 21, rcv_buffer.begin() + 21 + nal_unit_length);
+
+                    std::vector<char> nal_data(rcv_buffer.begin() + 1, rcv_buffer.begin() + 21 + nal_unit_length);
                     rcv_buffer.erase(rcv_buffer.begin(), rcv_buffer.begin() + 21 + nal_unit_length);
                     message_processed = 1;
                     std::cout << "Processed NAL message of length " << nal_unit_length << std::endl;
+                    if (servers.find(fd) != servers.end()) {
+                        camera_queues[servers[fd].camera_id].enqueue(nal_data);
+                    }
                 }
                 break;
             case MSG_TYPE_SDP:
@@ -457,15 +585,20 @@ void handle_incoming_message(int fd, std::vector<char>& rcv_buffer, void handle_
     }
 }
 
-void handle_outgoing_message(int fd, std::queue<std::vector<char>>& send_queue) {
+void handle_outgoing_message(int fd, std::queue<std::vector<char>>& send_queue, void handle_disconnection(int)) {
+    std::cout << "Handling outgoing messages for fd " << fd << " with send queue size: " << send_queue.size() << std::endl;
     while (!send_queue.empty()) {
         auto& message = send_queue.front();
-        if (send_complete_message(fd, message)) {
+        int message_sent = send_complete_message(fd, message);
+        if (message_sent == 1) {
             send_queue.pop();
-        } else {
+        } else if (message_sent == 0) {
             break; // Partial send, try again later
+        } else {
+            handle_disconnection(fd);
         }
     }
+    std::cout << "Completed sending messages on fd " << fd << " with send queue size: " << send_queue.size() << std::endl;
     // If send queue is empty, stop monitoring EPOLLOUT
     if (send_queue.empty()) {
         struct epoll_event event;
@@ -476,6 +609,9 @@ void handle_outgoing_message(int fd, std::queue<std::vector<char>>& send_queue) 
 }
 
 int main() {
+    init_cuda_stuff();
+    image_init();
+
     // ====================== SERVER SETUP ======================
     struct sockaddr_in server_addr;
     
@@ -555,7 +691,6 @@ int main() {
                     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event);
 
                     clients[client_fd] = {client_addr};
-                    client_buffers[client_fd];
 
                     char client_ip[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
@@ -565,6 +700,7 @@ int main() {
             } else if (servers.count(current_fd)) {
                 // =========== 2. HANDLE SERVER WRITE EVENTS ===========
                 if (events[i].events & EPOLLOUT) {
+                    std::cout << "Socket ready for writing to server on fd " << current_fd << std::endl;
                     int error = 0;
                     socklen_t len = sizeof(error);
                     if (getsockopt(current_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
@@ -572,7 +708,7 @@ int main() {
                         perror("Connection to remote server failed");
                         handle_server_disconnection(current_fd);
                     } else {
-                        handle_outgoing_message(current_fd, server_send_queues[current_fd]);
+                        handle_outgoing_message(current_fd, server_send_queues[current_fd], handle_server_disconnection);
                     }
                 }
                 // =========== 3. HANDLE SERVER READ EVENTS ===========
@@ -582,7 +718,7 @@ int main() {
             } else if (clients.count(current_fd)) {
                 // =========== 4. HANDLE CLIENT WRITE EVENTS ===========
                 if (events[i].events & EPOLLOUT) {
-                    handle_outgoing_message(current_fd, client_send_queues[current_fd]);
+                    handle_outgoing_message(current_fd, client_send_queues[current_fd], handle_client_disconnection);
                 }
 
                 // =========== 5. HANDLE CLIENT READ EVENTS ===========

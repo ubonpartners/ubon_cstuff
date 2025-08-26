@@ -66,7 +66,7 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
 // NALU interface: data should be 4-byte length, AVCC/HVCC 'length prefixed' format
 // use 'set sdp' as with RTP interface
 
-void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265);
+void track_stream_add_nalus(track_stream_t *ts, double rtp_timestamp, uint8_t *data, int length, bool is_h265);
 
 //=================================================================================================
 // jpeg interface. You can create an extra 'stream' and just use it for jpegs

@@ -250,6 +250,7 @@ if (BUILD_APPS)
         ${CMAKE_SOURCE_DIR}/src/apps/mp4_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/pcap_play.c
         ${CMAKE_SOURCE_DIR}/src/apps/nal_play.c
+        ${CMAKE_SOURCE_DIR}/src/apps/ml_wrapper.cpp
         ${CMAKE_SOURCE_DIR}/src/apps/network_play.c
         ${CMAKE_SOURCE_DIR}/src/apps/of_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/rt_benchmark.c
@@ -269,6 +270,13 @@ if (BUILD_APPS)
             ${COMMON_LIBS}
             ${ARCH_LIBS}
         )
+
+        # Add jsoncpp specifically to ml_wrapper
+        if(app_name STREQUAL "ml_wrapper")
+            target_include_directories(${app_name} PRIVATE /usr/include/jsoncpp)
+            target_link_libraries(${app_name} jsoncpp)
+        endif()
+
     endforeach()
 endif()
 # --------------------------------------------------

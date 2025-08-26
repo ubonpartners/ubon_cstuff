@@ -146,50 +146,50 @@ def main():
         json_data = {
             "action": "SUBSCRIBE",
             "body": {
-                "camera_id": "camera_001",
+                "camera_id": "cam001",
                 "stream_type": 10
             }
         }
         send_json_message(sock, json_data)
         read_responses(sock)
         
-        time.sleep(0.5)
+        time.sleep(10000)
         
-        # Test 2: SDP message
-        print("\n=== Testing SDP message ===")
-        sdp_content = """v=0
-o=- 1234567890 1234567890 IN IP4 192.168.1.100
-s=Test Stream
-c=IN IP4 239.255.255.255/255
-t=0 0
-m=video 5004 RTP/AVP 96
-a=rtpmap:96 H264/90000"""
-        send_sdp_message(sock, sdp_content)
+#         # Test 2: SDP message
+#         print("\n=== Testing SDP message ===")
+#         sdp_content = """v=0
+# o=- 1234567890 1234567890 IN IP4 192.168.1.100
+# s=Test Stream
+# c=IN IP4 239.255.255.255/255
+# t=0 0
+# m=video 5004 RTP/AVP 96
+# a=rtpmap:96 H264/90000"""
+#         send_sdp_message(sock, sdp_content)
         
-        time.sleep(0.5)
+#         time.sleep(0.5)
         
-        # Test 3: NAL message
-        print("\n=== Testing NAL message ===")
-        # Simulate H.264 NAL unit (SPS)
-        nal_unit = b"\x00\x00\x00\x01\x67\x42\x00\x1e\x9a\x74\x0b\x43\x6c"
-        send_nal_message(sock, nal_unit, wall_clock_time=1692633600000000, rtp_time=152397000)
+#         # Test 3: NAL message
+#         print("\n=== Testing NAL message ===")
+#         # Simulate H.264 NAL unit (SPS)
+#         nal_unit = b"\x00\x00\x00\x01\x67\x42\x00\x1e\x9a\x74\x0b\x43\x6c"
+#         send_nal_message(sock, nal_unit, wall_clock_time=1692633600000000, rtp_time=152397000)
         
-        time.sleep(0.5)
+#         time.sleep(0.5)
         
-        # Test 4: Multiple messages in one packet
-        send_multiple_messages_in_one_packet(sock)
+#         # Test 4: Multiple messages in one packet
+#         send_multiple_messages_in_one_packet(sock)
         
-        time.sleep(0.5)
+#         time.sleep(0.5)
         
-        # Test 5: Large message
-        send_large_message(sock)
-        read_responses(sock)
+#         # Test 5: Large message
+#         send_large_message(sock)
+#         read_responses(sock)
         
-        time.sleep(0.5)
+#         time.sleep(0.5)
         
-        # Test 6: Fragmented message
-        test_fragmented_send(sock)
-        read_responses(sock)
+#         # Test 6: Fragmented message
+#         test_fragmented_send(sock)
+#         read_responses(sock)
         
         print("\n=== All tests completed ===")
         

@@ -1003,7 +1003,7 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
     track_stream_queue_job(ts, job);
 }
 
-void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265)
+void track_stream_add_nalus(track_stream_t *ts, double rtp_timestamp, uint8_t *data, int length, bool is_h265)
 {
     ts_queued_job_t *job=ts_queued_job_create();
     uint8_t *mem=(uint8_t *)malloc(length);
@@ -1013,7 +1013,7 @@ void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp,
     job->data=(uint8_t *)mem;
     job->data_offset=0;
     job->data_len=length;
-    job->time=rtp_extended_timestamp/90000.0;
+    job->time=rtp_timestamp;
     job->codec=(is_h265) ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264;
     track_stream_queue_job(ts, job);
 }

@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
         nalu_buf[1]=(len>>16)&0xff;
         nalu_buf[2]=(len>>8)&0xff;
         nalu_buf[3]=(len>>0)&0xff;
-        track_stream_add_nalus(s.ts, ts, nalu_buf, len+4, false);
+        track_stream_add_nalus(s.ts, ts/90000.0, nalu_buf, len+4, false);
     }
 
     track_stream_sync(s.ts);
