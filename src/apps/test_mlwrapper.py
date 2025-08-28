@@ -3,12 +3,14 @@ import socket
 import struct
 import json
 import time
-import sys
 
 # Message type constants (matching your C++ defines)
 MSG_TYPE_SDP = 0x01
 MSG_TYPE_NAL = 0x02
 MSG_TYPE_JSON = 0x03
+MSG_TYPE_INFERENCE = 0x0A
+MSG_TYPE_THUMBNAIL = 0x0B
+MSG_TYPE_BESTFACE = 0x0C
 
 def send_json_message(sock, json_data):
     """Send JSON message: [type:1][length:4][json_payload]"""
@@ -121,8 +123,14 @@ def read_responses(sock, timeout=2):
                 try:
                     json_data = json.loads(payload.decode('utf-8'))
                     print(f"Received JSON response: {json_data}")
-                except:
-                    print(f"Received JSON response: {payload}")
+                except Exception as e:
+                    print(f"Error parsing JSON response: {e}")
+            elif msg_type == MSG_TYPE_INFERENCE:
+                try:
+                    json_data = json.loads(payload.decode('utf-8'))
+                    print(f"Received INFERENCE JSON response: {json_data}")
+                except Exception as e:
+                    print(f"Error parsing INFERENCE response: {e}")
             else:
                 print(f"Received response type {msg_type}: {len(payload)} bytes")
                 
@@ -151,43 +159,18 @@ def main():
             }
         }
         send_json_message(sock, json_data)
-        read_responses(sock)
         
-        time.sleep(10000)
+        while True:
+            read_responses(sock)
+            time.sleep(0.2)
         
-#         # Test 2: SDP message
-#         print("\n=== Testing SDP message ===")
-#         sdp_content = """v=0
-# o=- 1234567890 1234567890 IN IP4 192.168.1.100
-# s=Test Stream
-# c=IN IP4 239.255.255.255/255
-# t=0 0
-# m=video 5004 RTP/AVP 96
-# a=rtpmap:96 H264/90000"""
-#         send_sdp_message(sock, sdp_content)
-        
-#         time.sleep(0.5)
-        
-#         # Test 3: NAL message
-#         print("\n=== Testing NAL message ===")
-#         # Simulate H.264 NAL unit (SPS)
-#         nal_unit = b"\x00\x00\x00\x01\x67\x42\x00\x1e\x9a\x74\x0b\x43\x6c"
-#         send_nal_message(sock, nal_unit, wall_clock_time=1692633600000000, rtp_time=152397000)
-        
-#         time.sleep(0.5)
-        
-#         # Test 4: Multiple messages in one packet
-#         send_multiple_messages_in_one_packet(sock)
-        
-#         time.sleep(0.5)
-        
-#         # Test 5: Large message
+#         # Test 2: Large message
 #         send_large_message(sock)
 #         read_responses(sock)
         
 #         time.sleep(0.5)
         
-#         # Test 6: Fragmented message
+#         # Test 3: Fragmented message
 #         test_fragmented_send(sock)
 #         read_responses(sock)
         

@@ -74,7 +74,6 @@ struct RemoteServerInfo {
 // Structure to hold client information
 struct ClientInfo {
     sockaddr_in addr;
-    // You can add more client-specific data here
 };
 
 typedef struct state
@@ -90,35 +89,37 @@ typedef struct state
 
 // Forward declarations for cross-namespace usage
 namespace NetworkManager {
-    void terminate_connection(int fd);
-    void terminate_connections(std::vector<int> fds);
+    void initialize_server();
+    int establish_server_connection(const RemoteServerInfo& target_server);
     std::optional<RemoteServerInfo> get_server_details(int fd);
     void queue_message_for_fd(int fd, const std::vector<char>& message);
+    void terminate_connection(int fd);
+    void terminate_connections(std::vector<int> fds);
 }
 
 namespace CameraSubscriptions {
-    void remove_camera_subscriptions(const std::string& camera_id);
-    void remove_client_subscriptions(int client_fd);
-    std::vector<int> get_subscribed_clients(const std::string& camera_id);
-    void add_nal_data(const std::string& camera_id, const std::vector<char>& nal_data);
+    std::vector<int> remove_camera_subscriptions(const std::string& camera_id);
+    std::vector<int> remove_client(int client_fd);
+    void add_nal_data(int server_fd, const std::vector<char>& nal_data);
     void add_camera_subscription(int client_fd, const std::string& camera_id, uint8_t stream_type);
     std::optional<uint64_t> get_wall_timestamp(const std::string& camera_id, double rtp_time);
     std::set<std::pair<int, uint8_t>> get_camera_clients(const std::string& camera_id);
 }
 
 void handle_client_disconnection(int client_fd) {
-    CameraSubscriptions::remove_client_subscriptions(client_fd);
+    auto connections_to_terminate = CameraSubscriptions::remove_client(client_fd);
+    NetworkManager::terminate_connections(connections_to_terminate);
     NetworkManager::terminate_connection(client_fd);
 }
 
 void handle_server_disconnection(int server_fd){
-    if (auto server_details = NetworkManager::get_server_details(server_fd)) {
-        std::string camera_id = server_details->camera_id;
-        std::vector<int> client_list = CameraSubscriptions::get_subscribed_clients(camera_id);
-        CameraSubscriptions::remove_camera_subscriptions(camera_id);
-        NetworkManager::terminate_connections(client_list);
-        NetworkManager::terminate_connection(server_fd);
+    auto server_details = NetworkManager::get_server_details(server_fd);
+    if (!server_details.has_value()) {
+        return;
     }
+    auto connections_to_terminate = CameraSubscriptions::remove_camera_subscriptions(server_details->camera_id);
+    NetworkManager::terminate_connections(connections_to_terminate);
+    NetworkManager::terminate_connection(server_fd);
 }
 
 static void track_result(void *context, track_results_t *r){
@@ -130,8 +131,7 @@ static void track_result(void *context, track_results_t *r){
     printf("camera %s track_result: result type %d time %f, %d detections\n", processing_state->camera_id.c_str(), r->result_type, r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
 
     auto wall_time = CameraSubscriptions::get_wall_timestamp(processing_state->camera_id, r->time); 
-    if (!wall_time.has_value())
-    {
+    if (!wall_time.has_value()) {
         std::cout << " ======================== No wall timestamp found for rtp time " << r->time << " for camera " << processing_state->camera_id << std::endl;
         return;
     }
@@ -198,7 +198,7 @@ void handle_json_message(int client_fd, const std::string& json_content) {
     }
 }
 
-void handle_incoming_message(int fd, std::vector<char>& receive_buffer) {
+void handle_incoming_message(int fd, std::vector<char>& receive_buffer, bool is_client) {
     char input_buffer[4096];
     ssize_t bytes_received;
     while ((bytes_received = read(fd, input_buffer, sizeof(input_buffer))) > 0) {
@@ -207,10 +207,18 @@ void handle_incoming_message(int fd, std::vector<char>& receive_buffer) {
 
     if (bytes_received == 0) {
         std::cout << "Connection terminated on fd " << fd << std::endl;
-        NetworkManager::terminate_connection(fd);
+        if (is_client) {
+            handle_client_disconnection(fd);
+        } else {
+            handle_server_disconnection(fd);
+        }
     } else if (bytes_received == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
         perror("read operation failed");
-        NetworkManager::terminate_connection(fd);
+        if (is_client) {
+            handle_client_disconnection(fd);
+        } else {
+            handle_server_disconnection(fd);
+        }
     }
 
     if (receive_buffer.empty()){
@@ -260,9 +268,7 @@ void handle_incoming_message(int fd, std::vector<char>& receive_buffer) {
                     receive_buffer.erase(receive_buffer.begin(), receive_buffer.begin() + 21 + packet_length);
                     message_processed = 1;
                     std::cout << "Processed NAL message of length " << packet_length << std::endl;
-                    if (auto server_details = NetworkManager::get_server_details(fd)) {
-                        CameraSubscriptions::add_nal_data(server_details->camera_id, nal_packet);
-                    }
+                    CameraSubscriptions::add_nal_data(fd, nal_packet);
                 }
                 break;
             case MSG_TYPE_SDP:
@@ -294,12 +300,12 @@ namespace NetworkManager {
     namespace {
         // Internal state variables
         int main_socket, event_fd;
-        std::map<int, ClientInfo> client_registry;
-        std::map<int, RemoteServerInfo> server_registry;
-        std::map<int, std::vector<char>> incoming_buffers;
-        std::map<int, std::vector<char>> outgoing_buffers;
-        std::map<int, std::queue<std::vector<char>>> server_message_queues;
-        std::map<int, std::queue<std::vector<char>>> client_message_queues;
+        std::map<int, ClientInfo> client_registry; //[client_fd, ClientInfo]
+        std::map<int, RemoteServerInfo> server_registry; //[server_fd, RemoteServerInfo]
+        std::map<int, std::vector<char>> client_incoming_buffers; //[client_fd, buffer]
+        std::map<int, std::vector<char>> server_incoming_buffers; //[server_fd, buffer]
+        std::map<int, std::queue<std::vector<char>>> server_outgoing_message_queues; //[server_fd, message_queue]
+        std::map<int, std::queue<std::vector<char>>> client_outgoing_message_queues; //[client_fd, message_queue]
 
         bool configure_nonblocking(int socket_fd) {
             int current_flags = fcntl(socket_fd, F_GETFL, 0);
@@ -315,21 +321,27 @@ namespace NetworkManager {
         }
 
         void cleanup_client_socket(int fd) {
+            if (client_registry.find(fd) == client_registry.end()) {
+                return;
+            }
             std::cout << "Cleaning up client socket fd " << fd << std::endl;
             epoll_ctl(event_fd, EPOLL_CTL_DEL, fd, nullptr);
             close(fd);
             client_registry.erase(fd);
-            incoming_buffers.erase(fd);
-            client_message_queues.erase(fd);
+            client_incoming_buffers.erase(fd);
+            client_outgoing_message_queues.erase(fd);
         }
 
         void cleanup_server_socket(int fd) {
+            if (server_registry.find(fd) == server_registry.end()) {
+                return;
+            }
             std::cout << "Cleaning up server socket fd " << fd << std::endl;
             epoll_ctl(event_fd, EPOLL_CTL_DEL, fd, nullptr);
             close(fd);
             server_registry.erase(fd);
-            outgoing_buffers.erase(fd);
-            server_message_queues.erase(fd);
+            server_incoming_buffers.erase(fd);
+            server_outgoing_message_queues.erase(fd);
         }
 
         int transmit_full_message(int fd, std::vector<char>& message) {
@@ -368,10 +380,8 @@ namespace NetworkManager {
                     break;
                 } else {
                     if (client_registry.find(fd) != client_registry.end()) {
-                        cleanup_client_socket(fd);
                         handle_client_disconnection(fd);
                     } else if (server_registry.find(fd) != server_registry.end()) {
-                        cleanup_server_socket(fd);
                         handle_server_disconnection(fd);
                     }
                 }
@@ -384,6 +394,13 @@ namespace NetworkManager {
                 event_config.events = EPOLLIN | EPOLLET;
                 epoll_ctl(event_fd, EPOLL_CTL_MOD, fd, &event_config);
             }
+        }
+
+        std::optional<ClientInfo> get_client_details(int fd) {
+            if (client_registry.find(fd) != client_registry.end()) {
+                return client_registry[fd];
+            }
+            return std::nullopt;
         }
     }
 
@@ -477,19 +494,19 @@ namespace NetworkManager {
                             perror("Server connection establishment failed");
                             handle_server_disconnection(active_fd);
                         } else {
-                            process_outbound_messages(active_fd, server_message_queues[active_fd]);
+                            process_outbound_messages(active_fd, server_outgoing_message_queues[active_fd]);
                         }
                     }
                     if (event_list[event_idx].events & EPOLLIN) {
-                        handle_incoming_message(active_fd, outgoing_buffers[active_fd]);
+                        handle_incoming_message(active_fd, server_incoming_buffers[active_fd], false);
                     }
                 } else if (client_registry.count(active_fd)) {
                     // Handle client communication
                     if (event_list[event_idx].events & EPOLLOUT) {
-                        process_outbound_messages(active_fd, client_message_queues[active_fd]);
+                        process_outbound_messages(active_fd, client_outgoing_message_queues[active_fd]);
                     }
                     if (event_list[event_idx].events & EPOLLIN) {
-                        handle_incoming_message(active_fd, incoming_buffers[active_fd]);
+                        handle_incoming_message(active_fd, client_incoming_buffers[active_fd], true);
                     }
                 }
             }
@@ -548,13 +565,6 @@ namespace NetworkManager {
         return connection_fd;
     }
 
-    std::optional<ClientInfo> get_client_details(int fd) {
-        if (client_registry.find(fd) != client_registry.end()) {
-            return client_registry[fd];
-        }
-        return std::nullopt;
-    }
-
     std::optional<RemoteServerInfo> get_server_details(int fd) {
         if (server_registry.find(fd) != server_registry.end()) {
             return server_registry[fd];
@@ -564,9 +574,9 @@ namespace NetworkManager {
 
     void queue_message_for_fd(int fd, const std::vector<char>& message){
         if (get_client_details(fd)) {
-            client_message_queues[fd].push(message);
+            client_outgoing_message_queues[fd].push(message);
         } else if (get_server_details(fd)) {
-            server_message_queues[fd].push(message);
+            server_outgoing_message_queues[fd].push(message);
         } else {
             std::cerr << "Invalid file descriptor provided" << std::endl;
             return;
@@ -600,23 +610,16 @@ namespace NetworkManager {
             }
         }
     }
-
-    void terminate_camera_connections(const std::string& camera_id){
-        for (auto &[fd, server_info] : server_registry) {
-            if (server_info.camera_id == camera_id) {
-                cleanup_server_socket(fd);
-            }
-        }
-    }
 }
 
 namespace CameraSubscriptions {
     namespace {
         // Internal state
-        std::map<std::string, std::set<std::pair<int, uint8_t>>> subscription_registry;
-        std::map<std::string, std::thread> worker_threads;
-        std::map<std::string, moodycamel::BlockingReaderWriterQueue<std::vector<char>>> message_queues;
-        std::map<std::string, std::map<uint64_t, uint64_t>> timestamp_mappings;
+        std::map<std::string, std::set<std::pair<int, uint8_t>>> subscription_registry; //[camera_id, [client_fd, stream_type]]
+        std::map<std::string, std::thread> worker_threads; // [camera_id, camera_worker_thread]
+        std::map<std::string, moodycamel::BlockingReaderWriterQueue<std::vector<char>>> message_queues; // [camera_id, message_queue]
+        std::map<std::string, std::map<uint64_t, uint64_t>> timestamp_mappings; // [camera_id, [rtp_timestamp, wall_timestamp]]
+        std::map<int, std::string> camera_fd_to_camera_id; // [server_fd, camera_id]
 
         void camera_processing_worker(std::string camera_id) {
             std::cout << "Camera processing worker started for: " << camera_id << std::endl;
@@ -699,27 +702,50 @@ namespace CameraSubscriptions {
             if (worker_it != worker_threads.end()) {
                 message_queues[camera_id].enqueue(std::vector<char>(1, POISON_PILL));
                 worker_it->second.join();
-
-                worker_threads.erase(worker_it);
-                message_queues.erase(camera_id);
-                timestamp_mappings.erase(camera_id);
                 std::cout << "Terminated camera worker for " << camera_id << std::endl;
+            }
+        }
+
+        void camera_cleanup(std::string camera_id){
+            subscription_registry.erase(camera_id);
+            message_queues.erase(camera_id);
+            worker_threads.erase(camera_id);
+            timestamp_mappings.erase(camera_id);
+
+            for (auto it = camera_fd_to_camera_id.begin(); it != camera_fd_to_camera_id.end(); ) {
+                if (it->second == camera_id) {
+                    it = camera_fd_to_camera_id.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
     }
 
     // Public interface
-    void remove_camera_subscriptions(const std::string& camera_id){
+    std::vector<int> remove_camera_subscriptions(const std::string& camera_id){
         if (subscription_registry.find(camera_id) == subscription_registry.end()) {
-            return;
+            return {};
         }
         std::cout << "Camera " << camera_id << " no longer available. Disconnecting clients" << std::endl;
         stop_camera_worker(camera_id);
-        subscription_registry.erase(camera_id);
+
+        auto connections_to_terminate = std::vector<int>();
+        for (const auto& [client_fd, stream_type] : subscription_registry[camera_id]) {
+            connections_to_terminate.push_back(client_fd);
+        }
+        for (const auto& [server_fd, cam_id] : camera_fd_to_camera_id) {
+            if (cam_id == camera_id) {
+                connections_to_terminate.push_back(server_fd);
+            }
+        }
+        camera_cleanup(camera_id);
+        return connections_to_terminate;
     }
 
-    void remove_client_subscriptions(int client_fd) {
-        std::vector<std::string> cameras_to_cleanup;
+    std::vector<int> remove_client(int client_fd) {
+        std::set<std::string> cameras_to_cleanup;
+        std::vector<int> connections_to_terminate({client_fd});
         for (auto &[camera_id, client_set] : subscription_registry) {
             for (auto client_it = client_set.begin(); client_it != client_set.end(); ) {
                 if (client_it->first == client_fd) {
@@ -729,30 +755,15 @@ namespace CameraSubscriptions {
                 }
             }
             if (client_set.empty()) {
-                cameras_to_cleanup.push_back(camera_id);
+                cameras_to_cleanup.insert(camera_id);
             }
         }
 
         for (const auto& camera_id : cameras_to_cleanup) {
-            remove_camera_subscriptions(camera_id);
+            auto connections = remove_camera_subscriptions(camera_id);
+            connections_to_terminate.insert(connections_to_terminate.end(), connections.begin(), connections.end());
         }
-    }
-
-    std::set<std::pair<int, uint8_t>> get_camera_clients(const std::string& camera_id) {
-        if (subscription_registry.find(camera_id) != subscription_registry.end()) {
-            return subscription_registry[camera_id];
-        }
-        return std::set<std::pair<int, uint8_t>>();
-    }
-
-    std::vector<int> get_subscribed_clients(const std::string& camera_id) {
-        std::set<int> unique_clients;
-        if (subscription_registry.find(camera_id) != subscription_registry.end()) {
-            for (const auto& [client_fd, stream_type] : subscription_registry[camera_id]) {
-                unique_clients.insert(client_fd);
-            }
-        }
-        return std::vector<int>(unique_clients.begin(), unique_clients.end());
+        return connections_to_terminate;
     }
 
     void add_camera_subscription(int client_fd, const std::string& camera_id, uint8_t stream_type) {
@@ -779,6 +790,7 @@ namespace CameraSubscriptions {
                 handle_client_disconnection(client_fd);
                 return;
             }
+            camera_fd_to_camera_id[server_connection] = camera_id;
             NetworkManager::queue_message_for_fd(server_connection, subscription_message);
             start_camera_worker(camera_id);
         }
@@ -787,9 +799,12 @@ namespace CameraSubscriptions {
         << " with stream type " << (int)stream_type << std::endl;
     }
 
-    void add_nal_data(const std::string& camera_id, const std::vector<char>& nal_data) {
-        if (message_queues.find(camera_id) != message_queues.end()) {
-            message_queues[camera_id].enqueue(nal_data);
+    void add_nal_data(int camera_fd, const std::vector<char>& nal_data) {
+        if (camera_fd_to_camera_id.find(camera_fd) != camera_fd_to_camera_id.end()) {
+            const std::string& camera_id = camera_fd_to_camera_id[camera_fd];
+            if (message_queues.find(camera_id) != message_queues.end()) {
+                message_queues[camera_id].enqueue(nal_data);
+            }
         }
     }
 
@@ -801,6 +816,13 @@ namespace CameraSubscriptions {
             }
         }
         return std::nullopt;
+    }
+
+    std::set<std::pair<int, uint8_t>> get_camera_clients(const std::string& camera_id) {
+        if (subscription_registry.find(camera_id) != subscription_registry.end()) {
+            return subscription_registry[camera_id];
+        }
+        return {};
     }
 }
 

@@ -176,7 +176,7 @@ a=fmtp:96 profile-level-id=42e01e
         try:
             while self.running:
                 current_time = time.time()
-                wall_clock_time = int(current_time * 1000000)  # microseconds
+                wall_clock_time = int(current_time * 1000)  # milliseconds
                 rtp_time = int((current_time - start_time) * 90000)  # 90kHz timestamp
                 
                 # Cycle through NAL units
@@ -257,7 +257,7 @@ a=fmtp:96 profile-level-id=42e01e
                     current_time = time.time()
                     
                     # Calculate wall clock time
-                    wall_clock_time = int(current_time * 1000000)  # microseconds
+                    wall_clock_time = int(current_time * 1000)  # milliseconds
                     
                     # Use original RTP timestamp from file, but adjust for looping
                     loop_number = packet_index // len(nal_packets)
@@ -312,7 +312,7 @@ a=fmtp:96 profile-level-id=42e01e
 
     def send_real_nal_stream_simple(self, client_socket, camera_id):
         """Send real NAL units from file once, then stop"""
-        nal_file_path = "/home/sarthak/code/ubon_cstuff/raw_nal.nal"
+        nal_file_path = "/home/sarthak/code/ubon_cstuff/raw_nal_207.nal"
         print(f"Starting real NAL stream for camera {camera_id} from {nal_file_path}")
         
         try:
@@ -344,7 +344,7 @@ a=fmtp:96 profile-level-id=42e01e
                     
                     # Generate timestamps
                     current_time = time.time()
-                    wall_clock_time = int(current_time * 1000000)
+                    wall_clock_time = int(current_time * 1000)  # milliseconds
                     rtp_time = int((current_time - start_time) * 90000)
                     
                     # Send NAL message
