@@ -18,13 +18,8 @@
 #include <optional>
 
 #include <readerwriterqueue/readerwriterqueue.h>
-#include <track.h>
-#include "display.h"
-#include "jpeg.h"
-#include <misc.h>
-#include <cuda_stuff.h>
-#include <yaml_stuff.h>
-#include <profile.h>
+#include <argparse/argparse.hpp>
+
 
 #define MAX_EVENTS 30
 #define PORT 8080
@@ -46,6 +41,16 @@
 #define STREAM_TYPE_THUMBNAIL 0x0B
 #define STREAM_TYPE_BESTFACE 0x0C
 
+#if DO_REAL_INFERENCE
+    #include <track.h>
+    #include "display.h"
+    #include "jpeg.h"
+    #include <misc.h>
+    #include <cuda_stuff.h>
+    #include <yaml_stuff.h>
+    #include <profile.h>
+#endif
+
 static inline uint64_t htonll(uint64_t value) {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     return ((uint64_t)htonl(value & 0xFFFFFFFFULL) << 32) |
@@ -64,30 +69,30 @@ static inline uint64_t ntohll(uint64_t value) {
 #endif
 }
 
-// Structure to hold remote server information for outgoing connections
+
 struct RemoteServerInfo {
     std::string ip;
     int port;
     std::string camera_id; // We make a separate connection request per camera
 };
 
-// Structure to hold client information
 struct ClientInfo {
     sockaddr_in addr;
 };
 
 typedef struct state
 {
+    #if DO_REAL_INFERENCE
     track_shared_state_t *tss;
     track_stream_t *ts;
     image_t *img;
+    #endif
     double start_time;
     std::string camera_id;
     bool stopped;
 } state_t;
 
 
-// Forward declarations for cross-namespace usage
 namespace NetworkManager {
     void initialize_server();
     int establish_server_connection(const RemoteServerInfo& target_server);
@@ -121,64 +126,6 @@ void handle_server_disconnection(int server_fd){
     NetworkManager::terminate_connections(connections_to_terminate);
     NetworkManager::terminate_connection(server_fd);
 }
-
-static void track_result(void *context, track_results_t *r){
-    state_t *processing_state=(state_t *)context;
-    if (processing_state->stopped){
-        return;
-    }
-
-    printf("camera %s track_result: result type %d time %f, %d detections\n", processing_state->camera_id.c_str(), r->result_type, r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
-
-    auto wall_time = CameraSubscriptions::get_wall_timestamp(processing_state->camera_id, r->time); 
-    if (!wall_time.has_value()) {
-        std::cout << " ======================== No wall timestamp found for rtp time " << r->time << " for camera " << processing_state->camera_id << std::endl;
-        return;
-    }
-
-    for (auto &[client_fd, stream_type] : CameraSubscriptions::get_camera_clients(processing_state->camera_id)) {
-        Json::Value response_data;
-        response_data["camera_id"] = processing_state->camera_id;
-        response_data["timestamp"] = wall_time.value();
-        response_data["motion_score"] = r->motion_score;
-        response_data["people_count"] = 0;
-        if (r->track_dets != nullptr) {
-            response_data["people_count"] = r->track_dets->num_detections;
-        }
-        Json::StreamWriterBuilder response_writer;
-        std::string response_json = Json::writeString(response_writer, response_data);
-        uint32_t response_length = htonl(response_json.size());
-        
-        std::vector<char> inference_message;
-        inference_message.reserve(5 + response_json.length());
-        inference_message.push_back(MSG_TYPE_INFERENCE);
-        inference_message.insert(inference_message.end(), (char *)&response_length, (char *)&response_length + 4);
-        inference_message.insert(inference_message.end(), response_json.begin(), response_json.end());
-        NetworkManager::queue_message_for_fd(client_fd, inference_message);
-    }
-
-    if (r->track_dets!=0)
-    {
-        image_t *current_image=0;
-        if (r->track_dets->frame_jpeg!=0)
-        {
-            size_t jpeg_size;
-            uint8_t *jpeg_bytes=jpeg_get_data(r->track_dets->frame_jpeg, &jpeg_size);
-            current_image=decode_jpeg(jpeg_bytes, (int)jpeg_size);
-        }
-        if (current_image!=0)
-        {
-            image_t *annotated_frame=detection_list_draw(r->track_dets, current_image);
-            if (annotated_frame!=0)
-            {
-                display_image("video", annotated_frame);
-                image_destroy(annotated_frame);
-            }
-            image_destroy(current_image);
-        }
-    }
-}
-
 
 void handle_json_message(int client_fd, const std::string& json_content) {
     Json::Value parsed_json;
@@ -613,6 +560,7 @@ namespace NetworkManager {
 }
 
 namespace CameraSubscriptions {
+    bool dev_mode = false;
     namespace {
         // Internal state
         std::map<std::string, std::set<std::pair<int, uint8_t>>> subscription_registry; //[camera_id, [client_fd, stream_type]]
@@ -621,10 +569,97 @@ namespace CameraSubscriptions {
         std::map<std::string, std::map<uint64_t, uint64_t>> timestamp_mappings; // [camera_id, [rtp_timestamp, wall_timestamp]]
         std::map<int, std::string> camera_fd_to_camera_id; // [server_fd, camera_id]
 
+        void send_mock_inference_data(const std::string& camera_id){
+            Json::Value response_data;
+            response_data["camera_id"] = camera_id;
+            response_data["timestamp"] = 123456789;
+            response_data["motion_score"] = 0.85;
+            response_data["people_count"] = 2;
+
+            Json::StreamWriterBuilder writer;
+            std::string json_string = Json::writeString(writer, response_data);
+            std::cout << "Mock response data: " << json_string << std::endl;
+
+            std::vector<char> message;
+            message.reserve(5 + json_string.length());
+            message.push_back(MSG_TYPE_INFERENCE);
+            uint32_t response_length = htonl(json_string.size());
+            message.insert(message.end(), (char *)&response_length, (char *)&response_length + 4);
+            message.insert(message.end(), json_string.begin(), json_string.end());
+            for (const auto& [client_fd, stream_type] : subscription_registry[camera_id]) {
+                if (stream_type == STREAM_TYPE_INFERENCE) {
+                    NetworkManager::queue_message_for_fd(client_fd, message);
+                }
+            }
+        }
+
+        #if DO_REAL_INFERENCE
+        void track_result(void *context, track_results_t *r){
+            state_t *processing_state=(state_t *)context;
+            if (processing_state->stopped){
+                return;
+            }
+
+            printf("camera %s track_result: result type %d time %f, %d detections\n", processing_state->camera_id.c_str(), r->result_type, r->time, (r->track_dets==0) ? 0 : r->track_dets->num_detections);
+
+            auto wall_time = CameraSubscriptions::get_wall_timestamp(processing_state->camera_id, r->time); 
+            if (!wall_time.has_value()) {
+                std::cout << " ======================== No wall timestamp found for rtp time " << r->time << " for camera " << processing_state->camera_id << std::endl;
+                return;
+            }
+
+            for (auto &[client_fd, stream_type] : CameraSubscriptions::get_camera_clients(processing_state->camera_id)) {
+                Json::Value response_data;
+                response_data["camera_id"] = processing_state->camera_id;
+                response_data["timestamp"] = wall_time.value();
+                response_data["motion_score"] = r->motion_score;
+                response_data["people_count"] = 0;
+                if (r->track_dets != nullptr) {
+                    response_data["people_count"] = r->track_dets->num_detections;
+                }
+                Json::StreamWriterBuilder response_writer;
+                std::string response_json = Json::writeString(response_writer, response_data);
+                uint32_t response_length = htonl(response_json.size());
+                
+                std::vector<char> inference_message;
+                inference_message.reserve(5 + response_json.length());
+                inference_message.push_back(MSG_TYPE_INFERENCE);
+                inference_message.insert(inference_message.end(), (char *)&response_length, (char *)&response_length + 4);
+                inference_message.insert(inference_message.end(), response_json.begin(), response_json.end());
+                NetworkManager::queue_message_for_fd(client_fd, inference_message);
+            }
+
+            if (r->track_dets!=0 && dev_mode)
+            {
+                image_t *current_image=0;
+                if (r->track_dets->frame_jpeg!=0)
+                {
+                    size_t jpeg_size;
+                    uint8_t *jpeg_bytes=jpeg_get_data(r->track_dets->frame_jpeg, &jpeg_size);
+                    current_image=decode_jpeg(jpeg_bytes, (int)jpeg_size);
+                }
+                if (current_image!=0)
+                {
+                    image_t *annotated_frame=detection_list_draw(r->track_dets, current_image);
+                    if (annotated_frame!=0)
+                    {
+                        display_image("video", annotated_frame);
+                        image_destroy(annotated_frame);
+                    }
+                    image_destroy(current_image);
+                }
+            }
+        }
+        #endif
+
         void camera_processing_worker(std::string camera_id) {
             std::cout << "Camera processing worker started for: " << camera_id << std::endl;
-
             state_t processing_state;
+            bool first_packet=true;
+            uint64_t initial_timestamp=0;
+
+            
+            #if DO_REAL_INFERENCE
             memset(&processing_state, 0, sizeof(state_t));
 
             const char *default_config="main_jpeg:\n"
@@ -643,9 +678,8 @@ namespace CameraSubscriptions {
 
             int buffer_size=1024*1024;
             uint8_t *processing_buffer=(uint8_t *)malloc(buffer_size);
-            uint64_t initial_timestamp=0;
-            bool first_packet=true;
             double worker_start_time=profile_time();
+            #endif
 
             while (true){
                 std::vector<char> nal_data;
@@ -670,24 +704,28 @@ namespace CameraSubscriptions {
                     first_packet=false;
                     initial_timestamp=rtp_timestamp;
                 }
-                double relative_time=(rtp_timestamp-initial_timestamp)/90000.0;
 
-                while(profile_time()-worker_start_time<relative_time) usleep(1000);
-
+                double rtp_time_seconds = rtp_timestamp / 90000.0;
+                timestamp_mappings[camera_id][rtp_time_seconds] = wall_timestamp;
+                
+                #if DO_REAL_INFERENCE
                 processing_buffer[0]=(packet_length>>24)&0xff;
                 processing_buffer[1]=(packet_length>>16)&0xff;
                 processing_buffer[2]=(packet_length>>8)&0xff;
                 processing_buffer[3]=(packet_length>>0)&0xff;
-
                 std::memcpy(&processing_buffer[4], nal_data.data() + 20, packet_length);
 
-                double rtp_time_seconds = rtp_timestamp / 90000.0;
-                timestamp_mappings[camera_id][rtp_time_seconds] = wall_timestamp;
                 track_stream_add_nalus(processing_state.ts, rtp_time_seconds, processing_buffer, packet_length + 4, false);
+                #endif
+                #if DO_REAL_INFERENCE == 0
+                send_mock_inference_data(camera_id);
+                #endif
             }
 
+            #if DO_REAL_INFERENCE
             track_stream_destroy(processing_state.ts);
             track_shared_state_destroy(processing_state.tss);
+            #endif
             return;
         }
 
@@ -826,12 +864,30 @@ namespace CameraSubscriptions {
     }
 }
 
-int main() {
+/*
+TODO
+1. Use proper logging instead of std::cerr or std::cout
+2. The address and port info should be configurable via command line arguments and config files
+4. Create a Cmake/Makefile for the project - make sure to include the necessary external libraries - Currently using Cmake of ubon_cstuff
+*/
+int main(int argc, char** argv) {
+    argparse::ArgumentParser parser("ml_wrapper");
+    parser.add_argument("--dev", "-d").help("Run in development mode").default_value(false).implicit_value(true);
+
+    try {
+        parser.parse_args(argc, argv);
+        CameraSubscriptions::dev_mode = parser.get<bool>("--dev");
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing command line arguments: " << e.what() << std::endl;
+        return 1;
+    }
+
+    #if DO_REAL_INFERENCE
     init_cuda_stuff();
     image_init();
+    #endif
 
     NetworkManager::initialize_server();
 }
 
-// COMPILE SERVER
-// g++ ml_wrapper.cpp -I/usr/include/jsoncpp -ljsoncpp -o server
+// cmake -DCMAKE_CXX_FLAGS="-DDO_REAL_INFERENCE=1"

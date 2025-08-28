@@ -312,7 +312,10 @@ a=fmtp:96 profile-level-id=42e01e
 
     def send_real_nal_stream_simple(self, client_socket, camera_id):
         """Send real NAL units from file once, then stop"""
-        nal_file_path = "/home/sarthak/code/ubon_cstuff/raw_nal_207.nal"
+        if camera_id == "cam001":
+            nal_file_path = "/home/sarthak/code/ubon_cstuff/raw_nal.nal"
+        else:
+            nal_file_path = "/home/sarthak/code/ubon_cstuff/raw_nal_207.nal"
         print(f"Starting real NAL stream for camera {camera_id} from {nal_file_path}")
         
         try:

@@ -2,6 +2,7 @@
 import socket
 import struct
 import json
+import sys
 import time
 
 # Message type constants (matching your C++ defines)
@@ -140,6 +141,9 @@ def read_responses(sock, timeout=2):
         sock.settimeout(None)
 
 def main():
+    # get camera_id from command line argument
+    camera_id = sys.argv[1] if len(sys.argv) > 1 else "cam001"
+
     HOST = '127.0.0.1'
     PORT = 8080
     
@@ -154,7 +158,7 @@ def main():
         json_data = {
             "action": "SUBSCRIBE",
             "body": {
-                "camera_id": "cam001",
+                "camera_id": camera_id,
                 "stream_type": 10
             }
         }
