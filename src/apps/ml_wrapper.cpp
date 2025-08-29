@@ -21,8 +21,8 @@
 #include <argparse/argparse.hpp>
 
 
-#define MAX_EVENTS 30
-#define PORT 8080
+#define EPOLL_MAX_EVENTS 30
+#define LISTENING_PORT 8080
 #define STREAM_MANAGER_PORT 8081
 #define STREAM_MANAGER_IP "127.0.0.1"
 
@@ -33,13 +33,13 @@
 #define MSG_TYPE_THUMBNAIL 0x0B
 #define MSG_TYPE_BESTFACE 0x0C
 
-#define POISON_PILL 0xFF
-
 #define ACTION_SUBSCRIBE "SUBSCRIBE"
-
 #define STREAM_TYPE_INFERENCE 0x0A
 #define STREAM_TYPE_THUMBNAIL 0x0B
 #define STREAM_TYPE_BESTFACE 0x0C
+
+#define POISON_PILL 0xFF
+#define READER_WRITER_QUEUE_SIZE 15 // Unless the consumer(camera_worker) thread is starved, there is no reason to make this larger
 
 #if DO_REAL_INFERENCE
     #include <track.h>
@@ -363,7 +363,7 @@ namespace NetworkManager {
         }
         server_address.sin_family = AF_INET;
         server_address.sin_addr.s_addr = INADDR_ANY;
-        server_address.sin_port = htons(PORT);
+        server_address.sin_port = htons(LISTENING_PORT);
         
         if (bind(main_socket, (struct sockaddr *)&server_address, sizeof(server_address)) < 0) {
             perror("bind operation failed"); exit(EXIT_FAILURE);
@@ -372,10 +372,10 @@ namespace NetworkManager {
             perror("listen operation failed"); exit(EXIT_FAILURE);
         }
         if (!configure_nonblocking(main_socket)) { exit(EXIT_FAILURE); }
-        std::cout << "Network server active on port " << PORT << std::endl;
+        std::cout << "Network server active on port " << LISTENING_PORT << std::endl;
         
         // Event polling setup
-        struct epoll_event event_config, event_list[MAX_EVENTS];
+        struct epoll_event event_config, event_list[EPOLL_MAX_EVENTS];
         if ((event_fd = epoll_create1(0)) == -1) {
             perror("epoll_create1 failed"); exit(EXIT_FAILURE);
         }
@@ -388,7 +388,7 @@ namespace NetworkManager {
 
         // Main event processing loop
         while (true) {
-            int event_count = epoll_wait(event_fd, event_list, MAX_EVENTS, -1);
+            int event_count = epoll_wait(event_fd, event_list, EPOLL_MAX_EVENTS, -1);
             if (event_count == -1) {
                 perror("epoll_wait failed"); break;
             }
@@ -652,16 +652,13 @@ namespace CameraSubscriptions {
         }
         #endif
 
-        void camera_processing_worker(std::string camera_id) {
-            std::cout << "Camera processing worker started for: " << camera_id << std::endl;
+        void camera_worker(std::string camera_id) {
+            std::cout << "Camera worker started for: " << camera_id << std::endl;
             state_t processing_state;
-            bool first_packet=true;
-            uint64_t initial_timestamp=0;
-
-            
-            #if DO_REAL_INFERENCE
             memset(&processing_state, 0, sizeof(state_t));
+            processing_state.camera_id = camera_id;
 
+            #if DO_REAL_INFERENCE
             const char *default_config="main_jpeg:\n"
                             "    enabled: true\n"
                             "    max_width: 1280\n"
@@ -673,12 +670,10 @@ namespace CameraSubscriptions {
             processing_state.tss=track_shared_state_create(merged_config);
             processing_state.ts=track_stream_create(processing_state.tss, &processing_state, track_result);
             processing_state.start_time=profile_time();
-            processing_state.camera_id = camera_id;
             track_stream_set_minimum_frame_intervals(processing_state.ts, 0.01, 10.0);
 
             int buffer_size=1024*1024;
             uint8_t *processing_buffer=(uint8_t *)malloc(buffer_size);
-            double worker_start_time=profile_time();
             #endif
 
             while (true){
@@ -698,13 +693,6 @@ namespace CameraSubscriptions {
                 uint64_t rtp_timestamp = ntohll(*reinterpret_cast<uint64_t*>(nal_data.data() + 8));
                 uint32_t packet_length = ntohl(*reinterpret_cast<uint32_t*>(nal_data.data() + 16));
                 assert(packet_length < 1024 * 1024);
-
-                if (first_packet)
-                {
-                    first_packet=false;
-                    initial_timestamp=rtp_timestamp;
-                }
-
                 double rtp_time_seconds = rtp_timestamp / 90000.0;
                 timestamp_mappings[camera_id][rtp_time_seconds] = wall_timestamp;
                 
@@ -731,7 +719,8 @@ namespace CameraSubscriptions {
 
         void start_camera_worker(const std::string& camera_id) {
             if (worker_threads.find(camera_id) == worker_threads.end()) {
-                worker_threads[camera_id] = std::thread(camera_processing_worker, camera_id);
+                message_queues[camera_id] = moodycamel::BlockingReaderWriterQueue<std::vector<char>>(READER_WRITER_QUEUE_SIZE);
+                worker_threads[camera_id] = std::thread(camera_worker, camera_id);
             }
         }
 
@@ -765,7 +754,7 @@ namespace CameraSubscriptions {
         if (subscription_registry.find(camera_id) == subscription_registry.end()) {
             return {};
         }
-        std::cout << "Camera " << camera_id << " no longer available. Disconnecting clients" << std::endl;
+        std::cout << "Disconnecting Camera: " << camera_id << std::endl;
         stop_camera_worker(camera_id);
 
         auto connections_to_terminate = std::vector<int>();
@@ -841,7 +830,9 @@ namespace CameraSubscriptions {
         if (camera_fd_to_camera_id.find(camera_fd) != camera_fd_to_camera_id.end()) {
             const std::string& camera_id = camera_fd_to_camera_id[camera_fd];
             if (message_queues.find(camera_id) != message_queues.end()) {
-                message_queues[camera_id].enqueue(nal_data);
+                if (!message_queues[camera_id].try_enqueue(nal_data)) {
+                    std::cerr << "Failed to enqueue NAL data for camera " << camera_id << std::endl;
+                }
             }
         }
     }
@@ -868,7 +859,7 @@ namespace CameraSubscriptions {
 TODO
 1. Use proper logging instead of std::cerr or std::cout
 2. The address and port info should be configurable via command line arguments and config files
-4. Create a Cmake/Makefile for the project - make sure to include the necessary external libraries - Currently using Cmake of ubon_cstuff
+3. Create a Cmake/Makefile for the project - make sure to include the necessary external libraries - Currently using Cmake of ubon_cstuff
 */
 int main(int argc, char** argv) {
     argparse::ArgumentParser parser("ml_wrapper");
