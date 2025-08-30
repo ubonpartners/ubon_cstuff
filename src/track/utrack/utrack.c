@@ -134,7 +134,7 @@ static void utrack_normalize_reid_vectors(utdet_t **dets, int num_det, utdet_t *
     // we subtract the mean of all the detections+tracked dets, then L2-norm the
     // resulting vector. This gives much better results vs raw embeddings
     float reid_mean[REID_VECTOR_LEN];
-    memset(reid_mean, 0, 64*sizeof(float));
+    memset(reid_mean, 0, REID_VECTOR_LEN*sizeof(float));
     for(int i=0;i<num_det;i++) vec_accum(dets[i]->det.reid, reid_mean, REID_VECTOR_LEN);
     for(int i=0;i<num_tracked;i++) vec_accum(tracked[i]->det.reid, reid_mean, REID_VECTOR_LEN);
     vec_scale(reid_mean, 1.0/(num_det+num_tracked+1e-7), REID_VECTOR_LEN);

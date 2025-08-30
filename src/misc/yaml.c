@@ -6,6 +6,7 @@
 #include <cstring>
 #include <stdio.h>
 #include <vector>
+#include <optional>
 #include <yaml-cpp/yaml.h>
 #include <cstdarg>
 #include "yaml_stuff.h"
@@ -154,33 +155,34 @@ bool yaml_get_bool_value(YAML::Node node, bool dv)
     return dv;
 }
 
-const YAML::Node* yaml_traverse_path_count(const YAML::Node& base, int count, va_list args) {
-    std::vector<YAML::Node> stack;
-    stack.clear();
-    stack.push_back(base);
-
-    const YAML::Node* current = &base;
+std::optional<YAML::Node> yaml_traverse_path_count(const YAML::Node& base, int count, va_list args)
+{
+    YAML::Node current = base;  // copy the handle (cheap)
     for (int i = 0; i < count; ++i) {
         const char* key = va_arg(args, const char*);
-        if (!current->IsMap())
-            return nullptr;
-        YAML::Node next = (*current)[key];
-        if (!next)
-            return nullptr;
-        stack.push_back(next);
-        current = &stack.back();
-    }
+        if (!current || !current.IsMap())
+            return std::nullopt;
 
-    return current;
+        YAML::Node next = current[key];  // safe handle
+        if (!next || !next.IsDefined())
+            return std::nullopt;
+
+        current = next;  // keep walking by value
+    }
+    return current;  // returned by value (no dangling)
 }
 
 template<typename T>
-T yaml_get_value_count(const YAML::Node& base, int count, T default_value, va_list args, T(*converter)(const YAML::Node&)) {
-    const YAML::Node* final = yaml_traverse_path_count(base, count, args);
+T yaml_get_value_count(const YAML::Node& base,
+                       int count,
+                       T default_value,
+                       va_list args,
+                       T(*converter)(const YAML::Node&))
+{
+    auto final = yaml_traverse_path_count(base, count, args);
     if (final && final->IsDefined() && final->IsScalar()) {
-        try {
-            return converter(*final);
-        } catch (const YAML::Exception&) {}
+        try { return converter(*final); }
+        catch (const YAML::Exception&) {}
     }
     return default_value;
 }

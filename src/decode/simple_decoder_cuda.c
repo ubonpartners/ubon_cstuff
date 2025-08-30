@@ -97,7 +97,8 @@ int CUDAAPI HandleVideoSequence(void *pUserData, CUVIDEOFORMAT *pFormat)
             pFormat->display_area.right,pFormat->display_area.bottom,
             dec->out_width,dec->out_height, (int)pFormat->codec);
 
-        CUVIDDECODECREATEINFO decodeCreateInfo = {0};
+        CUVIDDECODECREATEINFO decodeCreateInfo;
+        memset(&decodeCreateInfo, 0, sizeof(decodeCreateInfo));
         decodeCreateInfo.CodecType = pFormat->codec;
         decodeCreateInfo.ulWidth = pFormat->coded_width;
         decodeCreateInfo.ulHeight = pFormat->coded_height;
@@ -141,7 +142,8 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     dec->stats_macroblocks_decoded+=((dec->out_width+15)>>4)*((dec->out_height+15)>>4);
 
     CUdeviceptr decodedFrame=0;
-    CUVIDPROCPARAMS videoProcessingParameters = {0};
+    CUVIDPROCPARAMS videoProcessingParameters;
+    memset(&videoProcessingParameters, 0, sizeof(videoProcessingParameters));
     videoProcessingParameters.progressive_frame = pDispInfo->progressive_frame;
     videoProcessingParameters.second_field =  (pDispInfo->repeat_first_field != 0);
     videoProcessingParameters.top_field_first = pDispInfo->top_field_first;
@@ -236,7 +238,7 @@ int CUDAAPI HandlePictureDisplay(void *pUserData, CUVIDPARSERDISPINFO *pDispInfo
     image_t *scaled_out_img=0;
     if (dec->constraint_max_width!=0 && dec->constraint_max_height!=0) {
         determine_scale_size(out_img->width, out_img->height,
-                            dec->constraint_max_width, dec->constraint_max_width,
+                            dec->constraint_max_width, dec->constraint_max_height,
                             &dec->scaled_width, &dec->scaled_height,
                             10, 8, 8, false);
         scaled_out_img=image_scale(out_img, dec->scaled_width, dec->scaled_height);
@@ -279,8 +281,8 @@ simple_decoder_t *simple_decoder_create(void *context,
     CUVIDPARSERPARAMS videoParserParams;
     memset(&videoParserParams,0,sizeof(videoParserParams));
     videoParserParams.CodecType = (codec==SIMPLE_DECODER_CODEC_H264) ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC;
-    videoParserParams.ulMaxNumDecodeSurfaces = 8;//
-    videoParserParams.ulClockRate = 1000;
+    videoParserParams.ulMaxNumDecodeSurfaces = 8;
+    videoParserParams.ulClockRate = 90000;
     videoParserParams.ulErrorThreshold = 100;
     videoParserParams.ulMaxDisplayDelay = 0;
     videoParserParams.pUserData = dec;
@@ -300,9 +302,13 @@ void simple_decoder_destroy(simple_decoder_t *dec)
 {
     if (dec)
     {
+        dec->destroyed=true;
+        if (dec->videoParser)
+        {
+            CHECK_CUDA_CALL(cuvidDestroyVideoParser(dec->videoParser));
+        }
         if (dec->decoder)
         {
-            dec->destroyed=true;
             CHECK_CUDA_CALL(cuvidDestroyDecoder(dec->decoder));
         }
         CHECK_CUDA_CALL(cuvidCtxLockDestroy(dec->vidlock));
@@ -313,7 +319,9 @@ void simple_decoder_destroy(simple_decoder_t *dec)
 void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int data_size, double frame_time, bool force_skip)
 {
     debugf("decode %d bytes; time=%f",data_size,frame_time);
-    CUVIDSOURCEDATAPACKET packet = {0};
+    CUVIDSOURCEDATAPACKET packet;
+    memset(&packet, 0, sizeof(CUVIDSOURCEDATAPACKET));
+
     packet.payload=bitstream_data;
     packet.payload_size=data_size;
     if (frame_time>=0)
