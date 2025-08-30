@@ -188,7 +188,11 @@ static void do_cuda_init()
     CUdevice cuDev;
     CHECK_CUDA_CALL(cuDeviceGet(&cuDev, 0));
     CUcontext cuCtx;
+    #if defined(CUDA_VERSION) && (CUDA_VERSION >= 13000)
+    CHECK_CUDA_CALL(cuCtxCreate(&cuCtx, 0, 0, cuDev));
+    #else
     CHECK_CUDA_CALL(cuCtxCreate(&cuCtx, 0, cuDev));
+    #endif
 
     // --------------------------------------------------
     // Bind device for Runtime API

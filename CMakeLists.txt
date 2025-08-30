@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.24)
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "")
 project(uboncstuff LANGUAGES C CXX CUDA)
 # When scikit-build-core drives CMake (inside `pip install`) it sets the
 # variable `SKBUILD`; turn the apps OFF in that case so the wheel build
@@ -42,8 +43,34 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${PYBIND11_CMAKE_DIR}")
 message(STATUS "PYBIND11_CMAKE_DIR: ${PYBIND11_CMAKE_DIR}")
 
+# Get nvcc version (e.g., "Cuda compilation tools, release 13.0, V13.0.XX")
+if(CMAKE_CUDA_COMPILER)
+  execute_process(
+    COMMAND "${CMAKE_CUDA_COMPILER}" --version
+    OUTPUT_VARIABLE _nvcc_out
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  string(REGEX MATCH "release[ ]+([0-9]+)\\.([0-9]+)" _m "${_nvcc_out}")
+  set(_cuda_major "${CMAKE_MATCH_1}")
+  set(_cuda_minor "${CMAKE_MATCH_2}")
+endif()
+
 cmake_policy(SET CMP0104 NEW)
-set(CMAKE_CUDA_ARCHITECTURES 60 70 86 89)
+
+set(_cuda_arches 60 70 86 89)
+# Jetson override (Orin = SM87). Skip fancy logic if targeting Jetson.
+if(DEFINED ENV{JETSON_SOC})
+  set(CMAKE_CUDA_ARCHITECTURES 87 CACHE STRING "" FORCE)
+else()
+  # For CUDA 13+, drop Pascal/Volta (60/70) which nvcc annoyingly no longer supports
+  if(_cuda_major AND _cuda_major GREATER_EQUAL 13)
+    list(REMOVE_ITEM _cuda_arches 60 70)
+  endif()
+  # Apply the final list
+  list(JOIN _cuda_arches ";" _cuda_arches_str)
+  set(CMAKE_CUDA_ARCHITECTURES "${_cuda_arches_str}" CACHE STRING "" FORCE)
+endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_COMPILER /usr/bin/gcc-11)
@@ -90,8 +117,6 @@ endif()
 
 # CUDA setup
 enable_language(CUDA)
-#find_package(CUDA REQUIRED)
-#set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3 -gencode arch=compute_60,code=sm_60 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89")
 
 # Include dirs
 set(PROJECT_INCLUDE_DIRS

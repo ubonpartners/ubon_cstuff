@@ -206,6 +206,7 @@ static float match_cost(const detection_t *det_new, const detection_t *det_exist
     //if ((of_score+kf_score)==0) return 0.0f;
 
     float sim=vec_dot(tdet_existing->reid_norm, tdet_new->reid_norm, REID_VECTOR_LEN);
+
     sim*=mc->param_sim_weight;
 
     if (tdet_existing->observations<2)

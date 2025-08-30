@@ -198,8 +198,8 @@ static benchmark_config_t test_config = {
     .height=640,
     .use_cuda_nms=false,
     .run_time_seconds = 5.0,
-    .trt_model = "/mldata/weights/trt/yolo11l-dpar-250525-fp16.trt",
-    .trt_model_config = "/mldata/config/train/train_yolo_v6_l.yaml"
+    .trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-fp16.trt",
+    .trt_model_config = "/mldata/config/train/train_yolo_v8_l.yaml"
 };
 
 int main(int argc, char *argv[])
@@ -251,9 +251,9 @@ int main(int argc, char *argv[])
                             if ((model!=0)||(cuda_nms!=1)) continue;
                         }
                         if (model==0)
-                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpar-250525-int8.trt";
+                            test_config.trt_model="/mldata/models/v8/trt/yolo11l-v8r-130825-int8.trt";
                         else
-                            test_config.trt_model="/mldata/weights/trt/yolo11l-dpar-250525-fp16.trt";
+                            test_config.trt_model="/mldata/models/v8/trt/yolo11l-v8r-130825-fp16.trt";
                         benchmark_result_t r = {};
                         test_config.num_threads=threads;
                         test_config.use_cuda_nms=cuda_nms!=0;
