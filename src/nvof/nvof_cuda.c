@@ -176,6 +176,15 @@ nvof_results_t *nvof_execute(nvof_t *v, image_t *img_in)
 
     cuda_stream_add_dependency(v->nvof_stream, img->stream);
 
+    if (v->use_nv12)
+    {
+        NV_OF_CUDA_BUFFER_STRIDE_INFO si;
+        CHECK_OF(nvOFAPI.nvOFGPUBufferGetStrideInfo(v->inputFrame, &si));
+        // sanity check since the above assumes contigious
+        assert(si.strideInfo[1].strideXInBytes==si.strideInfo[0].strideXInBytes);
+        assert(si.strideInfo[0].strideYInBytes==img->height);
+    }
+
     CHECK_CUDA_CALL(cuMemcpy2DAsync(&copyP, v->nvof_stream));
     if (v->count>0)
     {
