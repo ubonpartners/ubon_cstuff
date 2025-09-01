@@ -76,6 +76,96 @@ __global__ static void filterAndCollectKernelFP16(
     }
 }
 
+// Tuneable; 256 is a safe default on most GPUs.
+#ifndef FILTER_BLOCK_SIZE
+#define FILTER_BLOCK_SIZE 256
+#endif
+
+// Float input version
+__global__ void filterAndCollectKernel_BlockScan(
+    const float*      __restrict__ all_data,      // [ (4+numClasses) × numBoxes ]
+    int                               numBoxes,
+    int                               classIdx,
+    float                             thr,
+    int*            __restrict__      d_numCand,       // scalar (reset to 0 per class)
+    uint16_t*       __restrict__      d_filteredIdx,   // [numBoxes]
+    __half*         __restrict__      d_filteredScores // [numBoxes]
+) {
+    using BlockScan = cub::BlockScan<int, FILTER_BLOCK_SIZE>;
+    __shared__ typename BlockScan::TempStorage scan_storage;
+    __shared__ int block_base;
+
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool in_range = (tid < numBoxes);
+
+    // Load score
+    float s = 0.0f;
+    if (in_range) {
+        s = all_data[(4 + classIdx) * (size_t)numBoxes + tid];
+    }
+
+    // Predicate: keep?
+    int keep = (in_range && (s >= thr)) ? 1 : 0;
+
+    // In-block exclusive prefix sum to get local offset; also get block total
+    int local_off = 0;
+    int block_count = 0;
+    BlockScan(scan_storage).ExclusiveSum(keep, local_off, block_count);
+
+    // One atomic per block to reserve a contiguous range
+    if (threadIdx.x == 0) {
+        block_base = (block_count > 0) ? atomicAdd(d_numCand, block_count) : 0;
+    }
+    __syncthreads();
+
+    // Write kept items
+    if (keep) {
+        int pos = block_base + local_off;
+        d_filteredIdx[pos]    = static_cast<uint16_t>(tid);
+        d_filteredScores[pos] = __float2half_rn(s);
+    }
+}
+
+// FP16 input version
+__global__ void filterAndCollectKernelFP16_BlockScan(
+    const __half*    __restrict__ all_data,       // [ (4+numClasses) × numBoxes ] fp16
+    int                               numBoxes,
+    int                               classIdx,
+    float                             thr,
+    int*            __restrict__      d_numCand,       // scalar (reset to 0 per class)
+    uint16_t*       __restrict__      d_filteredIdx,   // [numBoxes]
+    __half*         __restrict__      d_filteredScores // [numBoxes]
+) {
+    using BlockScan = cub::BlockScan<int, FILTER_BLOCK_SIZE>;
+    __shared__ typename BlockScan::TempStorage scan_storage;
+    __shared__ int block_base;
+
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool in_range = (tid < numBoxes);
+
+    float s = 0.0f;
+    if (in_range) {
+        s = __half2float(all_data[(4 + classIdx) * (size_t)numBoxes + tid]);
+    }
+
+    int keep = (in_range && (s >= thr)) ? 1 : 0;
+
+    int local_off = 0;
+    int block_count = 0;
+    BlockScan(scan_storage).ExclusiveSum(keep, local_off, block_count);
+
+    if (threadIdx.x == 0) {
+        block_base = (block_count > 0) ? atomicAdd(d_numCand, block_count) : 0;
+    }
+    __syncthreads();
+
+    if (keep) {
+        int pos = block_base + local_off;
+        d_filteredIdx[pos]    = static_cast<uint16_t>(tid);
+        d_filteredScores[pos] = __float2half_rn(s);
+    }
+}
+
 //-------------------------------------------------------------------------------------------------
 // Kernel A: Convert (cx,cy,w,h) → (x1,y1,x2,y2), storing in fp16
 //-------------------------------------------------------------------------------------------------
@@ -128,6 +218,8 @@ __global__ static void centerToCornerKernelFP16(
 //-------------------------------------------------------------------------------------------------
 // Kernel B: Build pairwise IoU mask in 64-box tiles (fixed stride handling)
 //-------------------------------------------------------------------------------------------------
+// Warp-cooperative mask build with early reject and warp reduction.
+// Each warp handles one "i". Each lane handles a subset of j in the 64-wide tile.
 __global__ static void buildPairwiseMaskKernel(
     const __half*       __restrict__ corners,    // [numBoxes × 4]
     const uint16_t*     __restrict__ sortedIdx,  // [numBoxes]
@@ -137,78 +229,199 @@ __global__ static void buildPairwiseMaskKernel(
     int                             memStride,    // workspace->maxMaskStride
     unsigned long long* __restrict__ maskOut      // [numBoxes × memStride]
 ) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int WARP = 32;
+    const unsigned int fullMask = __activemask();
+
+    // One warp = one candidate i
+    int warpId         = threadIdx.x >> 5;          // 0..(warpsPerBlock-1)
+    int lane           = threadIdx.x & 31;          // 0..31
+    int warpsPerBlock  = blockDim.x >> 5;
+
+    int i = blockIdx.x * warpsPerBlock + warpId;
     int w = blockIdx.y;
     if (i >= numBoxes || w >= dynStride) return;
 
+    // Load box i
     int idx_i = sortedIdx[i];
     float x1_i = __half2float(corners[idx_i * 4 + 0]);
     float y1_i = __half2float(corners[idx_i * 4 + 1]);
     float x2_i = __half2float(corners[idx_i * 4 + 2]);
     float y2_i = __half2float(corners[idx_i * 4 + 3]);
-    float area_i = (x2_i - x1_i) * (y2_i - y1_i);
+    float area_i = fmaxf(0.0f, x2_i - x1_i) * fmaxf(0.0f, y2_i - y1_i);
 
-    unsigned long long mask = 0ULL;
-    int startJ = w * 64;
-    int endJ   = min(startJ + 64, numBoxes);
-    for (int j = startJ; j < endJ; ++j) {
-        if (j <= i) continue;
-        int idx_j = sortedIdx[j];
-        float x1_j = __half2float(corners[idx_j * 4 + 0]);
-        float y1_j = __half2float(corners[idx_j * 4 + 1]);
-        float x2_j = __half2float(corners[idx_j * 4 + 2]);
-        float y2_j = __half2float(corners[idx_j * 4 + 3]);
-        float area_j = (x2_j - x1_j) * (y2_j - y1_j);
+    // Tile range [startJ, endJ)
+    const int startJ = w * 64;
+    const int endJ   = min(startJ + 64, numBoxes);
 
-        float xx1 = fmaxf(x1_i, x1_j);
-        float yy1 = fmaxf(y1_i, y1_j);
-        float xx2 = fminf(x2_i, x2_j);
-        float yy2 = fminf(y2_i, y2_j);
-        float w_int = max(0.0f, xx2 - xx1);
-        float h_int = max(0.0f, yy2 - yy1);
-        float inter = w_int * h_int;
-        float ovr = inter / (area_i + area_j - inter);
-        if (ovr > iouThreshold) {
-            mask |= (1ULL << (j - startJ));
+    // Each lane accumulates bits for the j's it owns
+    unsigned long long laneMask = 0ULL;
+
+    // Process tile in 32-wide chunks so the warp can ballot
+    for (int base = startJ; base < endJ; base += WARP) {
+        int j = base + lane;
+        // Active if in bounds and in strictly-lower score order (j > i)
+        const bool active = (j < endJ) & (j > i);
+
+        float x1_j, y1_j, x2_j, y2_j;
+        bool overlap = false;
+
+        if (active) {
+            int idx_j = sortedIdx[j];
+            x1_j = __half2float(corners[idx_j * 4 + 0]);
+            y1_j = __half2float(corners[idx_j * 4 + 1]);
+            x2_j = __half2float(corners[idx_j * 4 + 2]);
+            y2_j = __half2float(corners[idx_j * 4 + 3]);
+
+            // Fast AABB reject
+            overlap = !(x2_j <= x1_i || x2_i <= x1_j || y2_j <= y1_i || y2_i <= y1_j);
+        }
+
+        // If no lanes in this 32-wide chunk overlap, skip the heavy IoU math
+        unsigned int overlapMask = __ballot_sync(fullMask, active && overlap);
+        if (overlapMask == 0u) {
+            continue;
+        }
+
+        // Compute IoU only for lanes with potential overlap
+        if (active && overlap) {
+            float area_j = fmaxf(0.0f, x2_j - x1_j) * fmaxf(0.0f, y2_j - y1_j);
+
+            float xx1 = fmaxf(x1_i, x1_j);
+            float yy1 = fmaxf(y1_i, y1_j);
+            float xx2 = fminf(x2_i, x2_j);
+            float yy2 = fminf(y2_i, y2_j);
+            float w_int = fmaxf(0.0f, xx2 - xx1);
+            float h_int = fmaxf(0.0f, yy2 - yy1);
+            float inter = w_int * h_int;
+
+            float denom = (area_i + area_j - inter);
+            if (denom > 0.0f) {
+                float ovr = inter / denom;
+                if (ovr > iouThreshold) {
+                    int bit = j - startJ; // 0..63 within this tile
+                    laneMask |= (1ULL << bit);
+                }
+            }
         }
     }
-    maskOut[i * memStride + w] = mask;
+
+    // Warp-wide OR-reduction of the 64-bit laneMask (split into 2x32-bit halves)
+    unsigned int lo = (unsigned int)(laneMask & 0xFFFFFFFFULL);
+    unsigned int hi = (unsigned int)(laneMask >> 32);
+
+    // Reduce within the warp
+    for (int offs = 16; offs > 0; offs >>= 1) {
+        lo |= __shfl_down_sync(fullMask, lo, offs);
+        hi |= __shfl_down_sync(fullMask, hi, offs);
+    }
+
+    // Lane 0 writes the final 64-bit word
+    if (lane == 0) {
+        maskOut[(size_t)i * memStride + w] = ( (unsigned long long)hi << 32 ) | (unsigned long long)lo;
+    }
 }
 
-//-------------------------------------------------------------------------------------------------
-// Kernel C: Suppression per class (serial on one thread)
-//-------------------------------------------------------------------------------------------------
-__global__ static void doSuppressionKernel(
-    const uint16_t*         __restrict__ sortedIdx,   // [numBoxes]
-    const unsigned long long* __restrict__ maskWords, // [numBoxes × memStride]
-    int                             numBoxes,
-    int                             memStride,
-    int                             dynStride,
-    int                             maxOut,
-    int*            __restrict__    outKeepCount,      // scalar
-    uint16_t*       __restrict__    outKeepIdx         // [maxOut]
-) {
-    extern __shared__ unsigned long long s_globalSuppress[];
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-    for (int w = 0; w < dynStride; ++w) {
+__global__ static void doSuppressionKernel(
+    const uint16_t*           __restrict__ sortedIdx,   // [numBoxes]
+    const unsigned long long* __restrict__ maskWords,   // [numBoxes × memStride]
+    int                       numBoxes,
+    int                       memStride,
+    int                       dynStride,
+    int                       maxOut,
+    int*                      __restrict__ outKeepCount, // scalar
+    uint16_t*                 __restrict__ outKeepIdx    // [maxOut]
+) {
+    extern __shared__ unsigned long long s_globalSuppress[]; // length = dynStride
+    const int T = blockDim.x;
+
+    // Zero shared suppression bitmap
+    for (int w = threadIdx.x; w < dynStride; w += T) {
         s_globalSuppress[w] = 0ULL;
     }
-    int keepCnt = 0;
+    __syncthreads();
 
-    for (int i = 0; i < numBoxes; ++i) {
-        int wordIdx = i >> 6, bitIdx = i & 63;
-        if ((s_globalSuppress[wordIdx] & (1ULL << bitIdx)) == 0ULL) {
-            if (keepCnt < maxOut) {
-                outKeepIdx[keepCnt] = sortedIdx[i];
-            }
-            keepCnt++;
-            for (int w = wordIdx; w < dynStride; ++w) {
-                s_globalSuppress[w] |= maskWords[i * memStride + w];
+    __shared__ int sh_keepCnt;
+    __shared__ int sh_i;        // current candidate index
+    __shared__ int sh_take;     // 0/1: we keep this candidate
+    __shared__ int sh_done;     // 0/1: stop condition
+    if (threadIdx.x == 0) {
+        sh_keepCnt = 0;
+        sh_i       = 0;
+        sh_done    = 0;
+    }
+    __syncthreads();
+
+    while (true) {
+        // ---- Pick next unsuppressed candidate index (skip suppressed spans) ----
+        if (threadIdx.x == 0) {
+            sh_take = 0; // default
+            if (sh_i >= numBoxes) {
+                sh_done = 1;
+            } else {
+                int wordIdx = sh_i >> 6;
+                int bitIdx  = sh_i & 63;
+
+                // Bits available (not yet suppressed) from current bit to end of this word
+                unsigned long long avail = ~s_globalSuppress[wordIdx] & (~0ULL << bitIdx);
+
+                // If none in this word, jump to next word that has any availability
+                while (avail == 0ULL) {
+                    ++wordIdx;
+                    sh_i = wordIdx << 6;
+                    if (sh_i >= numBoxes) { sh_done = 1; break; }
+                    avail = ~s_globalSuppress[wordIdx]; // full word from bit 0
+                }
+
+                if (!sh_done) {
+                    // First available (least-significant) set bit = next unsuppressed candidate
+                    const int nextBit = __ffsll(avail) - 1; // 0..63
+                    sh_i = (wordIdx << 6) + nextBit;
+
+                    // Decide to take (greedy) if we still have quota
+                    if (sh_keepCnt < maxOut) {
+                        outKeepIdx[sh_keepCnt] = sortedIdx[sh_i];
+                        sh_take = 1;
+                    }
+                }
             }
         }
+        __syncthreads();  // Barrier A: broadcast sh_i, sh_take, sh_done
+
+        if (sh_done) break;
+
+        // ---- If we kept this candidate, OR its mask row into the global suppression map ----
+        if (sh_take) {
+            // The mask for candidate `sh_i` starts at word index (sh_i >> 6)
+            const int wordStart = sh_i >> 6;
+
+            // Warp/block-cooperative OR across the row:
+            // Each thread handles a distinct subset of 64-bit words to reduce loop time.
+            for (int w = wordStart + threadIdx.x; w < dynStride; w += blockDim.x) {
+                unsigned long long v = maskWords[(size_t)sh_i * memStride + w];
+                s_globalSuppress[w] |= v;
+            }
+        }
+        __syncthreads();  // Barrier B: suppression map updated
+
+        // ---- Advance counters / position; early-exit if quota met ----
+        if (threadIdx.x == 0) {
+            if (sh_take) ++sh_keepCnt;
+            if (sh_keepCnt >= maxOut) {
+                sh_done = 1;
+            } else {
+                // Move to at least the following index so we don't revisit the same bit
+                ++sh_i;
+            }
+        }
+        __syncthreads();  // Barrier C: updated sh_keepCnt/sh_i/sh_done visible
+
+        if (sh_done) break;
     }
-    *outKeepCount = (keepCnt < maxOut ? keepCnt : maxOut);
+
+    if (threadIdx.x == 0) {
+        *outKeepCount = (sh_keepCnt < maxOut ? sh_keepCnt : maxOut);
+    }
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -268,6 +481,8 @@ struct CudaNMSWorkspace_t {
     unsigned long long* d_mask;       // [maxBoxes × maxMaskStride × maxClasses]
     int*            d_keepCount;      // [maxClasses]
     uint16_t*       d_keptIdx;        // [maxClasses × maxOutPerClass]
+
+    int *           h_int;
 };
 
 //-------------------------------------------------------------------------------------------------
@@ -295,6 +510,7 @@ CudaNMSHandle cuda_nms_allocate_workspace(
     ws->d_numCand=(int *)cuda_malloc(sizeof(int));
     ws->d_filteredIdx=(uint16_t *)cuda_malloc(sizeof(uint16_t) * maxBoxes);
     ws->d_filteredScores=(__half *)cuda_malloc(sizeof(__half)    * maxBoxes);
+    ws->h_int=(int *)cuda_malloc_host(4);
 
     // Get required CUB temp size for fp16-key, uint16_t-value sort:
     ws->cubTempBytes = 0;
@@ -325,6 +541,7 @@ void cuda_nms_free_workspace(CudaNMSHandle handle) {
     cuda_free(ws->d_filteredIdx);
     cuda_free(ws->d_filteredScores);
     cuda_free(ws->d_cubTemp);
+    cuda_free_host(ws->h_int);
     std::free(ws);
 }
 
@@ -376,19 +593,14 @@ void cuda_nms_run(
         for (int c = 0; c < numClasses; ++c) {
             CUDA_CHECK(cudaMemsetAsync(ws->d_numCand, 0, sizeof(int), stream));
             int t2 = 256, b2 = (numBoxes + t2 - 1) / t2;
-            /*filterAndCollectKernel<<<b2, t2, 0, stream>>>(
-                srcBatch, numBoxes, c, scoreThreshold,
-                ws->d_numCand,
-                ws->d_filteredIdx,
-                ws->d_filteredScores);*/
             if (!data_is_fp16) {
-                filterAndCollectKernel<<<b2,t2,0,stream>>>(
+                filterAndCollectKernel_BlockScan<<<b2,t2,0,stream>>>(
                     srcFloat, numBoxes, c, scoreThreshold,
                     ws->d_numCand,
                     ws->d_filteredIdx,
                     ws->d_filteredScores);
             } else {
-                filterAndCollectKernelFP16<<<b2,t2,0,stream>>>(
+                filterAndCollectKernelFP16_BlockScan<<<b2,t2,0,stream>>>(
                     srcHalf, numBoxes, c, scoreThreshold,
                     ws->d_numCand,
                     ws->d_filteredIdx,
@@ -397,9 +609,10 @@ void cuda_nms_run(
             CUDA_CHECK(cudaGetLastError());
 
             CUDA_CHECK(cudaMemcpyAsync(
-                &h_numCand, ws->d_numCand, sizeof(int),
+                ws->h_int, ws->d_numCand, sizeof(int),
                 cudaMemcpyDeviceToHost, stream));
             CUDA_CHECK(cudaStreamSynchronize(stream));
+            h_numCand = ws->h_int[0];
             h_numCand = std::min(h_numCand, ws->maxBoxes);
             if (h_numCand <= 0) continue;
 
@@ -412,20 +625,18 @@ void cuda_nms_run(
                 0, sizeof(__half)*8,
                 stream);
 
-            // copy sorted indices into global arrays
-            CUDA_CHECK(cudaMemcpyAsync(
-                ws->d_sortedIdx + (size_t)c * ws->maxBoxes,
-                ws->d_filteredIdx,
-                sizeof(uint16_t) * h_numCand,
-                cudaMemcpyDeviceToDevice,
-                stream));
-
             int dynStride = (h_numCand + 63) / 64;
             int memStride = ws->maxMaskStride;
-            dim3 threads3(32, 1), blocks3((h_numCand + 31) / 32, dynStride);
+            const int t3x = 128; // 4 warps per block
+            const int warpsPerBlock = t3x / 32;
+            dim3 threads3(t3x, 1);
+
+            // blocks.x counts warps, not threads
+            dim3 blocks3((h_numCand + warpsPerBlock - 1) / warpsPerBlock, dynStride);
+
             buildPairwiseMaskKernel<<<blocks3, threads3, 0, stream>>>(
                 ws->d_corners,
-                ws->d_sortedIdx + c * ws->maxBoxes,
+                ws->d_filteredIdx,  // sortedIdx
                 h_numCand,
                 iouThreshold,
                 dynStride,
@@ -433,10 +644,17 @@ void cuda_nms_run(
                 ws->d_mask + (size_t)c * ws->maxBoxes * memStride);
             CUDA_CHECK(cudaGetLastError());
 
-            int sharedBytes = sizeof(unsigned long long) * memStride;
-            doSuppressionKernel<<<1, 1, sharedBytes, stream>>>(
-                ws->d_sortedIdx + c * ws->maxBoxes,
-                ws->d_mask + c * ws->maxBoxes * memStride,
+            // IMPORTANT: shared memory sized by dynStride (NOT memStride)
+            int sharedBytes = sizeof(unsigned long long) * dynStride;
+
+            // Reasonable thread count: power-of-two up to 256
+            auto nextPow2 = [](int x){ x--; x|=x>>1; x|=x>>2; x|=x>>4; x|=x>>8; x|=x>>16; return x+1; };
+            int tSuppr = nextPow2(dynStride);
+            tSuppr = tSuppr < 32 ? 32 : (tSuppr > 256 ? 256 : tSuppr);
+
+            doSuppressionKernel<<<1, tSuppr, sharedBytes, stream>>>(
+                ws->d_filteredIdx,
+                ws->d_mask + (size_t)c * ws->maxBoxes * memStride,
                 h_numCand,
                 memStride,
                 dynStride,
