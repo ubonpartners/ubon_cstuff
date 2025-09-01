@@ -10,7 +10,7 @@
 #include <cassert>
 #include <semaphore.h>
 #include <time.h>
-
+#include "platform_stuff.h"
 #include "profile.h"
 #include "cuda_stuff.h"
 #include "log.h"
@@ -19,7 +19,7 @@
 #include "infer_thread.h"
 #include "misc.h"
 
-#define MAX_THREADS     32
+#define MAX_THREADS     64
 #define MAX_IMAGES      64
 
 #define debugf if (0) printf
@@ -196,9 +196,9 @@ static benchmark_config_t test_config = {
     .num_threads = 8,
     .width=640,
     .height=640,
-    .use_cuda_nms=false,
-    .run_time_seconds = 5.0,
-    .trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-fp16.trt",
+    .use_cuda_nms=true,
+    .run_time_seconds = 8.0,
+    .trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-int8.trt",
     .trt_model_config = "/mldata/config/train/train_yolo_v8_l.yaml"
 };
 
@@ -207,73 +207,121 @@ int main(int argc, char *argv[])
     init_cuda_stuff();
     image_init();
 
-    std::ostringstream oss;
+    bool is_jetson=platform_is_jetson();
 
-    for(int images=0;images<2;images++)
+    test_config.num_threads=(is_jetson) ? 8 : 64; // max number of threads lower on jetson
+
+    // Provide a default image set if not specified
+    if (test_config.image_folder == NULL || strlen(test_config.image_folder) == 0) {
+        test_config.image_folder = "/mldata/image/widerperson_100";
+        test_config.num_images = 32;
+    }
+
+    std::ostringstream table;
+
+    auto append_header = [&](std::ostringstream &out) {
+        out << std::left
+            << std::setw(30) << "Model"
+            << std::setw(18) << "Images"
+            << std::right
+            << std::setw(8)  << "Thr"
+            << std::setw(10) << "Size"
+            << std::setw(9)  << "CuNMS"
+            << std::setw(12) << "AvgBatch"
+            << std::setw(12) << "Inf/s"
+            << std::setw(12) << "AvgDet/f"
+            << "\n";
+        out << std::string(30+18+8+10+9+12+12+12, '-') << "\n";
+    };
+
+    auto append_row = [](std::ostringstream &out, const benchmark_config_t &cfg, const benchmark_result_t &r) {
+        out << std::left
+            << std::setw(30) << get_last_path_part(cfg.trt_model)
+            << std::setw(18) << get_last_path_part(cfg.image_folder)
+            << std::right
+            << std::setw(8)  << cfg.num_threads
+            << std::setw(10) << (std::to_string(cfg.width) + "x" + std::to_string(cfg.height))
+            << std::setw(9)  << (cfg.use_cuda_nms ? "1" : "0")
+            << std::fixed << std::setprecision(2)
+            << std::setw(12) << r.infer_stats.mean_batch_size
+            << std::setprecision(1)
+            << std::setw(12) << r.inferences_per_second
+            << std::setprecision(2)
+            << std::setw(12) << (r.total_detections / (r.total_inferences + 0.001f))
+            << "\n";
+    };
+
+    auto run_once = [&](const benchmark_config_t &cfg) {
+        benchmark_result_t r = {};
+        benchmark((benchmark_config_t*)&cfg, &r);
+        append_row(table, cfg, r);
+        // Print the entire accumulated table to avoid interleaving with other debug output
+        std::cout << table.str() << std::flush;
+    };
+
+    const benchmark_config_t base = test_config;
+
+    // Threads sweep: 1..max doubling
+    table.str(""); table.clear();
+    append_header(table);
+    table << "Threads Sweep\n";
+    int max_threads = (is_jetson) ? 16 : MAX_THREADS;
+    for (int thr = 1; thr <= max_threads; thr *= 2) {
+        benchmark_config_t cfg = base;
+        cfg.num_threads = thr;
+        run_once(cfg);
+    }
+
+    // Image size sweep
+    table << "\nImage Size Sweep\n";
+    const int sizes[][2] = { {192,192},{256,256}, {384,384}, {416,416}, {512,512}, {640,640} };
+    for (auto &sz : sizes) {
+        benchmark_config_t cfg = base;
+        cfg.width = sz[0];
+        cfg.height = sz[1];
+        run_once(cfg);
+    }
+
+    // Model sweep
+    //table.str(""); table.clear();
+    table << "\nModel Sweep\n";
+    //append_header(table);
     {
-        if (images==0)
-        {
-            test_config.image_folder="/mldata/image/widerperson_100";
-            test_config.num_images=32;
-        }
-        else
-        {
-            test_config.image_folder="/mldata/image/coco_100";
-            test_config.num_images=32;
-        }
+        benchmark_config_t cfg = base;
+        cfg.trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-int8.trt";
+        run_once(cfg);
+    }
+    {
+        benchmark_config_t cfg = base;
+        cfg.trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-fp16.trt";
+        run_once(cfg);
+    }
 
-        for(int sizes=0;sizes<3;sizes++)
-        {
-            if (sizes==0)
-            {
-                test_config.width=256;
-                test_config.height=256;
-            }
-            else if (sizes==1)
-            {
-                test_config.width=416;
-                test_config.height=416;
-            }
-            else if (sizes==2)
-            {
-                test_config.width=640;
-                test_config.height=640;
-            }
-            int max_threads=32;
-            for(int threads=1;threads<=max_threads;threads*=2)
-            {
-                for(int cuda_nms=0;cuda_nms<=1;cuda_nms++)
-                {
-                    for(int model=0;model<2;model++)
-                    {
-                        if (threads!=max_threads)
-                        {
-                            if ((model!=0)||(cuda_nms!=1)) continue;
-                        }
-                        if (model==0)
-                            test_config.trt_model="/mldata/models/v8/trt/yolo11l-v8r-130825-int8.trt";
-                        else
-                            test_config.trt_model="/mldata/models/v8/trt/yolo11l-v8r-130825-fp16.trt";
-                        benchmark_result_t r = {};
-                        test_config.num_threads=threads;
-                        test_config.use_cuda_nms=cuda_nms!=0;
-                        benchmark(&test_config, &r);
+    // CUDA NMS sweep
+    //table.str(""); table.clear();
+    table << "\nCUDA NMS Sweep\n";
+    //append_header(table);
+    for (int nms = 0; nms <= 1; ++nms) {
+        benchmark_config_t cfg = base;
+        cfg.use_cuda_nms = (nms != 0);
+        run_once(cfg);
+    }
 
-                        oss << "Model " << std::setw(28) << get_last_path_part(test_config.trt_model)
-                            << " Images " << std::setw(16) << get_last_path_part(test_config.image_folder)
-                            << " Thr " << std::setw(2) << threads
-                            << " Size " << std::setw(3) << test_config.width << "x" << std::setw(3) << test_config.height
-                            << " Cu_NMS: " << cuda_nms
-                            << " Avg batch: " << std::fixed << std::setprecision(2) << std::setw(6) << r.infer_stats.mean_batch_size
-                            << " Inf/s: "     << std::setw(8) << r.inferences_per_second
-                            << " Avg Det/f: " << std::setw(4) << (r.total_detections / (r.total_inferences+0.001))
-                            << "\n";
-
-                        std::cout << oss.str();
-                    }
-                }
-            }
-        }
+    // Image set sweep
+    //table.str(""); table.clear();
+    table << "\nImage Set Sweep\n";
+    //append_header(table);
+    {
+        benchmark_config_t cfg = base;
+        cfg.image_folder = "/mldata/image/widerperson_100";
+        cfg.num_images = 32;
+        run_once(cfg);
+    }
+    {
+        benchmark_config_t cfg = base;
+        cfg.image_folder = "/mldata/image/coco_100";
+        cfg.num_images = 32;
+        run_once(cfg);
     }
 
     return 0;
