@@ -273,7 +273,6 @@ if (BUILD_APPS)
 
         # Add jsoncpp specifically to ml_wrapper
         if(app_name STREQUAL "ml_wrapper")
-            target_include_directories(${app_name} PRIVATE /usr/include/jsoncpp)
             target_link_libraries(${app_name} jsoncpp)
         endif()
 

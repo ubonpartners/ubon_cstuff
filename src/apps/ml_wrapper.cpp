@@ -11,12 +11,12 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
-#include <json/json.h>
 #include <set>
 #include <thread>
 #include <functional>
 #include <optional>
 
+#include <jsoncpp/json/json.h>
 #include <readerwriterqueue/readerwriterqueue.h>
 #include <argparse/argparse.hpp>
 
@@ -702,7 +702,6 @@ namespace CameraSubscriptions {
                 processing_buffer[2]=(packet_length>>8)&0xff;
                 processing_buffer[3]=(packet_length>>0)&0xff;
                 std::memcpy(&processing_buffer[4], nal_data.data() + 20, packet_length);
-
                 track_stream_add_nalus(processing_state.ts, rtp_time_seconds, processing_buffer, packet_length + 4, false);
                 #endif
                 #if DO_REAL_INFERENCE == 0
