@@ -264,7 +264,17 @@ int main(int argc, char *argv[])
     // Threads sweep: 1..max doubling
     table.str(""); table.clear();
     append_header(table);
-    table << "Threads Sweep\n";
+    table << "Baseline\n";
+    {
+        benchmark_config_t cfg = base;
+        run_once(cfg);
+        //exit(0);
+        run_once(cfg);
+        run_once(cfg);
+    }
+
+    // Threads sweep: 1..max doubling
+    table << "\nThreads Sweep\n";
     int max_threads = (is_jetson) ? 16 : MAX_THREADS;
     for (int thr = 1; thr <= max_threads; thr *= 2) {
         benchmark_config_t cfg = base;
