@@ -881,5 +881,5 @@ int main(int argc, char** argv) {
     NetworkManager::initialize_server();
 }
 
-// JETSON_SOC=1 cmake -DCMAKE_CXX_FLAGS="-DDO_REAL_INFERENCE=1"
+// JETSON_SOC=1 cmake -DCMAKE_CXX_FLAGS="-DDO_REAL_INFERENCE=1" ..
 // g++ ml_wrapper.cpp -ljsoncpp -o ml_wrapper
