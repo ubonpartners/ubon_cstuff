@@ -152,7 +152,7 @@ if(DEFINED ENV{JETSON_SOC})
         -lnvbufsurface -lnvbufsurftransform
         -lnvvpi -lnvjpeg -lnvdla_compiler
         -lnvinfer -lnvonnxparser -lnvinfer_plugin
-        -lasound -lfftw3f
+        -lasound # -lfftw3f
         -Wl,-rpath=/usr/lib/aarch64-linux-gnu/nvidia
         -Wl,-rpath=/usr/local/cuda/lib64
         -Wl,--disable-new-dtags
@@ -176,7 +176,7 @@ else()
         -lnvjpeg
         -lnvidia-ml
         -lnvidia-opticalflow
-        -lasound -lfftw3f
+        -lasound # -lfftw3f
     )
     #list(APPEND ARCH_LIBS -ledit -ltinfo)
 endif()
@@ -188,8 +188,8 @@ include_directories(${CMAKE_BINARY_DIR} )
 
 # Gather sources
 file(GLOB SRC_FILES
-    ${CMAKE_SOURCE_DIR}/src/audio_alg/*.c
-    ${CMAKE_SOURCE_DIR}/src/audioframe/*.c
+    # ${CMAKE_SOURCE_DIR}/src/audio_alg/*.c
+    # ${CMAKE_SOURCE_DIR}/src/audioframe/*.c
     ${CMAKE_SOURCE_DIR}/src/c_tests/*.c
     ${CMAKE_SOURCE_DIR}/src/cuda/*.c
     ${CMAKE_SOURCE_DIR}/src/decode/*.c
@@ -242,7 +242,7 @@ endif()
 if (BUILD_APPS)
     set(APP_MAIN_FILES
         ${CMAKE_SOURCE_DIR}/src/main.c
-        ${CMAKE_SOURCE_DIR}/src/apps/audio_test.c
+        # ${CMAKE_SOURCE_DIR}/src/apps/audio_test.c
         ${CMAKE_SOURCE_DIR}/src/apps/decode_benchmark.c
         ${CMAKE_SOURCE_DIR}/src/apps/decode_file.c
         ${CMAKE_SOURCE_DIR}/src/apps/infer_thread_test.c

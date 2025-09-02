@@ -859,6 +859,7 @@ TODO
 1. Use proper logging instead of std::cerr or std::cout
 2. The address and port info should be configurable via command line arguments and config files
 3. Create a Cmake/Makefile for the project - make sure to include the necessary external libraries - Currently using Cmake of ubon_cstuff
+4. Buffer last seen thumbnail
 */
 int main(int argc, char** argv) {
     argparse::ArgumentParser parser("ml_wrapper");
@@ -880,4 +881,5 @@ int main(int argc, char** argv) {
     NetworkManager::initialize_server();
 }
 
-// cmake -DCMAKE_CXX_FLAGS="-DDO_REAL_INFERENCE=1"
+// JETSON_SOC=1 cmake -DCMAKE_CXX_FLAGS="-DDO_REAL_INFERENCE=1"
+// g++ ml_wrapper.cpp -ljsoncpp -o ml_wrapper
