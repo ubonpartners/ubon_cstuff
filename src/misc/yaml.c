@@ -119,7 +119,7 @@ const char *yaml_merge_string(const char *yaml_or_file_base, const char *yaml_or
     return yaml_to_cstring(node);
 }
 
-const char *yaml_to_cstring(YAML::Node node)
+const char *yaml_to_cstring(const YAML::Node node)
 {
     YAML::Emitter out;
     out.SetIndent(4);
@@ -131,7 +131,19 @@ const char *yaml_to_cstring(YAML::Node node)
     return strdup(yaml_str);
 }
 
-float yaml_get_float_value(YAML::Node node, float dv)
+const char *yaml_to_string(const YAML::Node node)
+{
+    YAML::Emitter out;
+    out.SetIndent(4);
+    out.SetMapFormat(YAML::Auto);
+    out << node;
+
+    // Get the YAML as a C-string
+    const char* yaml_str = out.c_str();
+    return strdup(yaml_str);
+}
+
+float yaml_get_float_value(const YAML::Node node, float dv)
 {
     if (node && node.IsDefined()) {
         return node.as<float>();
@@ -139,7 +151,7 @@ float yaml_get_float_value(YAML::Node node, float dv)
     return dv;
 }
 
-int yaml_get_int_value(YAML::Node node, int dv)
+int yaml_get_int_value(const YAML::Node node, int dv)
 {
     if (node && node.IsDefined()) {
         return node.as<int>();
@@ -147,7 +159,7 @@ int yaml_get_int_value(YAML::Node node, int dv)
     return dv;
 }
 
-bool yaml_get_bool_value(YAML::Node node, bool dv)
+bool yaml_get_bool_value(const YAML::Node node, bool dv)
 {
     if (node && node.IsDefined()) {
         return node.as<bool>();
@@ -157,7 +169,7 @@ bool yaml_get_bool_value(YAML::Node node, bool dv)
 
 std::optional<YAML::Node> yaml_traverse_path_count(const YAML::Node& base, int count, va_list args)
 {
-    YAML::Node current = base;  // copy the handle (cheap)
+    YAML::Node current = YAML::Clone(base);  // UGH, for some reason I don't understand, the code below mutates base
     for (int i = 0; i < count; ++i) {
         const char* key = va_arg(args, const char*);
         if (!current || !current.IsMap())
@@ -181,7 +193,9 @@ T yaml_get_value_count(const YAML::Node& base,
 {
     auto final = yaml_traverse_path_count(base, count, args);
     if (final && final->IsDefined() && final->IsScalar()) {
-        try { return converter(*final); }
+        try {
+            return converter(*final);
+        }
         catch (const YAML::Exception&) {}
     }
     return default_value;
