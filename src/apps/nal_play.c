@@ -13,6 +13,7 @@
 #include "file_decoder.h"
 #include "jpeg.h"
 #include "yaml_stuff.h"
+#include "default_setup.h"
 
 typedef struct state
 {
@@ -70,7 +71,7 @@ int main(int argc, char *argv[])
                        "    max_height: 720\n"
                        "    min_interval_seconds: 0.03\n";
 
-    const char *config=yaml_merge_string("/mldata/config/track/trackers/uc_reid.yaml", basic);
+    const char *config=yaml_merge_string(DEFAULT_TRACKER_YAML, basic);
 
     s.tss=track_shared_state_create(config);
     s.ts=track_stream_create(s.tss, &s, track_result);

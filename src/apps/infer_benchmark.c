@@ -267,6 +267,7 @@ int main(int argc, char *argv[])
     table << "Baseline\n";
     {
         benchmark_config_t cfg = base;
+        cfg.image_folder = "/mldata/image/coco_100";
         run_once(cfg);
         //exit(0);
         run_once(cfg);
