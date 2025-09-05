@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.21)
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "")
 project(uboncstuff LANGUAGES C CXX CUDA)
 # When scikit-build-core drives CMake (inside `pip install`) it sets the
