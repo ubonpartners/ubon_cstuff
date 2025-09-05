@@ -176,13 +176,17 @@ static void handle_frame(simple_decoder_t *d, NvBuffer *buf, double t, bool forc
     d->last_time = t;
 
     image_sync(img);
-    image_t *out = img;
+    image_t *out = 0;
     if (d->max_w && d->max_h) {
         determine_scale_size(img->width, img->height,
                              d->max_w, d->max_h,
                              &d->scaled_w, &d->scaled_h,
                              10, 8, 8, false);
         out = image_scale(img, d->scaled_w, d->scaled_h);
+    }
+    else
+    {
+        out = image_reference(img);
     }
 
     d->outputs++;
