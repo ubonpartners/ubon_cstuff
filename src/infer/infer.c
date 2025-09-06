@@ -270,7 +270,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
 
     cudaStreamCreate(&inf->stream);
 
-    log_debug("Infer create");
+    log_trace("Infer create");
 
     if ((yaml_config==0)||(strlen(yaml_config)==0))
     {
@@ -445,7 +445,7 @@ infer_t *infer_create(const char *model, const char *yaml_config)
     assert(0==inf->ec->inferShapes(0,0));
     Dims outputDims = inf->ec->getTensorShape(inf->output_tensor_name);
     size_t max_output_bytes=(inf->md.output_is_fp16 ? 2 : 4)*outputDims.d[0]*outputDims.d[1]*outputDims.d[2];
-    log_debug("Max output bytes %dx%dx%d (%d) %ld",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2],
+    log_trace("Max output bytes %dx%dx%d (%d) %ld",(int)outputDims.d[0],(int)outputDims.d[1],(int)outputDims.d[2],
         outputDims.nbDims,max_output_bytes);
 
     inf->max_output_tensor_bytes=max_output_bytes;

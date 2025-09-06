@@ -170,7 +170,7 @@ static void do_cuda_init()
         log_fatal("Failed to get NVML handle for device 0: %s", nvmlErrorString(result));
     }
     #endif
-    log_debug("Initial process GPU memory usage %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
+    log_trace("Initial process GPU memory usage %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
 
     // --------------------------------------------------
     // Register allocation trackers
@@ -204,7 +204,7 @@ static void do_cuda_init()
     // Get default pool and
     // Create cuda memory pool for our cudaMalloc/cudaMallocAsync
     // --------------------------------------------------
-    log_debug("GPU memory before pool creation: %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
+    log_trace("GPU memory before pool creation: %5.1fMB",get_process_GPU_memory()/(1024.0*1024.0));
     CHECK_CUDA_CALL(cuDeviceGetDefaultMemPool(&cs.defaultPool, cuDev));
 
      {
@@ -363,7 +363,7 @@ void cuda_thread_init()
     }
 
 
-    log_debug("CUDA context initialized on thread %lu (context: %p)",(unsigned long)pthread_self(), (void*)ctx);
+    log_trace("CUDA context initialized on thread %lu (context: %p)",(unsigned long)pthread_self(), (void*)ctx);
 }
 
 void *cuda_malloc(size_t size)
