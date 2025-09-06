@@ -18,6 +18,7 @@
 #include "jpeg.h"
 #include "infer_thread.h"
 #include "misc.h"
+//#include "nvml_sampler.h"
 
 #define MAX_THREADS     64
 #define MAX_IMAGES      64
@@ -33,6 +34,7 @@ typedef struct benchmark_config {
     int num_threads;
     int width, height;
     bool use_cuda_nms;
+    float det_thr;
     float run_time_seconds;
     const char *trt_model;
     const char *trt_model_config;
@@ -128,10 +130,9 @@ static void benchmark(benchmark_config_t *config, benchmark_result_t *result)
 {
     benchmark_context_t bc = {};
     infer_config_t icfg = {};
-    icfg.det_thr = 0.03;
+    icfg.det_thr = config->det_thr;
     icfg.set_det_thr = true;
-    icfg.nms_thr = 0.45;
-    icfg.set_nms_thr = true;
+    icfg.set_nms_thr = false;
     icfg.limit_max_batch=128;
     icfg.set_limit_max_batch=true;
     icfg.limit_min_width=128;
@@ -197,6 +198,7 @@ static benchmark_config_t test_config = {
     .width=640,
     .height=640,
     .use_cuda_nms=true,
+    .det_thr=0.05,
     .run_time_seconds = 8.0,
     .trt_model = "/mldata/models/v8/trt/yolo11l-v8r-130825-int8.trt",
     .trt_model_config = "/mldata/config/train/train_yolo_v8_l.yaml"
@@ -206,6 +208,7 @@ int main(int argc, char *argv[])
 {
     init_cuda_stuff();
     image_init();
+    log_set_level(LOG_DEBUG);
 
     bool is_jetson=platform_is_jetson();
 
@@ -227,11 +230,12 @@ int main(int argc, char *argv[])
             << std::setw(8)  << "Thr"
             << std::setw(10) << "Size"
             << std::setw(9)  << "CuNMS"
+            << std::setw(7)  << "Thr"
             << std::setw(12) << "AvgBatch"
             << std::setw(12) << "Inf/s"
             << std::setw(12) << "AvgDet/f"
             << "\n";
-        out << std::string(30+18+8+10+9+12+12+12, '-') << "\n";
+        out << std::string(30+18+8+10+9+12+12+12+7, '-') << "\n";
     };
 
     auto append_row = [](std::ostringstream &out, const benchmark_config_t &cfg, const benchmark_result_t &r) {
@@ -242,6 +246,7 @@ int main(int argc, char *argv[])
             << std::setw(8)  << cfg.num_threads
             << std::setw(10) << (std::to_string(cfg.width) + "x" + std::to_string(cfg.height))
             << std::setw(9)  << (cfg.use_cuda_nms ? "1" : "0")
+            << std::setw(7) << std::fixed << std::setprecision(2) << (cfg.det_thr)
             << std::fixed << std::setprecision(2)
             << std::setw(12) << r.infer_stats.mean_batch_size
             << std::setprecision(1)
@@ -253,7 +258,9 @@ int main(int argc, char *argv[])
 
     auto run_once = [&](const benchmark_config_t &cfg) {
         benchmark_result_t r = {};
+        //nvml_sampler_t *samp=nvml_sampler_begin(0, 100);
         benchmark((benchmark_config_t*)&cfg, &r);
+        //nvml_sampler_end(samp);
         append_row(table, cfg, r);
         // Print the entire accumulated table to avoid interleaving with other debug output
         std::cout << table.str() << std::flush;
@@ -261,16 +268,37 @@ int main(int argc, char *argv[])
 
     const benchmark_config_t base = test_config;
 
-    // Threads sweep: 1..max doubling
+    // Threads sweep: 0
     table.str(""); table.clear();
+    table <<  "\n";
     append_header(table);
     table << "Baseline\n";
     {
         benchmark_config_t cfg = base;
         cfg.image_folder = "/mldata/image/coco_100";
+        for(int j=0;j<1;j++)
+        {
+            for(int i=0;i<3;i++) run_once(cfg);
+            //usleep(10000000);
+        }
+    }
+
+    // Threads sweep: 0
+    table << "\nThr sweep\n";
+    {
+        benchmark_config_t cfg = base;
+        cfg.image_folder = "/mldata/image/coco_100";
+        cfg.det_thr = 0.01;
         run_once(cfg);
-        //exit(0);
+        cfg.det_thr = 0.05;
         run_once(cfg);
+        cfg.det_thr = 0.1;
+        run_once(cfg);
+        cfg.det_thr = 0.01;
+        run_once(cfg);
+        cfg.det_thr = 0.05;
+        run_once(cfg);
+        cfg.det_thr = 0.1;
         run_once(cfg);
     }
 
