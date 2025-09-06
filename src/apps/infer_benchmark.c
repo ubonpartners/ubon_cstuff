@@ -212,7 +212,7 @@ int main(int argc, char *argv[])
 
     bool is_jetson=platform_is_jetson();
 
-    test_config.num_threads=(is_jetson) ? 8 : 64; // max number of threads lower on jetson
+    test_config.num_threads=(is_jetson) ? 32 : 64; // max number of threads lower on jetson
 
     // Provide a default image set if not specified
     if (test_config.image_folder == NULL || strlen(test_config.image_folder) == 0) {

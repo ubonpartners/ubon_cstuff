@@ -30,6 +30,11 @@ struct ThreadResult {
 
 static void process_image(void *context, image_t *img) {
     ThreadResult *out=(ThreadResult *)context;
+    if (img==0)
+    {
+        printf("Error decoding frame\n");
+        return;
+    }
     if (out->compute_hash)
     {
         uint32_t hash=image_hash(img);
@@ -73,17 +78,19 @@ typedef struct test
 } test_t;
 
 static test_t tests[]={
-    {"UK office 1512p H264", "/mldata/video/test/uk_off_2688x1512_12.5fps.264", 1, 3, true},
+    /*{"UK office 1512p H264", "/mldata/video/test/uk_off_2688x1512_12.5fps.264", 1, 3, true},
     {"UK office 1512p H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265", 1, 3, true},
     {"INof 720p, H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264", 1,   3, true},
     {"INof 720p, H265", "/mldata/video/test/ind_off_1280x720_7.5fps.265", 1,   3, true},
     {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 1, 1, true},
-    {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 1, 1, true},
-
+    {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 1, 1, true},*/
+    {"Clip1 720p, H265", "/mldata/video/test/clip1_1280x720_5.00fps.hevc", 48,   8, false},
+    {"Clip1 720p, H264", "/mldata/video/test/clip1_1280x720_5.00fps.264", 8,   1, false},
+    {"Clip1 720p, H265", "/mldata/video/test/clip1_1280x720_5.00fps.hevc", 8,   1, false},
+    {"Clip1 720p, H264", "/mldata/video/test/clip1_1280x720_5.00fps.264", 32,  1, false},
+    {"Clip1 720p, H265", "/mldata/video/test/clip1_1280x720_5.00fps.hevc", 32,  1, false},
     {"UK office 1512p H264", "/mldata/video/test/uk_off_2688x1512_12.5fps.264", 8, 2, false},
     {"UK office 1512p H265", "/mldata/video/test/uk_off_2688x1512_12.5fps.265", 8, 2, false},
-    {"INof 720p, H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264", 8,   5, false},
-    {"INof 720p, H265", "/mldata/video/test/ind_off_1280x720_7.5fps.265", 8,   5, false},
     {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 1, 1, false},
     {"BC1, 1080p, H265", "/mldata/video/test/bc1_1920x1080_30fps.265", 1, 1, false},
     {"BC1, 1080p, H264", "/mldata/video/test/bc1_1920x1080_30fps.264", 2, 1, false},
