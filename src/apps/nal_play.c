@@ -40,16 +40,16 @@ static void track_result(void *context, track_results_t *r)
             uint8_t *jpeg_data=jpeg_get_data(r->track_dets->frame_jpeg, &jpeg_data_length);
             img=decode_jpeg(jpeg_data, (int)jpeg_data_length);
         }
-        if (img!=0)
-        {
-            image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
-            if (out_frame_rgb!=0)
-            {
-                display_image("video", out_frame_rgb);
-                image_destroy(out_frame_rgb);
-            }
-            image_destroy(img);
-        }
+        // if (img!=0)
+        // {
+        //     image_t *out_frame_rgb=detection_list_draw(r->track_dets, img);
+        //     if (out_frame_rgb!=0)
+        //     {
+        //         display_image("video", out_frame_rgb);
+        //         image_destroy(out_frame_rgb);
+        //     }
+        //     image_destroy(img);
+        // }
     }
 }
 
