@@ -23,6 +23,7 @@
 #include "pcap_stuff.h"
 #include "yaml_stuff.h"
 #include "default_setup.h"
+#include "sdp_parser.h"
 
 #define MAX_STREAMS     200
 
@@ -119,7 +120,7 @@ static std::string rt_benchmark(parsed_pcap_t **parsed, int n_parsed, int num_st
     {
         ctx.ss[i].ts = track_stream_create(ctx.tss, &ctx.ss[i], track_result, 0, true);
         ctx.ss[i].parsed_pcap=parsed[i%n_parsed];
-        track_stream_set_sdp(ctx.ss[i].ts, ctx.ss[i].parsed_pcap->sdp);
+        track_stream_set_sdp(ctx.ss[i].ts, ctx.ss[i].parsed_pcap->sdp, SDP_TYPE_RTP);
         track_stream_set_minimum_frame_intervals(ctx.ss[i].ts, 1.0/10.0, 10.0);
     }
 

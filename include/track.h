@@ -58,7 +58,7 @@ void track_stream_set_name(track_stream_t *ts, const char *name);
 // packet interface- set an 'sdp' -actually looks at the first thing that looks like
 // an m-line and also SRTP config- can be H264,H265 or OPUS
 
-void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str);
+void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str, uint8_t sdp_type);
 // receive an RTP packet into the track_stream - all decryption, reordering etc, handled
 void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t **data, int *length);
 
@@ -66,7 +66,7 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
 // NALU interface: data should be 4-byte length, AVCC/HVCC 'length prefixed' format
 // use 'set sdp' as with RTP interface
 
-void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265);
+void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length);
 
 //=================================================================================================
 // jpeg interface. You can create an extra 'stream' and just use it for jpegs

@@ -26,6 +26,7 @@
 #include "work_queue.h"
 #include "profile.h"
 #include "fast_histogram.h"
+#include "sdp_parser.h"
 
 #define debugf if (0) log_debug
 #define input_debugf if (0) log_error
@@ -793,10 +794,24 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
         case TRACK_STREAM_JOB_SDP:
         {
             track_shared_state_t *tss=ts->tss;
-            if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
-            set_sdp_t sdp;
-            memset(&sdp, 0, sizeof(set_sdp_t));
-            if (0==rtp_receiver_set_sdp(ts->rtp_receiver, ((const char *)job->data)+4, &sdp))
+
+            // sdp data: [1 byte sdp type][4 byte length][sdp string]
+            uint8_t sdp_type=*((uint8_t *)job->data);
+            const char *sdp_str = ((const char *)job->data)+5;
+            sdp_t sdp;
+            memset(&sdp, 0, sizeof(sdp_t));
+            int set_sdp_success = 0;
+            if (sdp_type == SDP_TYPE_NALU){
+                set_sdp_success = set_sdp(sdp_str, &sdp, NULL);
+            } else if (sdp_type == SDP_TYPE_RTP){
+                if (!ts->rtp_receiver) ts->rtp_receiver=rtp_receiver_create(ts, rtp_packet_callback);
+                set_sdp_success = set_sdp(sdp_str, &sdp, ts->rtp_receiver);
+            } else {
+                log_error("Unknown SDP type %d", sdp_type);
+                set_sdp_success = -1;
+            }
+
+            if (0==set_sdp_success)
             {
                 if (sdp.is_h264 || sdp.is_h265)
                 {
@@ -814,7 +829,7 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             }
             else
             {
-                log_error("rtp_receiver_set_sdp failed");
+                log_error("set_sdp failed");
             }
             free(job->data);
             block_free(job);
@@ -843,18 +858,13 @@ static void work_queue_process_job(void *context, work_queue_item_header_t *item
             track_shared_state_t *tss=ts->tss;
             input_debugf("running inpu NALUs job");
             assert(ts->destroying==false);
-            if (ts->decoder==0)
-            {
-                ts->decoder=simple_decoder_create(ts, decoder_process_image, job->codec);
-                simple_decoder_constrain_output(ts->decoder, tss->max_width, tss->max_height, ts->min_time_delta_process);
+            
+            if(!ts->decoder || !ts->h26x_assembler) {
+                log_error("cannot process NALUs until SDP is set and decoder/assembler created");
+            } else {
+                h26x_assembler_process_nalus(ts->h26x_assembler, job->data, job->data_len, job->time);
             }
-            if (ts->h26x_assembler==0)
-            {
-                ts->h26x_assembler=h26x_assembler_create(job->codec==SIMPLE_DECODER_CODEC_H264 ? H26X_CODEC_H264 : H26X_CODEC_H265,
-                                                         ts, h26x_frame_callback);
-            }
-
-            h26x_assembler_process_nalus(ts->h26x_assembler, job->data, job->data_len, job->time);
+            
             free(job->data);
             block_free(job);
             break;
@@ -965,13 +975,15 @@ void track_stream_run_video_file(track_stream_t *ts, const char *file, simple_de
     track_stream_queue_job(ts, job);
 }
 
-void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str)
+void track_stream_set_sdp(track_stream_t *ts, const char *sdp_str, uint8_t sdp_type)
 {
+    // data = [1 byte sdp type][4 byte length][sdp string]
     int len=strlen(sdp_str)+1;
-    uint8_t *mem=(uint8_t *)malloc(len+4);
+    uint8_t *mem=(uint8_t *)malloc(len+5);
     if (mem==0) return;
-    *((uint32_t *)(mem))=len;
-    memcpy(mem+4, sdp_str, len);
+    mem[0]=sdp_type;
+    ((uint32_t *)mem)[1]=len;
+    memcpy(mem+5, sdp_str, len);
     ts_queued_job_t *job=ts_queued_job_create();
     job->type=TRACK_STREAM_JOB_SDP;
     job->data=(uint8_t *)mem;
@@ -1003,7 +1015,7 @@ void track_stream_add_rtp_packets(track_stream_t *ts, int num_packets, uint8_t *
     track_stream_queue_job(ts, job);
 }
 
-void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length, bool is_h265)
+void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp, uint8_t *data, int length)
 {
     ts_queued_job_t *job=ts_queued_job_create();
     uint8_t *mem=(uint8_t *)malloc(length);
@@ -1014,7 +1026,6 @@ void track_stream_add_nalus(track_stream_t *ts, uint64_t rtp_extended_timestamp,
     job->data_offset=0;
     job->data_len=length;
     job->time=rtp_extended_timestamp/90000.0;
-    job->codec=(is_h265) ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264;
     track_stream_queue_job(ts, job);
 }
 

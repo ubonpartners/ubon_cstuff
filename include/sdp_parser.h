@@ -8,6 +8,11 @@
 #include <optional>
 #include <map>
 
+typedef enum sdp_type {
+    SDP_TYPE_NALU=0x01,
+    SDP_TYPE_RTP=0x02
+} sdp_type_t;
+
 struct RtpCryptoInfo {
     std::string tag;
     std::string cryptoSuite;
