@@ -723,8 +723,8 @@ public:
         track_stream_run_video_file(stream, file, codec, video_fps, loop_forever);
     }
 
-    void set_sdp(const char *sdp_str) {
-        track_stream_set_sdp(stream, sdp_str);
+    void set_sdp(const char *sdp_str, uint8_t sdp_type) {
+        track_stream_set_sdp(stream, sdp_str, sdp_type);
     }
 
     void add_rtp_packets(const std::vector<py::bytes> &packets) {

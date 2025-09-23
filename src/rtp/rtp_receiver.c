@@ -521,10 +521,10 @@ void print_rtp_stats(const rtp_stats_t *stats) {
 //    - leaves socket binding / thread startup up to caller
 // -----------------------------------------------------------------------------------------------
 
-int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp) {
-    memset(sdp, 0, sizeof(set_sdp_t));
+int set_sdp(const char *sdp_str, sdp_t *sdp, rtp_receiver_t *r) {
+    memset(sdp, 0, sizeof(sdp_t));
 
-    if (!r || !sdp_str) return -1;
+    if (!sdp_str) return -1;
     parsed_sdp_t *parsed = parse_sdp(sdp_str);
     if (!parsed) {
         log_error("SDP parse failed");
@@ -547,28 +547,31 @@ int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp)
 
     // Must have valid payloadType and port
     if (stream->payloadType < 0 || stream->port <= 0) {
+        printf("Invalid SDP: payloadType=%d, port=%d\n", stream->payloadType, stream->port);
         log_error("Payload type or port error");
         parsed_sdp_destroy(parsed);
         return -1;
     }
 
     // Fill receiver
-    rtp_receiver_set_payload_type(r, static_cast<uint8_t>(stream->payloadType));
-
-    // Store the clock rate for later (e.g. timeouts, timestamp extension)
-    r->rtp_clock_rate = stream->clockRate;
-
-    // SRTP?
-    if (!stream->cryptoInfos.empty()) {
-        const auto &ci = stream->cryptoInfos[0];
-        const std::string &key = ci.keyParams;
-        if (!key.empty()) {
-            if (rtp_receiver_enable_srtp(r,
-                    reinterpret_cast<const uint8_t *>(key.data()),
-                    key.size()) != 0) {
-                log_error("Failed to enable SRTP from SDP (keylen %zu)", key.size());
-                sdp->encryption_enabled = true;
-                // still proceed
+    if (r){
+        rtp_receiver_set_payload_type(r, static_cast<uint8_t>(stream->payloadType));
+    
+        // Store the clock rate for later (e.g. timeouts, timestamp extension)
+        r->rtp_clock_rate = stream->clockRate;
+    
+        // SRTP?
+        if (!stream->cryptoInfos.empty()) {
+            const auto &ci = stream->cryptoInfos[0];
+            const std::string &key = ci.keyParams;
+            if (!key.empty()) {
+                if (rtp_receiver_enable_srtp(r,
+                        reinterpret_cast<const uint8_t *>(key.data()),
+                        key.size()) != 0) {
+                    log_error("Failed to enable SRTP from SDP (keylen %zu)", key.size());
+                    sdp->encryption_enabled = true;
+                    // still proceed
+                }
             }
         }
     }

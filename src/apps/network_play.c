@@ -83,21 +83,21 @@ int main(int argc, char *argv[]) {
     //parsed_sdp_t *sdp=parse_sdp(sdp_str);
     //print_parsed_sdp(sdp);
 
-    set_sdp_t set_sdp;
+    sdp_t sdp;
     pc.rtp_receiver=rtp_receiver_create((void *)&pc, rtp_receiver_callback);
-    int ret=rtp_receiver_set_sdp(pc.rtp_receiver, sdp_str, &set_sdp);
+    int ret=set_sdp(sdp_str, &sdp, pc.rtp_receiver);
 
     if (ret!=0) {
         log_fatal("Failed to parse SDP %d\n",ret);
     }
 
-    pc.h26x_assembler=h26x_assembler_create(set_sdp.is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
-    pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, set_sdp.is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
+    pc.h26x_assembler=h26x_assembler_create(sdp.is_h265? H26X_CODEC_H265 : H26X_CODEC_H264,( void *)&pc, h26x_assembler_callback);
+    pc.decoder = simple_decoder_create(( void *)&pc, decoder_frame_callback, sdp.is_h265 ? SIMPLE_DECODER_CODEC_H265 : SIMPLE_DECODER_CODEC_H264);
     //pc.write_debug_annexb_file="out.264";
 
-    if (rtp_receiver_start_receive(pc.rtp_receiver, "0.0.0.0", (uint16_t)set_sdp.port) != 0)
+    if (rtp_receiver_start_receive(pc.rtp_receiver, "0.0.0.0", (uint16_t)sdp.port) != 0)
     {
-        log_fatal("Failed to bind UDP socket on port %d\n", set_sdp.port);
+        log_fatal("Failed to bind UDP socket on port %d\n", sdp.port);
     }
 
     int cnt=0;

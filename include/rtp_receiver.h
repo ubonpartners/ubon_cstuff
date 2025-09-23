@@ -124,7 +124,7 @@ int rtp_receiver_enable_srtp(rtp_receiver_t *r, const uint8_t *key, size_t key_l
  * After calling this, the receiver’s payload type is set automatically.  If an SRTP
  * inline key is found and successfully base64-decoded, SRTP is enabled under the hood.
  */
-typedef struct set_sdp
+typedef struct sdp
 {
     bool valid;
     bool encryption_enabled;
@@ -133,9 +133,9 @@ typedef struct set_sdp
     bool is_opus;
     int port;
     int rtp_clock_rate;
-} set_sdp_t;
+} sdp_t;
 
-int rtp_receiver_set_sdp(rtp_receiver_t *r, const char *sdp_str, set_sdp_t *sdp);
+int set_sdp(const char *sdp_str, sdp_t *sdp, rtp_receiver_t *r);
 
 /*
  * Start a background UDP‐receive thread on 'local_ip':'port'.  Every incoming UDP datagram

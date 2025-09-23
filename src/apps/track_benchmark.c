@@ -203,7 +203,7 @@ static const char* get_last_path_part(const char* path) {
 }
 
 test_clip_t clips[]={
-    {"Clip3,      720p, 5.0fps,  H265", "/mldata/video/test/clip3_1280x720_5.00fps.hevc"},
+    {"MOT20-05    720p, 6.25fps, H265", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.265"},
     {"MOT20-05    720p, 6.25fps, H265", "/mldata/video/test/MOT20-05_1280x1080_6.25fps.265"},
 
     {"Ind office, 720p, 7.5fps,  H264", "/mldata/video/test/ind_off_1280x720_7.5fps.264"},
@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) {
 
     test_config_t config[64];
     for(int i=0;i<64;i++) config[i]=dconfig;
-    int nconfig;
+    int nconfig = 0;
 
     for(int i=0;i<2;i++)
     {

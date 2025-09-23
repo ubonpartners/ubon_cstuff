@@ -14,6 +14,7 @@
 #include "jpeg.h"
 #include "yaml_stuff.h"
 #include "default_setup.h"
+#include "sdp_parser.h"
 
 typedef struct state
 {
@@ -62,6 +63,30 @@ int main(int argc, char *argv[])
     state_t s;
     memset(&s, 0, sizeof(state_t));
 
+    const char *sdp_string = 
+        "v=0\r\n"
+        "o=- 1750338751357103 1 IN IP4 0.0.0.0\r\n"
+        "s=Session streamed by \"nessyMediaServer\"\r\n"
+        "i=h264\r\n"
+        "t=0 0\r\n"
+        "a=tool:Streaming Media v2010.04.09\r\n"
+        "a=type:broadcast\r\n"
+        "a=control:*\r\n"
+        "a=range:npt=0-\r\n"
+        "a=x-qt-text-nam:Session streamed by \"nessyMediaServer\"\r\n"
+        "a=x-qt-text-inf:h264\r\n"
+        "m=video 1 RTP/AVP 99\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
+        "a=rtpmap:99 H264/90000\r\n"
+        "a=fmtp:99 packetization-mode=1;profile-level-id=4D401F; sprop-parameter-sets=Z01AH42NQFoFD/gLcBAQFAAAD6AAAw1DoYAf/AADVn67y40MAP/gABqz9d5cKA==,aO44gA==\r\n"
+        "a=control:track1\r\n"
+        "a=cliprect:0,0,1280,720\r\n"
+        "a=framerate:25.000000\r\n"
+        "a=x-bufferdelay:0\r\n"
+        "m=application 0 RTP/AVP 107\r\n"
+        "a=rtpmap:107 vnd.onvif.metadata/90000\r\n"
+        "a=control:track2\r\n";
+
     // modify default config so we get 720p30 'frame jpegs'
     // just so we can display these
 
@@ -86,6 +111,8 @@ int main(int argc, char *argv[])
     uint64_t first_timestamp=0;
     bool first_nalu=true;
     double actual_start_time=profile_time();
+    
+    track_stream_set_sdp(s.ts, sdp_string, SDP_TYPE_NALU);
     while(1)
     {
         uint64_t ts;
@@ -112,7 +139,7 @@ int main(int argc, char *argv[])
         nalu_buf[1]=(len>>16)&0xff;
         nalu_buf[2]=(len>>8)&0xff;
         nalu_buf[3]=(len>>0)&0xff;
-        track_stream_add_nalus(s.ts, ts, nalu_buf, len+4, false);
+        track_stream_add_nalus(s.ts, ts, nalu_buf, len+4);
     }
 
     track_stream_sync(s.ts);
