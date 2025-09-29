@@ -70,6 +70,8 @@ struct simple_decoder {
     uint64_t total_bytes;
     uint32_t decode_calls;
     uint32_t outputs, skips, resets, forced_skips;
+
+    bool cap_plane_inited;
 };
 
 extern int nvSurfToImageNV12Device(NvBufSurface *nvSurf,image_t *img, CUstream stream);
@@ -97,7 +99,12 @@ static void apply_capture_settings(simple_decoder_t *d) {
     d->pixfmt     = V4L2_PIX_FMT_YUV420M;
     log_info("Resolution: %ux%u", d->cfg.dec_w, d->cfg.dec_h);
 
-    dec->capture_plane.deinitPlane();
+    if (d->cap_plane_inited){
+        dec->capture_plane.setStreamStatus(false);
+        dec->capture_plane.deinitPlane();
+        d->cap_plane_inited = false;
+    }
+
     CHECK_ERROR(dec->setCapturePlaneFormat(fmt.fmt.pix_mp.pixelformat,
                                           fmt.fmt.pix_mp.width,
                                           fmt.fmt.pix_mp.height) < 0,
@@ -121,6 +128,8 @@ static void apply_capture_settings(simple_decoder_t *d) {
         buf.m.planes = planes;
         CHECK_ERROR(dec->capture_plane.qBuffer(buf, NULL) < 0, "Queue capture buffer failed");
     }
+
+    d->cap_plane_inited = true;
 }
 
 static int wait_resolution_change(simple_decoder_t *d) {
@@ -237,6 +246,7 @@ simple_decoder_t *simple_decoder_create(void *ctx,
                                        bool low_latency) {
     simple_decoder_t *d = (simple_decoder_t*)calloc(1, sizeof(*d));
     if (!d) return NULL;
+    d->cap_plane_inited = false;
     d->ctx = ctx;
     d->frame_cb = cb;
     d->low_latency = low_latency;
@@ -265,8 +275,11 @@ void simple_decoder_destroy(simple_decoder_t *d) {
     d->nvdec->abort();
     pthread_join(d->thread_id, NULL);
 
-    d->nvdec->capture_plane.setStreamStatus(false);
-    d->nvdec->capture_plane.deinitPlane();
+    if (d->cap_plane_inited) {
+        d->nvdec->capture_plane.setStreamStatus(false);
+        d->nvdec->capture_plane.deinitPlane();
+        d->cap_plane_inited = false;
+    }
     d->nvdec->output_plane.setStreamStatus(false);
 
     struct v4l2_buffer buf = {};
