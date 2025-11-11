@@ -76,7 +76,7 @@ static bool image_format_is_host(image_format_t format)
 
 typedef struct image_metadata
 {
-  float time;             // time (in seconds) corresponding to underlying RTP sample time, may not be realtime
+  double time;             // time (in seconds) corresponding to underlying RTP sample time, may not be realtime
   float capture_realtime; // profile_time() for when the event that generate this image was captured
   uint32_t flags;
 } image_metadata_t;

@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include "log.h"
+#include <math.h>
 
 #define debugf if (0) log_error
 
@@ -640,7 +641,7 @@ int h26x_assembler_process_nalus(h26x_assembler_t *a,
             a->in_frame= false;
         }
         if (new_frame) a->in_frame=true;
-        a->last_extended_ts=90000.0*rtp_time;
+        a->last_extended_ts=round(90000.0*rtp_time); // round when converting from double to uint64_t
         append_nalu(a, nalu, n_len);
     }
     return 0;
