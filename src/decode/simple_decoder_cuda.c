@@ -12,6 +12,7 @@
 #include "misc.h"
 #include "yaml_stuff.h"
 #include "profile.h"
+#include <math.h>
 
 #define debugf if (0) log_error
 
@@ -326,7 +327,7 @@ void simple_decoder_decode(simple_decoder_t *dec, uint8_t *bitstream_data, int d
     packet.payload_size=data_size;
     if (frame_time>=0)
     {
-        packet.timestamp=frame_time*90000;
+        packet.timestamp=round(frame_time*90000); // round when converting from double to long long;
         packet.flags=CUVID_PKT_TIMESTAMP;
         dec->use_frame_times=true;
     }
