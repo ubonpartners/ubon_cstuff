@@ -137,7 +137,7 @@ if(DEFINED ENV{JETSON_SOC})
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DUBONCSTUFF_PLATFORM=1")
 
     list(APPEND PROJECT_INCLUDE_DIRS
-        /usr/src/jetson_multimedia_api/include
+        ${CMAKE_SOURCE_DIR}/jetson_multimedia_api/include
         /usr/local/cuda/include
         /usr/include/libdrm
     )
@@ -213,7 +213,7 @@ file(GLOB CUDA_FILES
 
 if(DEFINED ENV{JETSON_SOC})
 file(GLOB JETSON_MULTIMEDIA_FILES
-    /usr/src/jetson_multimedia_api/samples/common/classes/*.cpp
+    ${CMAKE_SOURCE_DIR}/jetson_multimedia_api/src/*.cpp
 )
 endif()
 
@@ -233,8 +233,8 @@ if(DEFINED ENV{JETSON_SOC})
 add_library(jetson_multimedia_lib STATIC ${JETSON_MULTIMEDIA_FILES})
 set_target_properties(jetson_multimedia_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jetson_multimedia_lib  PRIVATE
-        /usr/src/jetson_multimedia_api/include
-        /usr/src/jetson_multimedia_api/include/libjpeg-8b
+        ${CMAKE_SOURCE_DIR}/jetson_multimedia_api/include
+        # /usr/src/jetson_multimedia_api/include/libjpeg-8b
     )
 endif()
 
