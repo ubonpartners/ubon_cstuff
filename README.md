@@ -1,168 +1,63 @@
-# 🛠️ Ubon_cstuff
+# ubon_cstuff
 
-**High-performance C modules with simple Python bindings**
+**GPU-accelerated video and image pipelines — in C/CUDA, with Python.**
 
-This repo provides a set of modular, GPU-aware C components for image and video processing — with seamless Python integration via `pybind11`.
-
-Runs/tested on **x86+Nvidia GPU** (UBONCSTUFF_PLATFORM=0) and **Jetson Orin Nano** (UBONCSTUFF_PLATFORM=1).
+A single library that takes live RTP streams, video files, or JPEGs and gives you **object detection, tracking, embeddings, and optional audio events** — with minimal glue code. Built for realtime (e.g. edge cameras) and offline; runs on **x86 + NVIDIA GPU** and **Jetson Orin Nano**.
 
 ---
 
-## 🔧 Features
+## Why use it?
 
-### Realtime and Non-realtime
-- Uses thread pools and task queues with automatic backpressure
-- Automatic performance scaling (e.g. changing inference resolution/skipping decoded frames) to maintain latency/FR
+- **One pipeline, many inputs** — RTP (with SRTP), H.264/H.265 files, JPEG uploads, or raw frames. Same tracking and inference stack everywhere.
+- **Realtime without the pain** — Thread pools, work queues, and automatic backpressure. Motion-based ROI and frame skipping keep latency and GPU load under control.
+- **Detection + tracking + embeddings** — TensorRT object detection, ByteTrack or lightweight utrack, optional face/CLIP/FIQA and JPEG snapshots per track. Audio event detection (e.g. EfficientAT) when you need it.
+- **First-class Python bindings** — The entire C/CUDA API is exposed in Python via **pybind11**: same performance, NumPy-friendly (`from_numpy` / `to_numpy`), no C++ required. Use it for scripting, pipelines, or prototyping; [examples](examples.py) and [tests](test.py) are in the repo; a [prebuilt wheel](https://drive.google.com/file/d/1VTfBOdzqFs8tkpScRHW-Df6PeWfW0r5U/view?usp=sharing) is available. Full API summary: [docs → Python bindings](docs/overview.md#python-bindings-ubon_pycstuff).
 
-### Surface Abstraction
-- Unified wrapper for working with host and GPU image buffers
-- Reference counted immutable design makes it easy to pass surface handles between threads
-- Supports multiple color formats (RGB, YUV, planar, packed, mono, etc.)
-- it's generally intended most 'work' is done in YUV420 -and this will usually be most efficient- although operations should generally work on any format, with automatic conversion
-- GPU and CPU scaling using:
-  - NVIDIA NPP
-  - libyuv
-  - factorized scaling for large downscale factors (repeated /2, then NPP for last scale)
-- Color format & colorspace conversion
-- **Fully asynchronous use of cuda with automatic chaining and synchronization**
-- Additional operations like crop, blend, hash, gaussian blur, mean absolute difference
-- write surface to JPEG, or display on screen
-
-### Network/framing
-- RTP packet receiver supporting re-ordering, ssrc/pt validation filtering
-- SRTP decryption support
-- Re-assembly of video packets into complete H264/H265 frames
-- PCAP file parsing support for test apps
-
-### Video Decoding
-- Platforms Supported
-  - Desktop x86_64 with Nvidia card => UBONCSTUFF_PLATFORM=0
-  - Integrated Nvidia Orin Nano  => UBONCSTUFF_PLATFORM=1
-- Hardware and software decoder support:
-  - OpenH264 (software)
-  - NVDEC (NVIDIA GPU-accelerated decode) H264/H265
-  - Jetson Orin Nano hardware decoder
-
-### Optical Flow
-- Support for:
-  - NVIDIA Optical Flow SDK (NVOF); latest v3 support with NV12 or mono
-  - VPI on Jetson Orin 
-
-### Inference
-- TensorRT accelerated inference with support for batched processing and flexible surface input
-- Automatic support for fp16/int8 models with fp16/fp32 I/O
-- Automatic batch building
-- Support for object detector models, and "auxillary" models
-- Efficient face alignment / image extraction using GPU texture units
-- Current auxilliary models: Face embedding models, CLIP embedding models, FIQA face quality models, audio event detection
+Details (codebase map, architecture) live in the **[docs](docs/)** folder: [Overview](docs/overview.md) · [Architecture](docs/architecture.md).
 
 ---
 
-## Prerequisities
-- sudo apt install nvidia-cuda-toolkit
-- TensorRT installed (libnvinfer10, via apt)
-- sudo apt install libyuv-dev
-- sudo apt install libsdl2-dev
-- sudo apt install libyaml-cpp-dev
-- sudo apt install pybind11-dev
-- sudo apt install libopenh264-dev
-- sudo apt install libsrtp2-dev
-- sudo apt install libpcap-dev
-- sudo apt install libeigen3-dev
-- sudo apt install libjpeg-dev
-- sudo apt install libnvjpeg-dev-12-6
-- sudo apt install libnvvpi3 vpi3-dev vpi3-samples
-- sudo apt install libfftw3-dev
-- sudo apt install libasound-dev
-- sudo apt install libsamplerate-dev
+## Quick start
 
----
+**Prerequisites** (Debian/Ubuntu): CUDA toolkit, TensorRT, libyuv, SDL2, yaml-cpp, pybind11, OpenH264, libsrtp2, libpcap, Eigen, libjpeg, libnvjpeg, **GCC 11** (build uses `gcc-11`/`g++-11`); on Jetson add VPI; for audio add libasound, libfftw3, libsamplerate. Example:
 
-## 🐍 Python Bindings
-
-All of the above functionality is exposed via simple, direct Python bindings using `pybind11`.
-- Dependencies:
-  - pip install -r requirements.txt
-  - Install the latest [Stuff][git@github.com:ubonpartners/stuff.git]
-  - Install this package ubon_cstuff either using pip or wheel
-
-See the usage example here:  
-👉 [The examples](https://github.com/ubonpartners/ubon_cstuff/blob/main/examples.py)
-👉 [The tests](https://github.com/ubonpartners/ubon_cstuff/blob/main/test.py)
-
-## Prebuilt python wheel
-
-[Download here (note might be out of date)](https://drive.google.com/file/d/1VTfBOdzqFs8tkpScRHW-Df6PeWfW0r5U/view?usp=sharing)
-
-After installing you should be able to run the examples/tests above
-
----
-
-## 🔨 Build Instructions
-
-### 🧱 C++ Core
-
-```
-mkdir build
-cd build
-cmake ..
-make
+```bash
+sudo apt install gcc-11 g++-11 nvidia-cuda-toolkit libyuv-dev libsdl2-dev \
+  libyaml-cpp-dev pybind11-dev libopenh264-dev libsrtp2-dev libpcap-dev \
+  libeigen3-dev libjpeg-dev libnvjpeg-dev-12-6 libfftw3-dev libasound-dev libsamplerate-dev
+# TensorRT: libnvinfer10 (or libnvinfer-dev)
+# libnvjpeg: package is versioned to CUDA (e.g. -12-6 for CUDA 12); pick the one matching your install
+# Jetson only: libnvvpi3 vpi3-dev vpi3-samples
 ```
 
-> 🔧 You’ll need development versions of:  
-> `libyuv`, `openh264`, `SDL2`, `CUDA`, `TensorRT`, etc.
+**Build (C/C++ core):**
 
-### 🐍 Python Bindings
+```bash
+mkdir build && cd build && cmake .. && make
+```
 
-From the root of the repo (`ubon_cstuff/`):
+Optional: `cmake -DBUILD_APPS=OFF ..` builds only the library and Python module (e.g. for wheel builds).
 
-- To install in editable dev mode:
-  ```
-  pip install -e .
-  ```
+**Python (editable install):**
 
-- To build a Python wheel:
-  ```
-  python -m build
-  ```
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+Then run the [examples](examples.py) or [tests](test.py). **Python users**: you can use a [prebuilt wheel](https://drive.google.com/file/d/1VTfBOdzqFs8tkpScRHW-Df6PeWfW0r5U/view?usp=sharing) (may be outdated) to skip building the C++ core; see [Python bindings](docs/overview.md#python-bindings-ubon_pycstuff) in the docs for the API.
+
+Build options (e.g. `BUILD_APPS=OFF` for library-only): [docs/overview.md](docs/overview.md#build-and-install).
 
 ---
 
-## Other stuff
+## License
 
-### Supported image formats
+This project is dual-licensed under:
 
-🧭 Supported image formats
-- Direct conversion with optimized kernel or NPP is supported for many cases
-- Almost all cases at least work
-- Some format conversions can be done with out any real work through reference counting and pointer tricks (e.g. YUV->MONO)
+- **AGPL v3.0** — see [LICENSE](LICENSE) in this repo
+- **[Ubon Cooperative License](https://github.com/ubonpartners/license/blob/main/LICENSE)**
 
-```
-IMAGE_FORMAT_YUV420_HOST
-IMAGE_FORMAT_YUV420_DEVICE
-IMAGE_FORMAT_NV12_DEVICE
-IMAGE_FORMAT_RGB24_HOST
-IMAGE_FORMAT_RGB24_DEVICE
-IMAGE_FORMAT_RGB_PLANAR_FP16_DEVICE
-IMAGE_FORMAT_RGB_PLANAR_FP16_HOST
-IMAGE_FORMAT_RGB_PLANAR_FP32_HOST
-IMAGE_FORMAT_RGB_PLANAR_FP32_DEVICE
-IMAGE_FORMAT_MONO_HOST
-IMAGE_FORMAT_MONO_DEVICE
-```
+You may use, modify, and distribute the software under either license.
 
-
-
-## 📜 License
-
-This project is licensed under the  
-**[Ubon Cooperative License](https://github.com/ubonpartners/license/blob/main/LICENSE)**
-
----
-
-## 💬 Questions?
-
-Feel free to reach out:
-
-📬 [bernandocribbenza@gmail.com](mailto:bernandocribbenza@gmail.com?subject=ubon_cstuff%20question&body=Your-code-is-rubbish!)
-
+Questions: [bernandocribbenza@gmail.com](mailto:bernandocribbenza@gmail.com?subject=ubon_cstuff%20question)
